@@ -1,0 +1,36 @@
+measurement_coordinates: source_pixel
+
+detectors:
+  BalloonEnvelopeDetector:
+    width_mode: max_width
+    dark_enhance_bg_kernel_px: 61
+    hysteresis_low_ratio: 0.45
+    mask_open_kernel_px: 3
+    mask_close_kernel_px: 5
+    mask_dilate_kernel_px: 3
+    min_component_area_px: 500
+    envelope_quantile: 0.002
+    envelope_window_px: null
+    envelope_step_px: null
+    min_window_pixels: 50
+    window_width_keep_ratio: 0.45
+    window_count_keep_ratio: 0.35
+    debug_contour_close_kernel_px: 21
+    debug_contour_smooth_window_px: 7
+    tie_width_epsilon_px: 2.0
+    switch_after_n_frames: 3
+    jump_limit_px: 25.0
+    min_confidence: 0.5
+    debug_overlay: true
+
+  BundleEnvelopeDetector:
+    width_mode: max_width
+    tie_width_epsilon_px: 2.0
+    switch_after_n_frames: 3
+    jump_limit_px: 25.0
+    min_confidence: 0.5
+    debug_overlay: true
+
+  ReservedObjectDetector:
+    width_mode: max_width
+    enabled: false

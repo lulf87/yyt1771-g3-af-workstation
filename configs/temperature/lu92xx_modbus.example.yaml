@@ -1,0 +1,6 @@
+backend: lu92xx_modbus_rtu
+temp_sync_target_ms: 10
+allow_interpolation: true
+analysis_allowed_status:
+  - TEMP_SYNC_OK
+  - TEMP_SYNC_INTERPOLATED

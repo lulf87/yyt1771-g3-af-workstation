@@ -1,0 +1,23 @@
+# Local G3 dataset configs
+configs/local/*.json
+configs/local/*.yaml
+datasets/local/
+
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Local browser/test artifacts
+.playwright-cli/
+.playwright-mcp/
+output/
+*.png
+
+# macOS/editor files
+.DS_Store

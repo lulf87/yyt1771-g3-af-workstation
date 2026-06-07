@@ -1,0 +1,84 @@
+{
+  "schema_version": "g3.offline_datasets.v0.1",
+  "purpose": "Local offline golden datasets for G3 Offline Playback, Live Offline Run, detector regression, and real-browser retest.",
+  "coordinate_rule": "All formal ROI, A/B, and distance_px must be computed in unified measurement coordinates. Default measurement coordinates are source frame pixel coordinates.",
+  "datasets": [
+    {
+      "id": "golden_a_20260522_dev_lab",
+      "label": "A 类球囊/网状结构离线素材：20260522-183158-dev_lab",
+      "object_class": "A_BALLOON_ENVELOPE",
+      "g3_type": "A",
+      "source_generation": "G1 yyt1771_starter dev_lab capture",
+      "root_path": "/ABSOLUTE/PATH/TO/yyt1771_starter/examples/runtime/camera_captures/20260522-183158-dev_lab",
+      "manifest": "manifest.json",
+      "temperature_csv": "temperature.csv",
+      "video": "capture.avi",
+      "frames_dir": "frames",
+      "frame_glob": "frame_*.npy",
+      "frame_format": "npy",
+      "expected_fps": 10.0,
+      "default_detector": "BalloonEnvelopeDetector",
+      "default_width_mode": "max_width",
+      "required_for_milestones": [
+        "M0",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7",
+        "M9"
+      ],
+      "browser_retest_pages": [
+        "Setup",
+        "Playback",
+        "Run",
+        "Analysis/Export"
+      ],
+      "notes": [
+        "图 1/2 对应此数据集：A 类初始状态和最终状态。",
+        "ROI 仅应框住有效测量主体，不应包含底部连接丝、夹具、焊点。",
+        "A 类正式测宽应基于暗线增强后的网状主体左右整体外包络；内部网眼、暗线、交叉线不作为正式边界。",
+        "夹子、连接丝、支撑丝、窄尾不得决定 A 类 max_width。",
+        "A/B = ROI 内整体外包络 max-width 位置的两个外侧接触点。"
+      ]
+    },
+    {
+      "id": "golden_c_20260529_dev_lab",
+      "label": "C 类多细支/多线束整体离线素材：20260529-194304-dev_lab",
+      "object_class": "C_BUNDLE_ENVELOPE",
+      "g3_type": "C",
+      "source_generation": "G1 yyt1771_starter dev_lab capture",
+      "root_path": "/ABSOLUTE/PATH/TO/yyt1771_starter/examples/runtime/camera_captures/20260529-194304-dev_lab",
+      "manifest": "manifest.json",
+      "temperature_csv": "temperature.csv",
+      "video": "capture.avi",
+      "frames_dir": "frames",
+      "frame_glob": "frame_*.npy",
+      "frame_format": "npy",
+      "expected_fps": 10.0,
+      "default_detector": "BundleEnvelopeDetector",
+      "default_width_mode": "max_width",
+      "required_for_milestones": [
+        "M0",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7",
+        "M9"
+      ],
+      "browser_retest_pages": [
+        "Setup",
+        "Playback",
+        "Run",
+        "Analysis/Export"
+      ],
+      "notes": [
+        "图 3/4 对应此数据集：C 类初始状态和最终状态。",
+        "多根细支必须作为一个整体目标；相邻细支之间的白色空隙视为目标内部。",
+        "不得检测单根细支宽度，不得把内部缝隙、暗线、纹理作为正式 A/B。",
+        "A/B = ROI 内整体外包络 max-width 位置的两个外侧接触点。"
+      ]
+    }
+  ]
+}

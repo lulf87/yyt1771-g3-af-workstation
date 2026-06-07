@@ -1,0 +1,154 @@
+{
+  "profile": "dev_lab",
+  "camera_profile": "measurement",
+  "started_at_ms": 1779445918145,
+  "duration_limit_sec": 600.0,
+  "target_fps": 10.0,
+  "frame_format": "npy",
+  "temperature_csv": "temperature.csv",
+  "temp_every_n_frames": 3,
+  "frame_count": 5807,
+  "frames": [
+    {
+      "npy": "frames/frame_000001.npy",
+      "index": 1,
+      "timestamp_ms": 1779445920097,
+      "source": "hik_gige_mvs",
+      "frame_id": 1,
+      "shape": [
+        1364,
+        2048
+      ],
+      "dtype": "uint8",
+      "camera_meta": {
+        "transport": "gige_vision",
+        "backend": "hik_gige_mvs",
+        "model": "",
+        "serial_number": "",
+        "ip": "",
+        "trigger_mode": "free_run",
+        "sdk": "hik_mvs",
+        "pixel_format": "mono8",
+        "profile_name": "measurement",
+        "device_roi": {
+          "x": 512,
+          "y": 342,
+          "width": 2048,
+          "height": 1364
+        },
+        "requested_device_roi": {
+          "x": 512,
+          "y": 342,
+          "width": 2048,
+          "height": 1364
+        },
+        "decimation": null,
+        "binning": null,
+        "target_frame_rate_hz": 20.0,
+        "camera_resulting_fps": 19.936199188232422,
+        "camera_target_frame_rate_hz": 20.0
+      },
+      "temperature": {
+        "timestamp_ms": 1779445920110,
+        "celsius": 1.4000000000000001,
+        "source": "lu92xx_modbus_rtu",
+        "error": "",
+        "sampled_this_frame": true
+      }
+    },
+    {
+      "npy": "frames/frame_000002.npy",
+      "index": 2,
+      "timestamp_ms": 1779445920314,
+      "source": "hik_gige_mvs",
+      "frame_id": 5,
+      "shape": [
+        1364,
+        2048
+      ],
+      "dtype": "uint8",
+      "camera_meta": {
+        "transport": "gige_vision",
+        "backend": "hik_gige_mvs",
+        "model": "",
+        "serial_number": "",
+        "ip": "",
+        "trigger_mode": "free_run",
+        "sdk": "hik_mvs",
+        "pixel_format": "mono8",
+        "profile_name": "measurement",
+        "device_roi": {
+          "x": 512,
+          "y": 342,
+          "width": 2048,
+          "height": 1364
+        },
+        "requested_device_roi": {
+          "x": 512,
+          "y": 342,
+          "width": 2048,
+          "height": 1364
+        },
+        "decimation": null,
+        "binning": null,
+        "target_frame_rate_hz": 20.0,
+        "camera_resulting_fps": 19.936199188232422,
+        "camera_target_frame_rate_hz": 20.0
+      },
+      "temperature": {
+        "timestamp_ms": 1779445920110,
+        "celsius": 1.4000000000000001,
+        "source": "lu92xx_modbus_rtu",
+        "error": "",
+        "sampled_this_frame": false
+      }
+    },
+    {
+      "npy": "frames/frame_000003.npy",
+      "index": 3,
+      "timestamp_ms": 1779445920413,
+      "source": "hik_gige_mvs",
+      "frame_id": 7,
+      "shape": [
+        1364,
+        2048
+      ],
+      "dtype": "uint8",
+      "camera_meta": {
+        "transport": "gige_vision",
+        "backend": "hik_gige_mvs",
+        "model": "",
+        "serial_number": "",
+        "ip": "",
+        "trigger_mode": "free_run",
+        "sdk": "hik_mvs",
+        "pixel_format": "mono8",
+        "profile_name": "measurement",
+        "device_roi": {
+          "x": 512,
+          "y": 342,
+          "width": 2048,
+          "height": 1364
+        },
+        "requested_device_roi": {
+          "x": 512,
+          "y": 342,
+          "width": 2048,
+          "height": 1364
+        },
+        "decimation": null,
+        "binning": null,
+        "target_frame_rate_hz": 20.0,
+        "camera_resulting_fps": 19.936199188232422,
+        "camera_target_frame_rate_hz": 20.0
+      },
+      "temperature": {
+        "timestamp_ms": 1779445920110,
+        "celsius": 1.4000000000000001,
+        "source": "lu92xx_modbus_rtu",
+        "error": "",
+        "sampled_this_frame": false
+      }
+    }
+  ]
+}

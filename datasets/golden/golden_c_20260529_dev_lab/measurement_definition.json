@@ -1,0 +1,32 @@
+{
+  "measurement_id": "golden_c_20260529_dev_lab-default",
+  "object_class": "C_BUNDLE_ENVELOPE",
+  "detector": "BundleEnvelopeDetector",
+  "width_mode": "max_width",
+  "measurement_coordinates": "source_pixel",
+  "roi": {
+    "type": "rotated_rect",
+    "center_x": 1024.0,
+    "center_y": 682.0,
+    "width": 1269.76,
+    "height": 381.92,
+    "angle_deg": 0.0
+  },
+  "detector_config": {
+    "tie_width_epsilon_px": 2.0,
+    "switch_after_n_frames": 3,
+    "jump_limit_px": 35.0,
+    "min_confidence": 0.15,
+    "mask_open_kernel_px": 3,
+    "mask_close_kernel_px": 11,
+    "mask_dilate_kernel_px": 1,
+    "min_component_area_px": 80,
+    "envelope_quantile": 0.02,
+    "envelope_window_px": 9,
+    "envelope_step_px": 2,
+    "min_window_pixels": 8,
+    "window_width_keep_ratio": 0.2,
+    "max_frames_per_run": 160,
+    "live_offline_fps": 8.0
+  }
+}

@@ -1,0 +1,63 @@
+camera:
+  backend: hik_gige_mvs
+  transport: gige_vision
+  sdk: hik_mvs
+  probe_mode: protocol_any
+  allowed_models:
+    - MV-CU060-10GM
+  model: ""
+  serial_number: ""
+  ip: ""
+  trigger_mode: free_run
+  pixel_format: mono8
+  exposure_us: 50000
+  gain_db: 12.0
+  timeout_ms: 1000
+  target_frame_rate_hz: 10
+  device_roi:
+    x: 512
+    y: 342
+    width: 2048
+    height: 1364
+  sdk_python_paths: []
+  sdk_library_path: ""
+
+temp:
+  backend: lu92xx_modbus_rtu
+  protocol: modbus_rtu
+  slave_address: 1
+  serial:
+    port: ""
+    baudrate: 19200
+    bytesize: 8
+    parity: N
+    stopbits: 1
+    timeout_ms: 500
+  register_map:
+    process_value:
+      function_code: 3
+      start_address: 264
+      register_count: 1
+      signed: true
+      decode_scale: 0.1
+    target_or_stop_value:
+      function_code: 6
+      start_address: 0
+      register_count: 1
+      signed: true
+      encode_scale: 10.0
+    output_power:
+      function_code: 6
+      start_address: 4
+      register_count: 1
+      signed: false
+      encode_scale: 256.0
+  control:
+    start_output_mode: power_nonzero
+    startup_power_percent: 100.0
+    completion_mode: target_reached
+
+run:
+  measurement_target_hz: 10
+  temp_sync_target_ms: 10
+  save_raw_frames: true
