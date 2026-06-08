@@ -58,6 +58,16 @@ test("diagnostic image metadata exposes mask and contour display sources", async
       mask: {
         label: "Detected mask",
         coordinates: "roi_local_pixel",
+        overlay_box: {
+          source: "selected_candidate_local_projection_bounds",
+          coordinates: "roi_local_pixel",
+          left: 12,
+          top: 5,
+          right: 62,
+          bottom: 27,
+          stroke: "#ff4040",
+          stroke_width_px: 2
+        },
         data_url: "data:image/png;base64,mask"
       },
       contour: {
@@ -70,8 +80,12 @@ test("diagnostic image metadata exposes mask and contour display sources", async
 
   assert.equal(images.mask.label, "Detected mask");
   assert.equal(images.mask.src, "data:image/png;base64,mask");
+  assert.equal(images.mask.overlayBox.source, "selected_candidate_local_projection_bounds");
+  assert.equal(images.mask.overlayBox.left, 12);
+  assert.equal(images.mask.overlayBox.strokeWidthPx, 2);
   assert.equal(images.contour.label, "Envelope contour");
   assert.match(images.contour.src, /\/api\/debug\/contour\.png$/);
+  assert.equal(images.contour.overlayBox, null);
 });
 
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {

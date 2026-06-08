@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -119,9 +121,11 @@ def test_probe_endpoint_detects_current_frame_with_measurement_roi(
     assert diagnostic_images["mask"]["label"] == "Detected mask"
     assert diagnostic_images["mask"]["coordinates"] == "roi_local_pixel"
     assert diagnostic_images["mask"]["data_url"].startswith("data:image/png;base64,")
+    _assert_diagnostic_image_has_envelope_box(diagnostic_images["mask"])
     assert diagnostic_images["contour"]["label"] == "Envelope contour"
     assert diagnostic_images["contour"]["coordinates"] == "roi_local_pixel"
     assert diagnostic_images["contour"]["data_url"].startswith("data:image/png;base64,")
+    _assert_diagnostic_image_has_envelope_box(diagnostic_images["contour"])
     assert payload["overlay"]["ab_points"] == result["ab_points"]
     assert payload["frame"]["frame_index"] == 1
 
@@ -236,12 +240,26 @@ def _probe_measurement() -> dict[str, object]:
 
 
 def _probe_frame_data_url() -> str:
-    import base64
-    import io
-
     frame = np.full((80, 120), 245, dtype=np.uint8)
     frame[25:46, 35:86] = 30
     image = Image.fromarray(frame, mode="L")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _assert_diagnostic_image_has_envelope_box(image_info: dict[str, object]) -> None:
+    overlay_box = image_info["overlay_box"]
+    assert overlay_box["source"] == "selected_candidate_local_projection_bounds"
+    assert overlay_box["stroke"] == "#ff4040"
+    assert 0 <= overlay_box["left"] <= overlay_box["right"] < image_info["width"]
+    assert 0 <= overlay_box["top"] <= overlay_box["bottom"] < image_info["height"]
+
+    data_url = image_info["data_url"]
+    _, encoded = data_url.split(",", 1)
+    image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+    pixels = np.asarray(image)
+    red_overlay_pixels = np.count_nonzero(
+        (pixels[:, :, 0] >= 240) & (pixels[:, :, 1] <= 90) & (pixels[:, :, 2] <= 90)
+    )
+    assert red_overlay_pixels >= 20

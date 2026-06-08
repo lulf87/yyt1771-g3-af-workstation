@@ -72,6 +72,7 @@
 | P-0051 | OPEN | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | 待修复后用 Playback 1400/1460/1461 + Run 浏览器复测 |
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
+| P-0054 | RESOLVED_BROWSER_VERIFIED | P1 | vision / setup run diagnostics | Setup 和 Run 实时诊断图需要显示外包络矩形 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图矩形浏览器复测已通过 |
 
 ---
 
@@ -5967,6 +5968,103 @@ Result after fix: PASS, 43 tests passed under repository npm test invocation.
   - `output/playwright/p0053_setup_diagnostic_images_state.json`
   - `output/playwright/p0053_run_diagnostic_images.png`
   - `output/playwright/p0053_run_diagnostic_images_state.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0054 — Setup 和 Run 实时诊断图需要显示外包络矩形
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户要求 Setup / Run 下方实时诊断图中也显示实际检测到的外包络矩形，便于直接从 `Detected mask` 和 `Envelope contour` 图判断当前检测到的轮廓范围。P-0053 已新增实时 mask / contour 图，但诊断 PNG 本身仍未包含矩形边框，需要补齐。
+
+#### Expected
+
+```text
+1. Setup probe 后的 `Detected mask` 和 `Envelope contour` 诊断 PNG 内应显示外包络矩形。
+2. Run 最新帧实时诊断 PNG 内也应显示同一后端检测结果对应的外包络矩形。
+3. 矩形应由 backend 根据 selected_candidate 的 ROI-local 投影边界生成，frontend 只显示图像，不重新计算正式 ROI、A/B 或 distance。
+4. 正式 A/B、distance_px、主画布 overlay 和 temperature-distance 曲线不受影响。
+```
+
+#### Fix summary
+
+```text
+1. `backend/src/yyt1771_g3/vision/detectors.py`
+   - 从 selected candidate 的 `local_min_along_px` / `local_max_along_px` / `local_min_perpendicular_px` / `local_max_perpendicular_px` 生成 ROI-local `overlay_box`。
+   - 在 `Detected mask` 和 `Envelope contour` PNG 中直接绘制红色矩形描边。
+   - 每张诊断图同步返回 `overlay_box` 元数据，坐标体系标记为 `roi_local_pixel`。
+
+2. `frontend/src/api/client.ts`
+   - 增加可选 `DiagnosticOverlayBox` 类型解析，保留后端元数据；前端仍只渲染后端 `data_url`。
+
+3. `backend/tests/integration/test_probe_api.py`
+   - 覆盖 Setup probe 诊断图必须包含 `overlay_box` 和红色矩形像素。
+
+4. `backend/tests/integration/test_live_offline_run_api.py`
+   - 覆盖 Run stream 最新帧诊断图必须包含 `overlay_box` 和红色矩形像素。
+
+5. `frontend/tests/apiClientUrls.test.mjs`
+   - 覆盖 API client 能解析诊断图 overlay box 元数据。
+```
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Initial RED result: FAIL, 2 tests failed because `overlay_box` was missing.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Result after fix: PASS, 2 passed.
+
+PYTHONPATH=backend/src pytest backend/tests/unit/test_envelope_detectors.py backend/tests/integration/test_probe_api.py backend/tests/integration/test_live_offline_run_api.py -q
+Result: PASS, 12 passed.
+
+npm test -- tests/apiClientUrls.test.mjs
+Result: PASS, 43 tests passed under repository npm test invocation.
+
+npm run build
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright CLI, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps:
+  1. Restart backend 8020 with current branch code and open frontend 5179.
+  2. On Setup, keep `golden_a_20260522_dev_lab` selected and click `Probe current frame`.
+  3. Confirm Setup displays `Detection Diagnostics` with `Detected mask` and `Envelope contour`.
+  4. Read both diagnostic `<img>` elements into browser canvas and count red rectangle pixels.
+  5. Open Run page, start Live Offline Run, wait for latest frame diagnostic images.
+  6. Save Run screenshot and repeat browser canvas red-pixel check for both Run diagnostic images.
+- Expected: Setup and Run diagnostic PNGs both display backend-drawn outer-envelope rectangle, with nonzero red rectangle pixels in `Detected mask` and `Envelope contour`.
+- Actual:
+  - Setup probe returned `VALID`, `distance = 989.00 px`, and displayed `Detected mask` / `Envelope contour` at natural size `1270 × 382`.
+  - Setup red-pixel check: `Detected mask = 5428`, `Envelope contour = 5428`.
+  - Run displayed latest live diagnostic images at natural size `1270 × 382`.
+  - Run red-pixel check: `Detected mask = 5424`, `Envelope contour = 5424`.
+  - Manual Stop still showed existing P-0047 behavior (`Running` remained visible after click); Playwright browser was closed to cancel the stream. This is not introduced by P-0054 and remains tracked under P-0047.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0054_setup_diagnostic_rectangle.png`
+  - `output/playwright/p0054_run_diagnostic_rectangle.png`
 
 #### Final status
 

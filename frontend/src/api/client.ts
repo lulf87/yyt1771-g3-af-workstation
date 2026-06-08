@@ -123,11 +123,23 @@ export type DiagnosticImageInfo = {
   coordinates: string;
   width: number | null;
   height: number | null;
+  overlayBox: DiagnosticOverlayBox | null;
 };
 
 export type DiagnosticImages = {
   mask: DiagnosticImageInfo;
   contour: DiagnosticImageInfo;
+};
+
+export type DiagnosticOverlayBox = {
+  source: string;
+  coordinates: string;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  stroke: string;
+  strokeWidthPx: number;
 };
 
 export type ProbeResponse = {
@@ -471,7 +483,30 @@ function readDiagnosticImage(value: unknown, fallbackLabel: string): DiagnosticI
     src,
     coordinates: stringFromUnknown(item.coordinates) ?? "roi_local_pixel",
     width: numberFromUnknown(item.width),
-    height: numberFromUnknown(item.height)
+    height: numberFromUnknown(item.height),
+    overlayBox: readDiagnosticOverlayBox(item.overlay_box)
+  };
+}
+
+function readDiagnosticOverlayBox(value: unknown): DiagnosticOverlayBox | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+  const source = stringFromUnknown(item.source);
+  const coordinates = stringFromUnknown(item.coordinates) ?? "roi_local_pixel";
+  const left = numberFromUnknown(item.left);
+  const top = numberFromUnknown(item.top);
+  const right = numberFromUnknown(item.right);
+  const bottom = numberFromUnknown(item.bottom);
+  if (!source || left === null || top === null || right === null || bottom === null) return null;
+  return {
+    source,
+    coordinates,
+    left,
+    top,
+    right,
+    bottom,
+    stroke: stringFromUnknown(item.stroke) ?? "#ff4040",
+    strokeWidthPx: numberFromUnknown(item.stroke_width_px) ?? 1
   };
 }
 

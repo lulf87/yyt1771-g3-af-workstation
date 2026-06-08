@@ -6,7 +6,7 @@ import math
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from yyt1771_g3.core.coordinates import roi_local_to_measurement_point
@@ -202,7 +202,11 @@ def _finish_candidate_detection(
         "contour_direction_arrow": selected.metadata.get("contour_direction_arrow", []),
         "target_mask_pixels": int(np.count_nonzero(target)),
         "candidate_count": len(candidates),
-        "diagnostic_images": _diagnostic_images(target, config),
+        "diagnostic_images": _diagnostic_images(
+            target,
+            config,
+            overlay_box=_diagnostic_overlay_box(selected.metadata, target.shape),
+        ),
         "selection_state": {
             "pending_candidate_id": selection.state.pending_candidate_id,
             "pending_count": selection.state.pending_count,
@@ -744,26 +748,77 @@ def _kernel(size: int) -> np.ndarray:
     return np.ones((size, size), dtype=bool)
 
 
-def _diagnostic_images(target: np.ndarray, config: DetectorConfig) -> dict[str, dict[str, Any]]:
+def _diagnostic_images(
+    target: np.ndarray,
+    config: DetectorConfig,
+    *,
+    overlay_box: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
     mask = np.asarray(target, dtype=bool)
     contour = _outer_envelope_contour(mask, config)
     height, width = mask.shape
-    return {
+    images = {
         "mask": {
             "label": "Detected mask",
             "coordinates": "roi_local_pixel",
             "width": int(width),
             "height": int(height),
-            "data_url": _binary_mask_png_data_url(mask),
+            "data_url": _binary_mask_png_data_url(mask, overlay_box=overlay_box),
         },
         "contour": {
             "label": "Envelope contour",
             "coordinates": "roi_local_pixel",
             "width": int(width),
             "height": int(height),
-            "data_url": _binary_mask_png_data_url(contour),
+            "data_url": _binary_mask_png_data_url(contour, overlay_box=overlay_box),
         },
     }
+    if overlay_box is not None:
+        images["mask"]["overlay_box"] = dict(overlay_box)
+        images["contour"]["overlay_box"] = dict(overlay_box)
+    return images
+
+
+def _diagnostic_overlay_box(metadata: dict[str, Any], shape: tuple[int, ...]) -> dict[str, Any] | None:
+    if len(shape) < 2:
+        return None
+    height, width = int(shape[0]), int(shape[1])
+    if height <= 0 or width <= 0:
+        return None
+
+    required_keys = (
+        "local_min_along_px",
+        "local_max_along_px",
+        "local_min_perpendicular_px",
+        "local_max_perpendicular_px",
+    )
+    try:
+        min_u, max_u, min_v, max_v = (float(metadata[key]) for key in required_keys)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (min_u, max_u, min_v, max_v)):
+        return None
+
+    left = _clamp_int(math.floor(min(min_u, max_u)), 0, width - 1)
+    right = _clamp_int(math.ceil(max(min_u, max_u)), 0, width - 1)
+    top = _clamp_int(math.floor(min(min_v, max_v)), 0, height - 1)
+    bottom = _clamp_int(math.ceil(max(min_v, max_v)), 0, height - 1)
+    if right < left or bottom < top:
+        return None
+    return {
+        "source": "selected_candidate_local_projection_bounds",
+        "coordinates": "roi_local_pixel",
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+        "stroke": "#ff4040",
+        "stroke_width_px": 2,
+    }
+
+
+def _clamp_int(value: float, lower: int, upper: int) -> int:
+    return int(min(max(value, lower), upper))
 
 
 def _outer_envelope_contour(mask: np.ndarray, config: DetectorConfig) -> np.ndarray:
@@ -777,9 +832,20 @@ def _outer_envelope_contour(mask: np.ndarray, config: DetectorConfig) -> np.ndar
     return envelope & ~eroded
 
 
-def _binary_mask_png_data_url(mask: np.ndarray) -> str:
+def _binary_mask_png_data_url(mask: np.ndarray, *, overlay_box: dict[str, Any] | None = None) -> str:
     image_array = np.where(np.asarray(mask, dtype=bool), 255, 0).astype(np.uint8)
-    image = Image.fromarray(np.ascontiguousarray(image_array), mode="L")
+    rgb_array = np.repeat(np.ascontiguousarray(image_array)[:, :, None], 3, axis=2)
+    image = Image.fromarray(rgb_array, mode="RGB")
+    if overlay_box is not None:
+        draw = ImageDraw.Draw(image)
+        draw.rectangle(
+            [
+                (int(overlay_box["left"]), int(overlay_box["top"])),
+                (int(overlay_box["right"]), int(overlay_box["bottom"])),
+            ],
+            outline=(255, 64, 64),
+            width=max(1, int(overlay_box.get("stroke_width_px", 2))),
+        )
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
