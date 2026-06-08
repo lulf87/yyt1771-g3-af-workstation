@@ -17,6 +17,7 @@ import {
   Usb
 } from "lucide-react";
 import {
+  ApiError,
   apiUrlFromPath,
   artifactDownloadUrl,
   createLiveOfflineRun,
@@ -32,10 +33,13 @@ import {
   listOfflineDatasets,
   previewRealCamera,
   probeFrame,
+  probeRealCameraSetupFrame,
   realCameraPreviewImageUrl,
   recomputeRunAnalysis,
+  runFrameImageUrl,
   streamLiveOfflineRun,
   type ABPoint,
+  type ApiErrorDetail,
   type AfasAnalysisParameters,
   type AfasPreprocessingParameters,
   type AnalysisResult,
@@ -48,6 +52,7 @@ import {
   type OfflineDatasetListItem,
   type OfflineDatasetSummary,
   type ProbeResponse,
+  type RealCameraSetupProbeResponse,
   type RunResponse,
   type RotatedROI,
   type SerialPortInfo,
@@ -68,9 +73,45 @@ import {
   type RoiResizeHandle
 } from "./geometry/roiInteraction";
 import {
+  SETUP_SOURCE_OPTIONS,
+  buildRunSetupSummary,
+  buildSetupTemperatureSummary,
+  confirmPreviewRoi,
+  createDefaultRoiForShape,
+  createRealCameraMeasurementFromShape,
+  freezePreview,
+  frozenFrameSetupChangeMessage,
+  previewRefreshStatusLabel,
+  resumeLivePreview,
+  runModeForSetupSource,
+  runResultMatchesSetupSource,
+  shouldPollRealCameraPreview,
+  shouldRefreshRealCameraFrameAfterSetupChange,
+  shouldRefreshRealCameraFrameAfterRoiCommit,
+  updateRealCameraPreviewState,
+  type PreviewRefreshStatus,
+  type RealCameraPreviewMode,
+  type RealCameraSetupChange,
+  type RealCameraPreviewState,
+  type SetupTemperatureError,
+  type SetupSourceKind
+} from "./setupSources";
+import {
+  buildAnalysisAfasModel,
   buildAnalysisCurveSpecs,
   buildCurveViewModel,
+  buildIndustrialCurveFrameModel,
   buildRunCurveSpecs,
+  buildRunTrendModel,
+  resolveRunTrendStickyYAxisRange,
+  type AnalysisAfasConstructionGuide,
+  type AnalysisAfasDataPoint,
+  type AnalysisAfasLayerState,
+  type AnalysisAfasMarker,
+  type AnalysisAfasModel,
+  type IndustrialCurveViewVariant,
+  type RunTrendPoint,
+  type RunTrendYAxisRange,
   type CurveSpec
 } from "./curves";
 import "./styles.css";
@@ -88,6 +129,13 @@ type LiveRunState = {
   processedFrames: number;
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
+};
+
+type CameraPreviewError = {
+  camera_status: string;
+  message: string;
+  details: Record<string, unknown>;
+  http_status: number | null;
 };
 
 const DEFAULT_CONFIG = {
@@ -131,9 +179,24 @@ const DEFAULT_AFAS_ANALYSIS_FORM: AfasAnalysisFormState = {
 };
 
 const LIVE_FRAME_DISPLAY_MAX_WIDTH = 1024;
+const REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS = 1000;
+const REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS = 500;
+
+const OBJECT_CLASS_OPTIONS = [
+  { value: "A_BALLOON_ENVELOPE", label: "A balloon envelope", detector: "BalloonEnvelopeDetector", widthMode: "max_width" as const },
+  { value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "BundleEnvelopeDetector", widthMode: "max_width" as const },
+  { value: "D_RESERVED_OBJECT", label: "D reserved object", detector: "ReservedObjectDetector", widthMode: "max_width" as const }
+];
+
+const DETECTOR_OPTIONS = [
+  { value: "BalloonEnvelopeDetector", label: "BalloonEnvelopeDetector" },
+  { value: "BundleEnvelopeDetector", label: "BundleEnvelopeDetector" },
+  { value: "ReservedObjectDetector", label: "ReservedObjectDetector" }
+];
 
 function App() {
   const [page, setPage] = useState<Page>("setup");
+  const [setupSource, setSetupSource] = useState<SetupSourceKind>("offline_dataset");
   const [datasets, setDatasets] = useState<OfflineDatasetListItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [summary, setSummary] = useState<OfflineDatasetSummary | null>(null);
@@ -144,7 +207,11 @@ function App() {
   const [liveRun, setLiveRun] = useState<LiveRunState | null>(null);
   const [cameraPreview, setCameraPreview] = useState<CameraPreviewResponse | null>(null);
   const [cameraPreviewUrl, setCameraPreviewUrl] = useState("");
+  const [cameraPreviewError, setCameraPreviewError] = useState<CameraPreviewError | null>(null);
+  const [cameraPreviewRefreshStatus, setCameraPreviewRefreshStatus] = useState<PreviewRefreshStatus>("idle");
+  const [cameraPreviewState, setCameraPreviewState] = useState<RealCameraPreviewState | null>(null);
   const [temperatureStatus, setTemperatureStatus] = useState<TemperatureStatusResponse | null>(null);
+  const [temperatureError, setTemperatureError] = useState<SetupTemperatureError | null>(null);
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
@@ -157,10 +224,36 @@ function App() {
   const runAbortRef = useRef<AbortController | null>(null);
   const liveRunIdRef = useRef<string | null>(null);
   const liveRunProcessedFramesRef = useRef(0);
+  const cameraPreviewRequestInFlightRef = useRef(false);
+  const measurementRef = useRef<MeasurementDefinition | null>(null);
+  const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
 
   useEffect(() => {
     void refreshDatasets();
   }, []);
+
+  useEffect(() => {
+    measurementRef.current = measurement;
+  }, [measurement]);
+
+  useEffect(() => {
+    cameraPreviewModeRef.current = cameraPreviewState?.mode ?? "live";
+  }, [cameraPreviewState?.mode]);
+
+  useEffect(() => {
+    if (page !== "setup" || setupSource !== "real_camera") return;
+    if (temperatureStatus || temperatureError || checkingTemperature) return;
+    void readCurrentTemperature();
+  }, [page, setupSource, temperatureStatus, temperatureError, checkingTemperature]);
+
+  useEffect(() => {
+    if (!shouldPollRealCameraPreview(page, setupSource, cameraPreviewState)) return;
+    void previewRealCameraFrame("live");
+    const timer = window.setInterval(() => {
+      void previewRealCameraFrame("live");
+    }, REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [page, setupSource, cameraPreviewState?.mode, cameraPreviewState?.cameraStatus]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -179,10 +272,8 @@ function App() {
         setProbe(null);
         setRunResult(null);
         setLiveRun(null);
-        setCameraPreview(null);
-        setCameraPreviewUrl("");
         setTemperatureStatus(null);
-        setMeasurement(createDefaultMeasurement(payload.dataset, payload.first_frame.shape));
+        applyMeasurement(createDefaultMeasurement(payload.dataset, payload.first_frame.shape));
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -220,6 +311,34 @@ function App() {
     try {
       const response = await probeFrame(selectedId, targetFrame, measurement);
       setProbe(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setProbe(null);
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  async function runRealCameraSetupProbe() {
+    const currentMeasurement = measurementRef.current;
+    if (!currentMeasurement) return;
+    const isFrozen = cameraPreviewModeRef.current === "frozen";
+    setProbing(true);
+    setError("");
+    try {
+      const response = await probeRealCameraSetupFrame(
+        currentMeasurement,
+        isFrozen
+          ? {
+              framePngDataUrl: requireSetupFrameDataUrl(cameraPreviewUrl),
+              frameTimestampMs: cameraPreview?.timestamp_ms ?? cameraPreviewState?.timestampMs ?? null,
+              cameraMeta: cameraPreview?.camera_meta ?? {}
+            }
+          : undefined
+      );
+      applyRealCameraProbeResponse(response, isFrozen ? "frozen" : "live");
+      setProbe(response);
+      setCameraPreviewRefreshStatus("ok");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setProbe(null);
@@ -323,29 +442,122 @@ function App() {
     runAbortRef.current?.abort();
   }
 
-  async function previewRealCameraFrame() {
+  function chooseSetupSource(source: SetupSourceKind) {
+    setSetupSource(source);
+    setProbe(null);
+    setRunResult(null);
+    setLiveRun(null);
+    setMeasurement((current) => {
+      if (!current) return current;
+      const next = { ...current, source };
+      measurementRef.current = next;
+      return next;
+    });
+    if (source === "real_camera") {
+      setCameraPreviewState((current) => resumeLivePreview(current));
+    }
+  }
+
+  function applyMeasurement(next: MeasurementDefinition) {
+    measurementRef.current = next;
+    setMeasurement(next);
+    if (next.source === "real_camera") {
+      setCameraPreviewState((current) => (current ? { ...current, roi: next.roi } : current));
+    }
+  }
+
+  async function previewRealCameraFrame(
+    mode: RealCameraPreviewMode = cameraPreviewState?.mode ?? "live",
+    options: { clearProbe?: boolean } = {}
+  ) {
+    const clearProbe = options.clearProbe ?? true;
+    if (cameraPreviewRequestInFlightRef.current) return;
+    cameraPreviewRequestInFlightRef.current = true;
     setPreviewingCamera(true);
-    setError("");
+    setCameraPreviewRefreshStatus("refreshing");
+    setCameraPreviewError(null);
     try {
       const response = await previewRealCamera();
+      if (mode === "live" && cameraPreviewModeRef.current === "frozen") {
+        return;
+      }
+      const nextMeasurement = createRealCameraMeasurementFromShape(measurementRef.current, response.shape);
+      const effectiveMode = mode === "frozen" ? "frozen" : cameraPreviewModeRef.current;
       setCameraPreview(response);
-      setCameraPreviewUrl(realCameraPreviewImageUrl(Date.now()));
+      setCameraPreviewUrl(response.image_data_url ?? realCameraPreviewImageUrl(Date.now()));
+      if (clearProbe) setProbe(null);
+      setCameraPreviewState((current) =>
+        updateRealCameraPreviewState(current, response, nextMeasurement.roi, effectiveMode)
+      );
+      applyMeasurement(nextMeasurement);
+      setCameraPreviewRefreshStatus("ok");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setCameraPreview(null);
-      setCameraPreviewUrl("");
+      if (mode === "live" && cameraPreviewModeRef.current === "frozen") {
+        return;
+      }
+      setCameraPreviewError(cameraPreviewErrorFromUnknown(err));
+      setCameraPreviewRefreshStatus("unavailable");
+      setCameraPreviewState((current) =>
+        updateRealCameraPreviewState(
+          current,
+          {
+            timestamp_ms: current?.timestampMs ?? null,
+            shape: current?.shape ?? [],
+            camera_status: "unavailable"
+          },
+          measurementRef.current?.roi ?? null,
+          mode === "frozen" ? "frozen" : cameraPreviewModeRef.current
+        )
+      );
     } finally {
+      cameraPreviewRequestInFlightRef.current = false;
       setPreviewingCamera(false);
     }
+  }
+
+  function freezeRealCameraPreview() {
+    cameraPreviewModeRef.current = "frozen";
+    setCameraPreviewState((current) => freezePreview(current));
+  }
+
+  function resumeRealCameraPreview() {
+    cameraPreviewModeRef.current = "live";
+    setCameraPreviewState((current) => resumeLivePreview(current));
+  }
+
+  function refreshRealCameraSetupFrame() {
+    void previewRealCameraFrame(cameraPreviewState?.mode ?? "live");
+  }
+
+  function applyRealCameraProbeResponse(response: RealCameraSetupProbeResponse, mode: RealCameraPreviewMode) {
+    const nextMeasurement = response.measurement_definition;
+    setCameraPreview(response);
+    setCameraPreviewUrl(response.image_data_url);
+    setCameraPreviewError(null);
+    setCameraPreviewState((current) =>
+      updateRealCameraPreviewState(current, response, nextMeasurement.roi, mode)
+    );
+    applyMeasurement(nextMeasurement);
+  }
+
+  function requireSetupFrameDataUrl(url: string): string {
+    if (url.startsWith("data:image/png;base64,")) return url;
+    throw new Error("Frozen setup frame is not available for probe. Capture a setup frame before probing.");
+  }
+
+  function confirmRealCameraPreviewRoi() {
+    setCameraPreviewState((current) => confirmPreviewRoi(current, measurementRef.current?.roi ?? null));
   }
 
   async function readCurrentTemperature() {
     setCheckingTemperature(true);
     setError("");
+    setTemperatureError(null);
     try {
       setTemperatureStatus(await getTemperatureStatus());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setTemperatureError(temperatureErrorFromUnknown(err));
       setTemperatureStatus(null);
     } finally {
       setCheckingTemperature(false);
@@ -355,10 +567,12 @@ function App() {
   async function refreshSerialPorts() {
     setLoadingSerialPorts(true);
     setError("");
+    setTemperatureError(null);
     try {
       setSerialPorts(await listTemperatureSerialPorts());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setTemperatureError(temperatureErrorFromUnknown(err));
       setSerialPorts([]);
     } finally {
       setLoadingSerialPorts(false);
@@ -369,6 +583,9 @@ function App() {
     if (!measurement) return;
     setRunningCamera(true);
     setError("");
+    setRunResult(null);
+    setProbe(null);
+    setLiveRun(null);
     try {
       const response = await createRealCameraRun(measurement, {
         maxFrames: measurement.detector_config.max_frames_per_run ?? 120,
@@ -376,8 +593,6 @@ function App() {
         cameraProfile: { pixel_format: "mono8" }
       });
       setRunResult(response);
-      setProbe(null);
-      setLiveRun(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -433,7 +648,10 @@ function App() {
             <button
               className={dataset.id === selectedId ? "datasetItem selected" : "datasetItem"}
               key={dataset.id}
-              onClick={() => setSelectedId(dataset.id)}
+              onClick={() => {
+                setSetupSource("offline_dataset");
+                setSelectedId(dataset.id);
+              }}
               type="button"
             >
               <span className="datasetId">{dataset.id}</span>
@@ -456,16 +674,22 @@ function App() {
               dataset={selectedDataset}
               summary={summary}
               measurement={measurement}
-              onMeasurement={setMeasurement}
+              onMeasurement={applyMeasurement}
               frameIndex={frameIndex}
               onFrameIndex={setFrameIndex}
               frameUrl={frameUrl}
+              setupSource={setupSource}
+              onSetupSource={chooseSetupSource}
               probe={probe}
               runResult={runResult}
               liveRun={liveRun}
               cameraPreview={cameraPreview}
               cameraPreviewUrl={cameraPreviewUrl}
+              cameraPreviewError={cameraPreviewError}
+              cameraPreviewRefreshStatus={cameraPreviewRefreshStatus}
+              cameraPreviewState={cameraPreviewState}
               temperatureStatus={temperatureStatus}
+              temperatureError={temperatureError}
               serialPorts={serialPorts}
               probing={probing}
               running={running}
@@ -474,9 +698,13 @@ function App() {
               checkingTemperature={checkingTemperature}
               loadingSerialPorts={loadingSerialPorts}
               onProbe={runProbe}
+              onProbeRealCameraSetup={runRealCameraSetupProbe}
               onStartRun={startLiveOfflineRun}
               onStopRun={stopLiveOfflineRun}
-              onPreviewRealCamera={previewRealCameraFrame}
+              onPreviewRealCamera={refreshRealCameraSetupFrame}
+              onFreezeRealCameraPreview={freezeRealCameraPreview}
+              onResumeRealCameraPreview={resumeRealCameraPreview}
+              onConfirmRealCameraPreviewRoi={confirmRealCameraPreviewRoi}
               onStartRealCameraRun={startRealCameraRun}
               onReadCurrentTemperature={readCurrentTemperature}
               onRefreshSerialPorts={refreshSerialPorts}
@@ -518,12 +746,18 @@ function PageContent({
   frameIndex,
   onFrameIndex,
   frameUrl,
+  setupSource,
+  onSetupSource,
   probe,
   runResult,
   liveRun,
   cameraPreview,
   cameraPreviewUrl,
+  cameraPreviewError,
+  cameraPreviewRefreshStatus,
+  cameraPreviewState,
   temperatureStatus,
+  temperatureError,
   serialPorts,
   probing,
   running,
@@ -532,9 +766,13 @@ function PageContent({
   checkingTemperature,
   loadingSerialPorts,
   onProbe,
+  onProbeRealCameraSetup,
   onStartRun,
   onStopRun,
   onPreviewRealCamera,
+  onFreezeRealCameraPreview,
+  onResumeRealCameraPreview,
+  onConfirmRealCameraPreviewRoi,
   onStartRealCameraRun,
   onReadCurrentTemperature,
   onRefreshSerialPorts,
@@ -547,12 +785,18 @@ function PageContent({
   frameIndex: number;
   onFrameIndex: (frameIndex: number) => void;
   frameUrl: string;
+  setupSource: SetupSourceKind;
+  onSetupSource: (source: SetupSourceKind) => void;
   probe: ProbeResponse | null;
   runResult: RunResponse | null;
   liveRun: LiveRunState | null;
   cameraPreview: CameraPreviewResponse | null;
   cameraPreviewUrl: string;
+  cameraPreviewError: CameraPreviewError | null;
+  cameraPreviewRefreshStatus: PreviewRefreshStatus;
+  cameraPreviewState: RealCameraPreviewState | null;
   temperatureStatus: TemperatureStatusResponse | null;
+  temperatureError: SetupTemperatureError | null;
   serialPorts: SerialPortInfo[];
   probing: boolean;
   running: boolean;
@@ -561,73 +805,323 @@ function PageContent({
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
   onProbe: (frameIndex?: number) => void;
+  onProbeRealCameraSetup: () => void;
   onStartRun: () => void;
   onStopRun: () => void;
   onPreviewRealCamera: () => void;
+  onFreezeRealCameraPreview: () => void;
+  onResumeRealCameraPreview: () => void;
+  onConfirmRealCameraPreviewRoi: () => void;
   onStartRealCameraRun: () => void;
   onReadCurrentTemperature: () => void;
   onRefreshSerialPorts: () => void;
   page: Page;
 }) {
+  const setupChangeRefreshTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (setupChangeRefreshTimerRef.current !== null) {
+        window.clearTimeout(setupChangeRefreshTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (page === "setup" && setupSource === "real_camera" && cameraPreviewState?.mode === "live") return;
+    if (setupChangeRefreshTimerRef.current !== null) {
+      window.clearTimeout(setupChangeRefreshTimerRef.current);
+      setupChangeRefreshTimerRef.current = null;
+    }
+  }, [page, setupSource, cameraPreviewState?.mode]);
+
   if (page === "run") {
     return (
       <RunPage
         dataset={dataset}
         summary={summary}
         measurement={measurement}
+        setupSource={setupSource}
         startFrame={frameIndex}
         runResult={runResult}
         liveRun={liveRun}
-        cameraPreview={cameraPreview}
-        cameraPreviewUrl={cameraPreviewUrl}
-        temperatureStatus={temperatureStatus}
-        serialPorts={serialPorts}
         running={running}
-        previewingCamera={previewingCamera}
         runningCamera={runningCamera}
-        checkingTemperature={checkingTemperature}
-        loadingSerialPorts={loadingSerialPorts}
         onStartRun={onStartRun}
         onStopRun={onStopRun}
-        onPreviewRealCamera={onPreviewRealCamera}
         onStartRealCameraRun={onStartRealCameraRun}
-        onReadCurrentTemperature={onReadCurrentTemperature}
-        onRefreshSerialPorts={onRefreshSerialPorts}
       />
     );
   }
   if (page === "analysis") {
     return <AnalysisPage probe={probe} runResult={runResult} liveRun={liveRun} />;
   }
+  const isSetup = page === "setup";
+  const isRealCameraSetup = isSetup && setupSource === "real_camera";
+  const activeFrameTitle = isRealCameraSetup
+    ? `Real camera · ${cameraPreviewState?.mode === "frozen" ? "Frozen frame" : "Live preview frame"}`
+    : `${dataset.id} · frame ${frameIndex}`;
+  const activeFrameUrl = isRealCameraSetup ? cameraPreviewUrl : frameUrl;
+  const activeSourceShape = isRealCameraSetup ? cameraPreview?.shape ?? cameraPreviewState?.shape ?? summary.first_frame.shape : summary.first_frame.shape;
+  const shouldRefreshAfterRoiCommit = shouldRefreshRealCameraFrameAfterRoiCommit(page, setupSource, cameraPreviewState);
+  const frozenSetupMessage = frozenFrameSetupChangeMessage(page, setupSource, cameraPreviewState);
+  const displayedProbe = isRealCameraSetup
+    ? probe?.dataset_id === "real_camera"
+      ? probe
+      : null
+    : probe?.dataset_id === "real_camera"
+      ? null
+      : probe;
+
+  function scheduleRealCameraSetupRefresh(change: RealCameraSetupChange) {
+    if (!shouldRefreshRealCameraFrameAfterSetupChange(page, setupSource, cameraPreviewState, change)) return;
+    if (setupChangeRefreshTimerRef.current !== null) {
+      window.clearTimeout(setupChangeRefreshTimerRef.current);
+    }
+    setupChangeRefreshTimerRef.current = window.setTimeout(() => {
+      setupChangeRefreshTimerRef.current = null;
+      onPreviewRealCamera();
+    }, REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS);
+  }
+
+  function updateRoi(roi: RotatedROI) {
+    onMeasurement({ ...measurement, roi });
+  }
+
+  function commitRoi(roi: RotatedROI) {
+    onMeasurement({ ...measurement, roi });
+    if (setupChangeRefreshTimerRef.current !== null) {
+      window.clearTimeout(setupChangeRefreshTimerRef.current);
+      setupChangeRefreshTimerRef.current = null;
+    }
+    if (shouldRefreshAfterRoiCommit) {
+      onPreviewRealCamera();
+    }
+  }
+
+  function resetRoi() {
+    const nextRoi = createDefaultRoiForShape(activeSourceShape);
+    onMeasurement({ ...measurement, roi: nextRoi });
+    scheduleRealCameraSetupRefresh({ kind: "roi" });
+  }
+
   return (
     <div className="pageGrid workGrid">
       <section className="toolPanel">
         <h2>{page === "setup" ? "Setup" : "Playback"}</h2>
-        <FrameControls
-          frameIndex={frameIndex}
-          frameCount={dataset.frame_count}
-          onFrameIndex={onFrameIndex}
-          onProbe={onProbe}
-          probing={probing}
-        />
-        <MeasurementControls measurement={measurement} onMeasurement={onMeasurement} />
-        <TemperatureControlPanel
-          currentTemperature={probe?.detection_result.temperature_celsius ?? null}
+        {isSetup ? <SetupSourceControls source={setupSource} onSource={onSetupSource} /> : null}
+        {isRealCameraSetup ? (
+          <CameraSetupStatusPanel
+            preview={cameraPreview}
+            previewError={cameraPreviewError}
+            previewState={cameraPreviewState}
+            refreshStatus={cameraPreviewRefreshStatus}
+            previewing={previewingCamera}
+            probing={probing}
+            onRefresh={onPreviewRealCamera}
+            onProbe={onProbeRealCameraSetup}
+            onFreeze={onFreezeRealCameraPreview}
+            onResume={onResumeRealCameraPreview}
+            onConfirmRoi={onConfirmRealCameraPreviewRoi}
+          />
+        ) : (
+          <FrameControls
+            frameIndex={frameIndex}
+            frameCount={dataset.frame_count}
+            onFrameIndex={onFrameIndex}
+            onProbe={onProbe}
+            probing={probing}
+          />
+        )}
+        {frozenSetupMessage ? <div className="inlineWarning">{frozenSetupMessage}</div> : null}
+        <MeasurementControls
           measurement={measurement}
           onMeasurement={onMeasurement}
+          onResetRoi={resetRoi}
+          onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
         />
-        <DetectorStatus dataset={dataset} summary={summary} probe={probe} />
+        <DetectorSetupControls
+          measurement={measurement}
+          onMeasurement={onMeasurement}
+          onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
+        />
+        <TemperatureControlPanel
+          measurement={measurement}
+          onMeasurement={onMeasurement}
+          temperatureStatus={temperatureStatus}
+          temperatureError={temperatureError}
+          serialPorts={serialPorts}
+          fallbackTemperature={isRealCameraSetup ? null : displayedProbe?.detection_result.temperature_celsius ?? null}
+          checkingTemperature={checkingTemperature}
+          loadingSerialPorts={loadingSerialPorts}
+          onReadCurrentTemperature={onReadCurrentTemperature}
+          onRefreshSerialPorts={onRefreshSerialPorts}
+        />
+        {isRealCameraSetup ? (
+          <SetupProbeStatus sourceLabel="Real camera setup probe" probe={displayedProbe} />
+        ) : (
+          <DetectorStatus dataset={dataset} summary={summary} probe={displayedProbe} />
+        )}
       </section>
-      <FrameCanvas
-        title={`${dataset.id} · frame ${frameIndex}`}
-        imageUrl={frameUrl}
-        sourceShape={summary.first_frame.shape}
-        roi={measurement.roi}
-        abPoints={probe?.detection_result.ab_points ?? null}
-        debugArtifacts={probe?.detection_result.debug_artifacts ?? null}
-        onRoiChange={(roi) => onMeasurement({ ...measurement, roi })}
-      />
+      {isRealCameraSetup && !activeFrameUrl ? (
+        <PreviewPlaceholder
+          title={activeFrameTitle}
+          refreshStatus={cameraPreviewRefreshStatus}
+          previewError={cameraPreviewError}
+        />
+      ) : (
+        <FrameCanvas
+          title={activeFrameTitle}
+          imageUrl={activeFrameUrl}
+          sourceShape={activeSourceShape}
+          roi={measurement.roi}
+          abPoints={displayedProbe?.detection_result.ab_points ?? null}
+          debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null}
+          onRoiChange={updateRoi}
+          onRoiCommit={isRealCameraSetup ? commitRoi : undefined}
+        />
+      )}
     </div>
+  );
+}
+
+function SetupSourceControls({
+  source,
+  onSource
+}: {
+  source: SetupSourceKind;
+  onSource: (source: SetupSourceKind) => void;
+}) {
+  return (
+    <div className="controlStack">
+      <h3>Source</h3>
+      <div className="segmented wide" aria-label="Setup source">
+        {SETUP_SOURCE_OPTIONS.map((option) => (
+          <button
+            className={source === option.kind ? "active" : ""}
+            key={option.kind}
+            onClick={() => onSource(option.kind)}
+            type="button"
+          >
+            {option.kind === "offline_dataset" ? <Database size={15} aria-hidden="true" /> : <Camera size={15} aria-hidden="true" />}
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CameraSetupStatusPanel({
+  preview,
+  previewError,
+  previewState,
+  refreshStatus,
+  previewing,
+  probing,
+  onRefresh,
+  onProbe,
+  onFreeze,
+  onResume,
+  onConfirmRoi
+}: {
+  preview: CameraPreviewResponse | null;
+  previewError: CameraPreviewError | null;
+  previewState: RealCameraPreviewState | null;
+  refreshStatus: PreviewRefreshStatus;
+  previewing: boolean;
+  probing: boolean;
+  onRefresh: () => void;
+  onProbe: () => void;
+  onFreeze: () => void;
+  onResume: () => void;
+  onConfirmRoi: () => void;
+}) {
+  const mode = previewState?.mode ?? "live";
+  const isFrozen = mode === "frozen";
+  return (
+    <div className="controlStack">
+      <h3>Real Camera Preview</h3>
+      <div className="segmented wide" aria-label="Real camera preview mode">
+        <button className={!isFrozen ? "active" : ""} onClick={onResume} type="button">
+          <Play size={15} aria-hidden="true" />
+          Live
+        </button>
+        <button className={isFrozen ? "active" : ""} disabled={!preview} onClick={onFreeze} type="button">
+          <Square size={15} aria-hidden="true" />
+          Freeze
+        </button>
+      </div>
+      <dl className="metricGrid compact">
+        <Metric label="Preview mode" value={isFrozen ? "Frozen frame" : "Live"} />
+        <Metric label="camera_status" value={preview?.camera_status ?? previewError?.camera_status ?? "Not previewed"} />
+        <Metric label="model" value={previewValue(preview, "model")} />
+        <Metric label="serial_number" value={previewValue(preview, "serial_number")} />
+        <Metric label="ip" value={previewValue(preview, "ip")} />
+        <Metric label="pixel_format" value={previewValue(preview, "pixel_format")} />
+        <Metric label="Frame shape" value={preview ? preview.shape.join(" × ") : "None"} />
+        <Metric label="Timestamp" value={preview?.timestamp_ms ?? "None"} />
+        <Metric label="Frozen timestamp" value={previewState?.frozenTimestampMs ?? "None"} />
+        <Metric label="Live refresh" value={isFrozen ? "Paused" : `${1000 / REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS} fps UI preview`} />
+        <Metric label="Preview refresh" value={previewRefreshStatusLabel(refreshStatus)} />
+      </dl>
+      <div className="buttonPair">
+        <button className="secondaryButton" disabled={previewing} onClick={onRefresh} type="button">
+          <RefreshCcw size={16} aria-hidden="true" />
+          {previewing ? "Refreshing" : isFrozen ? "Capture new setup frame" : "Refresh frame"}
+        </button>
+        <button className="primaryButton" disabled={probing || (!preview && isFrozen)} onClick={onProbe} type="button">
+          <SquareDashedMousePointer size={16} aria-hidden="true" />
+          {probing ? "Probing" : "Probe current frame"}
+        </button>
+      </div>
+      {isFrozen ? (
+        <button className="primaryButton" onClick={onResume} type="button">
+          <Play size={16} aria-hidden="true" />
+          Resume live
+        </button>
+      ) : (
+        <button className="secondaryButton" disabled={!preview} onClick={onFreeze} type="button">
+          <Square size={16} aria-hidden="true" />
+          Freeze
+        </button>
+      )}
+      {previewState?.roiNeedsReconfirm ? (
+        <div className="inlineWarning">
+          <span>{previewState.shapeChangeMessage}</span>
+          <button className="secondaryButton compactButton" onClick={onConfirmRoi} type="button">
+            Confirm ROI
+          </button>
+        </div>
+      ) : null}
+      {previewError ? (
+        <details className="structuredError" open>
+          <summary>{previewError.message}</summary>
+          <pre>{JSON.stringify(previewError, null, 2)}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function PreviewPlaceholder({
+  title,
+  refreshStatus,
+  previewError
+}: {
+  title: string;
+  refreshStatus: PreviewRefreshStatus;
+  previewError: CameraPreviewError | null;
+}) {
+  return (
+    <figure className="frameCanvasFigure">
+      <figcaption>{title}</figcaption>
+      <div className="frameCanvas previewPlaceholder">
+        <div className={previewError ? "frameCanvasStatus error" : "frameCanvasStatus"}>
+          {previewError ? previewError.message : previewRefreshStatusLabel(refreshStatus)}
+        </div>
+      </div>
+    </figure>
   );
 }
 
@@ -676,23 +1170,31 @@ function FrameControls({
 
 function MeasurementControls({
   measurement,
-  onMeasurement
+  onMeasurement,
+  onResetRoi,
+  onPreviewAffectingChange
 }: {
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
+  onResetRoi?: () => void;
+  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
 }) {
   function patchRoi(patch: Partial<RotatedROI>) {
     onMeasurement({ ...measurement, roi: { ...measurement.roi, ...patch } });
+  }
+
+  function commitRoiField() {
+    onPreviewAffectingChange?.({ kind: "roi" });
   }
 
   return (
     <div className="controlStack">
       <h3>Measurement ROI</h3>
       <div className="twoColumnControls">
-        <NumberField label="Center X" value={measurement.roi.center_x} onChange={(v) => patchRoi({ center_x: v })} />
-        <NumberField label="Center Y" value={measurement.roi.center_y} onChange={(v) => patchRoi({ center_y: v })} />
-        <NumberField label="Width" value={measurement.roi.width} onChange={(v) => patchRoi({ width: Math.max(1, v) })} />
-        <NumberField label="Height" value={measurement.roi.height} onChange={(v) => patchRoi({ height: Math.max(1, v) })} />
+        <NumberField label="Center X" value={measurement.roi.center_x} onChange={(v) => patchRoi({ center_x: v })} onCommit={commitRoiField} />
+        <NumberField label="Center Y" value={measurement.roi.center_y} onChange={(v) => patchRoi({ center_y: v })} onCommit={commitRoiField} />
+        <NumberField label="Width" value={measurement.roi.width} onChange={(v) => patchRoi({ width: Math.max(1, v) })} onCommit={commitRoiField} />
+        <NumberField label="Height" value={measurement.roi.height} onChange={(v) => patchRoi({ height: Math.max(1, v) })} onCommit={commitRoiField} />
       </div>
       <label className="field">
         <span>
@@ -701,24 +1203,184 @@ function MeasurementControls({
         </span>
         <input
           onChange={(event) => patchRoi({ angle_deg: Number(event.target.value) })}
+          onBlur={commitRoiField}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitRoiField();
+          }}
           step={0.5}
           type="number"
           value={roundForInput(measurement.roi.angle_deg)}
         />
       </label>
+      {onResetRoi ? (
+        <button className="secondaryButton" onClick={onResetRoi} type="button">
+          <SquareDashedMousePointer size={16} aria-hidden="true" />
+          New / reset ROI
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function DetectorSetupControls({
+  measurement,
+  onMeasurement,
+  onPreviewAffectingChange
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
+}) {
+  function patchMeasurement(patch: Partial<MeasurementDefinition>, change: RealCameraSetupChange) {
+    onMeasurement({ ...measurement, ...patch });
+    onPreviewAffectingChange?.(change);
+  }
+
+  function patchDetectorConfig(key: keyof MeasurementDefinition["detector_config"], value: number) {
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        [key]: Math.max(1, Math.round(value))
+      }
+    });
+  }
+
+  function commitDetectorConfig(key: string) {
+    onPreviewAffectingChange?.({ kind: "detector_config", key });
+  }
+
+  function changeObjectClass(value: string) {
+    const option = OBJECT_CLASS_OPTIONS.find((item) => item.value === value);
+    patchMeasurement(
+      {
+        object_class: value,
+        detector: option?.detector ?? measurement.detector,
+        width_mode: option?.widthMode ?? "max_width"
+      },
+      { kind: "object_class" }
+    );
+  }
+
+  return (
+    <div className="controlStack">
+      <h3>Detector Setup</h3>
+      <label className="field">
+        <span>Object class</span>
+        <select onChange={(event) => changeObjectClass(event.target.value)} value={measurement.object_class}>
+          {OBJECT_CLASS_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Detector</span>
+        <select
+          onChange={(event) => patchMeasurement({ detector: event.target.value }, { kind: "detector" })}
+          value={measurement.detector}
+        >
+          {DETECTOR_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Width mode</span>
+        <select
+          onChange={(event) =>
+            patchMeasurement({ width_mode: event.target.value as MeasurementDefinition["width_mode"] }, { kind: "width_mode" })
+          }
+          value={measurement.width_mode}
+        >
+          <option value="max_width">max_width</option>
+          <option disabled={measurement.object_class !== "D_RESERVED_OBJECT"} value="min_width">
+            min_width
+          </option>
+        </select>
+      </label>
+      <div className="twoColumnControls">
+        <NumberField
+          label="Min component"
+          min={1}
+          value={measurement.detector_config.min_component_area_px ?? 80}
+          onChange={(value) => patchDetectorConfig("min_component_area_px", value)}
+          onCommit={() => commitDetectorConfig("min_component_area_px")}
+        />
+        <NumberField
+          label="Envelope window"
+          min={1}
+          value={measurement.detector_config.envelope_window_px ?? 9}
+          onChange={(value) => patchDetectorConfig("envelope_window_px", value)}
+          onCommit={() => commitDetectorConfig("envelope_window_px")}
+        />
+        <NumberField
+          label="Envelope step"
+          min={1}
+          value={measurement.detector_config.envelope_step_px ?? 2}
+          onChange={(value) => patchDetectorConfig("envelope_step_px", value)}
+          onCommit={() => commitDetectorConfig("envelope_step_px")}
+        />
+        <NumberField
+          label="Mask open"
+          min={1}
+          value={measurement.detector_config.mask_open_kernel_px ?? 3}
+          onChange={(value) => patchDetectorConfig("mask_open_kernel_px", value)}
+          onCommit={() => commitDetectorConfig("mask_open_kernel_px")}
+        />
+        <NumberField
+          label="Mask close"
+          min={1}
+          value={measurement.detector_config.mask_close_kernel_px ?? 11}
+          onChange={(value) => patchDetectorConfig("mask_close_kernel_px", value)}
+          onCommit={() => commitDetectorConfig("mask_close_kernel_px")}
+        />
+        <NumberField
+          label="Mask dilate"
+          min={1}
+          value={measurement.detector_config.mask_dilate_kernel_px ?? 1}
+          onChange={(value) => patchDetectorConfig("mask_dilate_kernel_px", value)}
+          onCommit={() => commitDetectorConfig("mask_dilate_kernel_px")}
+        />
+      </div>
     </div>
   );
 }
 
 function TemperatureControlPanel({
-  currentTemperature,
   measurement,
-  onMeasurement
+  onMeasurement,
+  temperatureStatus,
+  temperatureError,
+  serialPorts,
+  fallbackTemperature,
+  checkingTemperature,
+  loadingSerialPorts,
+  onReadCurrentTemperature,
+  onRefreshSerialPorts
 }: {
-  currentTemperature: number | null;
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
+  temperatureStatus: TemperatureStatusResponse | null;
+  temperatureError: SetupTemperatureError | null;
+  serialPorts: SerialPortInfo[];
+  fallbackTemperature: number | null;
+  checkingTemperature: boolean;
+  loadingSerialPorts: boolean;
+  onReadCurrentTemperature: () => void;
+  onRefreshSerialPorts: () => void;
 }) {
+  const summary = buildSetupTemperatureSummary(
+    measurement,
+    temperatureStatus,
+    serialPorts,
+    temperatureError,
+    fallbackTemperature
+  );
+
   function patchConfig(patch: Partial<MeasurementDefinition["detector_config"]>) {
     onMeasurement({
       ...measurement,
@@ -733,20 +1395,44 @@ function TemperatureControlPanel({
     <div className="controlStack">
       <h3>Temperature Control</h3>
       <dl className="metricGrid compact">
-        <Metric label="Current" value={formatTemperatureValue(currentTemperature)} />
+        <Metric label="Current" value={summary.currentTemperature} />
+        <Metric label="Status" value={summary.status} />
+        <Metric label="Source" value={summary.source} />
+        <Metric label="Timestamp" value={summary.timestamp} />
+        <Metric label="Target" value={summary.targetTemperatureCelsius} />
+        <Metric label="Power" value={summary.temperaturePowerPercent} />
+        <Metric label="Ports" value={summary.ports} />
+        <Metric label="Port count" value={summary.portCount} />
+        <Metric label="Error" value={summary.error} />
       </dl>
       <div className="twoColumnControls">
         <NullableNumberField
-          label="Target °C"
+          label="target_temperature_celsius"
           value={measurement.detector_config.target_temperature_celsius ?? null}
           onChange={(v) => patchConfig({ target_temperature_celsius: v })}
         />
         <NumberField
-          label="Power %"
+          label="temperature_power_percent"
           value={measurement.detector_config.temperature_power_percent ?? 100}
           onChange={(v) => patchConfig({ temperature_power_percent: clamp(v, 0, 100) })}
         />
       </div>
+      <div className="buttonPair">
+        <button className="secondaryButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
+          <Thermometer size={16} aria-hidden="true" />
+          {checkingTemperature ? "Reading" : "Read temp"}
+        </button>
+        <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
+          <Usb size={16} aria-hidden="true" />
+          {loadingSerialPorts ? "Scanning" : "Ports"}
+        </button>
+      </div>
+      {temperatureError ? (
+        <details className="structuredError" open>
+          <summary>{temperatureError.message}</summary>
+          <pre>{JSON.stringify(temperatureError, null, 2)}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -756,12 +1442,14 @@ function NumberField({
   value,
   min,
   onChange,
+  onCommit,
   step = 1
 }: {
   label: string;
   value: number;
   min?: number;
   onChange: (value: number) => void;
+  onCommit?: (value: number) => void;
   step?: number;
 }) {
   return (
@@ -770,6 +1458,10 @@ function NumberField({
       <input
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
+        onBlur={(event) => onCommit?.(Number(event.currentTarget.value))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") onCommit?.(Number(event.currentTarget.value));
+        }}
         step={step}
         type="number"
         value={roundForInput(value)}
@@ -829,6 +1521,7 @@ function DetectorStatus({
         <Metric label="Temperature rows" value={summary.temperature.row_count.toLocaleString()} />
         <Metric label="Status" value={result?.detection_status ?? "Not probed"} />
         <Metric label="Distance" value={formatDistance(result)} />
+        <Metric label="Rejected" value={result?.rejected_reason || "None"} />
         <Metric label="Temperature" value={formatTemperature(result)} />
         <Metric label="Sync" value={result?.temperature_sync_status ?? "Not probed"} />
       </dl>
@@ -836,6 +1529,35 @@ function DetectorStatus({
         <details>
           <summary>Diagnostics</summary>
           <pre>{JSON.stringify(result, null, 2)}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function SetupProbeStatus({
+  sourceLabel,
+  probe
+}: {
+  sourceLabel: string;
+  probe: ProbeResponse | null;
+}) {
+  const result = probe?.detection_result ?? null;
+  return (
+    <div className="diagnostics">
+      <h3>Probe Result</h3>
+      <dl className="metricGrid compact">
+        <Metric label="Source" value={sourceLabel} />
+        <Metric label="Frame timestamp" value={probe?.frame.timestamp_ms ?? "Not probed"} />
+        <Metric label="Status" value={result?.detection_status ?? "Not probed"} />
+        <Metric label="Distance" value={formatDistance(result)} />
+        <Metric label="Rejected" value={result?.rejected_reason || "None"} />
+        <Metric label="Debug artifacts" value={result ? Object.keys(result.debug_artifacts).length : "None"} />
+      </dl>
+      {probe ? (
+        <details>
+          <summary>Diagnostics</summary>
+          <pre>{JSON.stringify(probe, null, 2)}</pre>
         </details>
       ) : null}
     </div>
@@ -850,6 +1572,7 @@ function FrameCanvas({
   abPoints,
   debugArtifacts,
   onRoiChange,
+  onRoiCommit,
   readOnly = false
 }: {
   title: string;
@@ -859,6 +1582,7 @@ function FrameCanvas({
   abPoints: { a: ABPoint; b: ABPoint } | null;
   debugArtifacts?: Record<string, unknown> | null;
   onRoiChange?: (roi: RotatedROI) => void;
+  onRoiCommit?: (roi: RotatedROI) => void;
   readOnly?: boolean;
 }) {
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -873,6 +1597,7 @@ function FrameCanvas({
   const rotateHandle = roiRotateHandle(corners, displayRoi);
   const editable = !readOnly && Boolean(onRoiChange);
   const stableImage = useStableImageUrl(imageUrl);
+  const latestDragRoiRef = useRef<RotatedROI | null>(null);
 
   useEffect(() => {
     const element = shellRef.current;
@@ -898,6 +1623,7 @@ function FrameCanvas({
     if (!editable) return;
     event.stopPropagation();
     svgRef.current?.setPointerCapture(event.pointerId);
+    latestDragRoiRef.current = roi;
     setDragInteraction({
       ...interaction,
       startRoi: roi,
@@ -908,13 +1634,25 @@ function FrameCanvas({
   function updateInteraction(event: React.PointerEvent<SVGSVGElement>) {
     if (!dragInteraction || !onRoiChange) return;
     const currentPoint = pointerToMeasurement(event);
+    let nextRoi: RotatedROI;
     if (dragInteraction.kind === "move") {
-      onRoiChange(moveRoiFromDrag(dragInteraction.startRoi, dragInteraction.startPoint, currentPoint));
+      nextRoi = moveRoiFromDrag(dragInteraction.startRoi, dragInteraction.startPoint, currentPoint);
     } else if (dragInteraction.kind === "resize") {
-      onRoiChange(resizeRoiFromHandle(dragInteraction.startRoi, dragInteraction.handle, currentPoint));
+      nextRoi = resizeRoiFromHandle(dragInteraction.startRoi, dragInteraction.handle, currentPoint);
     } else {
-      onRoiChange(rotateRoiToPointer(dragInteraction.startRoi, currentPoint));
+      nextRoi = rotateRoiToPointer(dragInteraction.startRoi, currentPoint);
     }
+    latestDragRoiRef.current = nextRoi;
+    onRoiChange(nextRoi);
+  }
+
+  function finishInteraction(event: React.PointerEvent<SVGSVGElement>) {
+    if (!dragInteraction) return;
+    svgRef.current?.releasePointerCapture(event.pointerId);
+    const committedRoi = latestDragRoiRef.current ?? dragInteraction.startRoi;
+    latestDragRoiRef.current = null;
+    setDragInteraction(null);
+    onRoiCommit?.(committedRoi);
   }
 
   return (
@@ -933,11 +1671,8 @@ function FrameCanvas({
           className={editable ? "overlaySvg" : "overlaySvg readOnly"}
           ref={svgRef}
           onPointerMove={updateInteraction}
-          onPointerUp={(event) => {
-            svgRef.current?.releasePointerCapture(event.pointerId);
-            setDragInteraction(null);
-          }}
-          onPointerLeave={() => setDragInteraction(null)}
+          onPointerCancel={finishInteraction}
+          onPointerUp={finishInteraction}
           role="img"
         >
           {editable ? (
@@ -1217,169 +1952,159 @@ function RunPage({
   dataset,
   summary,
   measurement,
+  setupSource,
   startFrame,
   runResult,
   liveRun,
-  cameraPreview,
-  cameraPreviewUrl,
-  temperatureStatus,
-  serialPorts,
   running,
-  previewingCamera,
   runningCamera,
-  checkingTemperature,
-  loadingSerialPorts,
   onStartRun,
   onStopRun,
-  onPreviewRealCamera,
-  onStartRealCameraRun,
-  onReadCurrentTemperature,
-  onRefreshSerialPorts
+  onStartRealCameraRun
 }: {
   dataset: OfflineDatasetListItem;
   summary: OfflineDatasetSummary;
   measurement: MeasurementDefinition;
+  setupSource: SetupSourceKind;
   startFrame: number;
   runResult: RunResponse | null;
   liveRun: LiveRunState | null;
-  cameraPreview: CameraPreviewResponse | null;
-  cameraPreviewUrl: string;
-  temperatureStatus: TemperatureStatusResponse | null;
-  serialPorts: SerialPortInfo[];
   running: boolean;
-  previewingCamera: boolean;
   runningCamera: boolean;
-  checkingTemperature: boolean;
-  loadingSerialPorts: boolean;
   onStartRun: () => void;
   onStopRun: () => void;
-  onPreviewRealCamera: () => void;
   onStartRealCameraRun: () => void;
-  onReadCurrentTemperature: () => void;
-  onRefreshSerialPorts: () => void;
 }) {
-  const manifest = runResult?.run_manifest ?? null;
-  const analysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
+  const displayedLiveRun = setupSource === "offline_dataset" ? liveRun : null;
+  const displayedRunResult =
+    runResult && runResultMatchesSetupSource(setupSource, dataset.id, runResult.run_manifest.dataset_id)
+      ? runResult
+      : null;
+  const manifest = displayedRunResult?.run_manifest ?? null;
+  const analysis = displayedLiveRun?.analysis ?? displayedRunResult?.analysis_result ?? null;
+  const runMode = runModeForSetupSource(setupSource);
+  const setupSummary = buildRunSetupSummary(setupSource, dataset.id, measurement);
   const latestRunMode = manifest?.dataset_id === "real_camera" ? "Real camera run" : "Live offline run";
-  const remainingFrames = Math.max(0, dataset.frame_count - startFrame + 1);
+  const isDisplayedRealCameraRun = displayedLiveRun == null && manifest?.dataset_id === "real_camera";
+  const remainingFrames =
+    runMode.kind === "real_camera_run"
+      ? measurement.detector_config.max_frames_per_run ?? 120
+      : Math.max(0, dataset.frame_count - startFrame + 1);
   const latestDetection =
-    liveRun?.detectionResult ??
+    displayedLiveRun?.detectionResult ??
     (manifest?.detection_results.length
       ? manifest.detection_results[manifest.detection_results.length - 1]
       : null);
+  const latestFrameRecord =
+    isDisplayedRealCameraRun && latestDetection
+      ? manifest?.frame_records.find((record) => record.frame_index === latestDetection.frame_index) ?? null
+      : null;
   const latestFrameUrl =
-    liveRun?.frameUrl ??
+    displayedLiveRun?.frameUrl ??
     (latestDetection
-      ? frameIndexImageUrl(dataset.id, latestDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
+      ? isDisplayedRealCameraRun && manifest
+        ? runFrameImageUrl(manifest.run_id, latestDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
+        : frameIndexImageUrl(dataset.id, latestDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
       : "");
+  const latestFrameTitle =
+    latestDetection && isDisplayedRealCameraRun && manifest
+      ? `Real camera run · ${manifest.run_id} · frame ${latestDetection.frame_index}`
+      : latestDetection
+        ? `${dataset.id} · live frame ${latestDetection.frame_index}`
+        : "";
+  const latestSourceShape =
+    isDisplayedRealCameraRun
+      ? latestFrameRecord?.shape ?? summary.first_frame.shape
+      : summary.first_frame.shape;
   return (
     <div className="pageGrid runGrid">
       <section className="toolPanel">
         <h2>Run</h2>
         <div className="controlStack">
-          <h3>Live Offline</h3>
+          <h3>Setup Summary</h3>
           <dl className="metricGrid compact">
-            <Metric label="Dataset" value={dataset.id} />
-            <Metric label="Detector" value={measurement.detector} />
-            <Metric label="Start frame" value={startFrame.toLocaleString()} />
+            <Metric label="Source" value={setupSummary.sourceLabel} />
+            <Metric label="Source ID" value={setupSummary.sourceId} />
+            <Metric label="Measurement" value={measurement.measurement_id} />
+            <Metric label="ROI center" value={setupSummary.roiCenter} />
+            <Metric label="ROI size" value={setupSummary.roiSize} />
+            <Metric label="ROI angle" value={setupSummary.roiAngle} />
+            <Metric label="Object class" value={setupSummary.objectClass} />
+            <Metric label="Detector" value={setupSummary.detector} />
+            <Metric label="Width mode" value={setupSummary.widthMode} />
+            <Metric label="max_frames_per_run" value={setupSummary.maxFramesPerRun} />
+            <Metric label="target_fps" value={setupSummary.targetFps} />
+            <Metric label="target_temperature_celsius" value={setupSummary.targetTemperatureCelsius} />
+            <Metric label="temperature_power_percent" value={setupSummary.temperaturePowerPercent} />
+          </dl>
+        </div>
+        <div className="controlStack">
+          <h3>{runMode.kind === "real_camera_run" ? "Real Camera Run" : "Live Offline Run"}</h3>
+          <dl className="metricGrid compact">
+            <Metric label="Start frame" value={runMode.kind === "real_camera_run" ? "Live" : startFrame.toLocaleString()} />
             <Metric label="Frame budget" value={remainingFrames.toLocaleString()} />
-            <Metric label="Target FPS" value={measurement.detector_config.live_offline_fps ?? 8} />
-            <Metric label="Progress" value={liveRun ? `${liveRun.processedFrames.toLocaleString()} / ${liveRun.totalFrames.toLocaleString()}` : "Idle"} />
-            <Metric label="Current frame" value={liveRun?.frameIndex.toLocaleString() ?? "None"} />
+            <Metric
+              label="Progress"
+              value={
+                displayedLiveRun
+                  ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
+                  : "Idle"
+              }
+            />
+            <Metric label="Current frame" value={displayedLiveRun?.frameIndex.toLocaleString() ?? "None"} />
             <Metric label="Distance" value={formatDistance(latestDetection)} />
             <Metric label="Temperature" value={formatTemperature(latestDetection)} />
             <Metric label="Sync" value={latestDetection?.temperature_sync_status ?? "None"} />
           </dl>
           <div className="buttonPair">
-            <button className="primaryButton" disabled={running} onClick={onStartRun} type="button">
+            <button
+              className="primaryButton"
+              disabled={runMode.kind === "real_camera_run" ? runningCamera : running}
+              onClick={runMode.kind === "real_camera_run" ? onStartRealCameraRun : onStartRun}
+              type="button"
+            >
               <Play size={16} aria-hidden="true" />
-              {running ? "Running" : "Start full offline run"}
+              {(runMode.kind === "real_camera_run" ? runningCamera : running) ? runMode.pendingLabel : runMode.startLabel}
             </button>
-            <button className="secondaryButton" disabled={!running} onClick={onStopRun} type="button">
+            <button className="secondaryButton" disabled={runMode.kind === "real_camera_run" || !running} onClick={onStopRun} type="button">
               <Square size={16} aria-hidden="true" />
               Stop
             </button>
           </div>
         </div>
-        <div className="controlStack">
-          <h3>Temperature Control</h3>
-          <dl className="metricGrid compact">
-            <Metric label="Current" value={formatTemperatureStatus(temperatureStatus) || formatTemperature(latestDetection)} />
-            <Metric label="Target" value={formatTemperatureValue(measurement.detector_config.target_temperature_celsius ?? null)} />
-            <Metric label="Power" value={`${(measurement.detector_config.temperature_power_percent ?? 100).toFixed(0)} %`} />
-            <Metric label="Source" value={temperatureStatus?.reading.source ?? latestDetection?.temperature_source ?? "None"} />
-          </dl>
-          <div className="buttonPair">
-            <button className="secondaryButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
-              <Thermometer size={16} aria-hidden="true" />
-              {checkingTemperature ? "Reading" : "Read temp"}
-            </button>
-            <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
-              <Usb size={16} aria-hidden="true" />
-              {loadingSerialPorts ? "Scanning" : "Ports"}
-            </button>
-          </div>
-          {serialPorts.length ? (
-            <div className="portList">
-              {serialPorts.map((port) => (
-                <span key={port.device} title={port.hwid || port.description}>
-                  {port.device}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div className="controlStack">
-          <h3>Real Camera</h3>
-          <dl className="metricGrid compact">
-            <Metric label="Profile" value="Hik MVS · Mono8" />
-            <Metric label="Status" value={cameraPreview?.camera_status ?? "Not previewed"} />
-            <Metric label="Frame shape" value={cameraPreview ? cameraPreview.shape.join(" × ") : "None"} />
-            <Metric label="Timestamp" value={cameraPreview?.timestamp_ms ?? "None"} />
-          </dl>
-          <div className="buttonPair">
-            <button className="secondaryButton" disabled={previewingCamera} onClick={onPreviewRealCamera} type="button">
-              <Camera size={16} aria-hidden="true" />
-              {previewingCamera ? "Previewing" : "Preview"}
-            </button>
-            <button className="primaryButton" disabled={runningCamera} onClick={onStartRealCameraRun} type="button">
-              <Play size={16} aria-hidden="true" />
-              {runningCamera ? "Running" : "Run"}
-            </button>
-          </div>
-          {cameraPreviewUrl ? (
-            <figure className="cameraPreview">
-              <figcaption>Preview frame</figcaption>
-              <img src={cameraPreviewUrl} alt="Real camera preview frame" />
-            </figure>
-          ) : null}
-        </div>
       </section>
       <div className="runDetailStack">
+        {analysis ? (
+        <section className="toolPanel">
+          <div className="runTrendHeader">
+            <div>
+              <h2>{liveRun?.status === "running" ? "Live Trend" : "Run Trend"}</h2>
+              <p>
+                {displayedLiveRun ? "Live offline run" : latestRunMode} · {displayedLiveRun?.runId ?? manifest?.run_id ?? "no run id"}
+              </p>
+            </div>
+            <div className="runTrendStatusLabel" aria-label="Run trend scope">
+              {displayedLiveRun?.status === "running" ? "Current run so far" : "Full run"}
+            </div>
+          </div>
+          <RunTrendChart
+            analysis={analysis}
+            runId={displayedLiveRun?.runId ?? manifest?.run_id ?? null}
+            isRunning={displayedLiveRun?.status === "running"}
+            targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
+          />
+        </section>
+        ) : null}
         {latestFrameUrl && latestDetection ? (
           <FrameCanvas
-            title={`${dataset.id} · live frame ${latestDetection.frame_index}`}
+            title={latestFrameTitle}
             imageUrl={latestFrameUrl}
-            sourceShape={summary.first_frame.shape}
+            sourceShape={latestSourceShape}
             roi={measurement.roi}
             abPoints={latestDetection.ab_points}
             debugArtifacts={latestDetection.debug_artifacts}
             readOnly
           />
-        ) : null}
-        {analysis ? (
-        <section className="toolPanel">
-          <h2>{liveRun?.status === "running" ? "Live Curves" : "Run Result"}</h2>
-          <dl className="metricGrid">
-            <Metric label="Mode" value={liveRun ? "Live offline run" : latestRunMode} />
-            <Metric label="Run ID" value={liveRun?.runId ?? manifest?.run_id ?? "None"} />
-            <Metric label="Frames saved" value={manifest?.frame_records.length ?? liveRun?.processedFrames ?? 0} />
-            <Metric label="Detections" value={manifest?.detection_results.length ?? liveRun?.analysis.all_frames.length ?? 0} />
-            <Metric label="Temp-distance points" value={analysis.temperature_distance.length} />
-            <Metric label="AFAS status" value={readAfasStatus(analysis)} />
-          </dl>
-          <CurveGrid analysis={analysis} variant="run" />
-        </section>
         ) : null}
       </div>
     </div>
@@ -1426,8 +2151,8 @@ function AnalysisPage({
   }
 
   return (
-    <div className="pageGrid runGrid">
-      <section className="toolPanel">
+    <div className="pageGrid runGrid analysisPageGrid">
+      <section className="toolPanel analysisExportPanel">
         <h2>Analysis / Export</h2>
         <dl className="metricGrid compact">
           <Metric label="Run" value={selectedRunId ?? "No run selected"} />
@@ -1456,15 +2181,20 @@ function AnalysisPage({
         ) : null}
       </section>
       {analysis ? (
-        <section className="toolPanel">
+        <section className="toolPanel analysisMainPanel">
           <h2>{selectedRunId ? `Analysis · ${selectedRunId}` : "Analysis"}</h2>
-          <AfasResultPanel analysis={analysis} />
-          <AfasParameterPanel
-            analysis={analysis}
-            runId={selectedRunId}
-            onAnalysisUpdated={setAnalysisOverride}
-          />
-          <CurveGrid analysis={analysis} variant="analysis" />
+          <AnalysisAfasChart analysis={analysis} />
+          <details className="analysisParameterDisclosure">
+            <summary>
+              <Settings size={15} aria-hidden="true" />
+              AFAS parameters
+            </summary>
+            <AfasParameterPanel
+              analysis={analysis}
+              runId={selectedRunId}
+              onAnalysisUpdated={setAnalysisOverride}
+            />
+          </details>
         </section>
       ) : null}
     </div>
@@ -1666,6 +2396,883 @@ function AfasParameterPanel({
   );
 }
 
+const ANALYSIS_AFAS_CHART_WIDTH = 860;
+const ANALYSIS_AFAS_CHART_HEIGHT = 540;
+
+type AnalysisAfasHoverTarget = {
+  source: "raw" | "smoothed" | "outlier" | "marker" | "construction";
+  label: string;
+  temperature: number;
+  distance: number;
+  frameIndex: number | null;
+  x: number;
+  y: number;
+};
+
+type IndustrialCurveFrameSource = {
+  width: number;
+  height: number;
+  plot: { left: number; right: number; top: number; bottom: number };
+  xTicks: AnalysisAfasModel["xTicks"];
+  yTicks: AnalysisAfasModel["yTicks"];
+  xAxisLabel: string;
+  yAxisLabel: string;
+};
+
+function IndustrialCurveView({
+  ariaLabel,
+  children,
+  className,
+  model,
+  onMouseDown,
+  onMouseLeave,
+  onMouseMove,
+  onMouseUp,
+  underlay,
+  variant
+}: {
+  ariaLabel: string;
+  children: React.ReactNode;
+  className: string;
+  model: IndustrialCurveFrameSource;
+  onMouseDown?: React.MouseEventHandler<SVGSVGElement>;
+  onMouseLeave?: React.MouseEventHandler<SVGSVGElement>;
+  onMouseMove?: React.MouseEventHandler<SVGSVGElement>;
+  onMouseUp?: React.MouseEventHandler<SVGSVGElement>;
+  underlay?: React.ReactNode;
+  variant: IndustrialCurveViewVariant;
+}) {
+  const frame = buildIndustrialCurveFrameModel({
+    variant,
+    width: model.width,
+    height: model.height,
+    plot: model.plot,
+    xTicks: model.xTicks,
+    yTicks: model.yTicks,
+    xAxisLabel: model.xAxisLabel,
+    yAxisLabel: model.yAxisLabel
+  });
+  return (
+    <svg
+      className={className}
+      viewBox={`0 0 ${frame.width} ${frame.height}`}
+      role="img"
+      aria-label={ariaLabel}
+      onMouseDown={onMouseDown}
+      onMouseLeave={onMouseLeave}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+    >
+      <rect
+        className={frame.classNames.frame}
+        x={0}
+        y={0}
+        width={frame.width}
+        height={frame.height}
+        rx={frame.axisLayout.frameRadius}
+      />
+      {underlay}
+      {frame.xTicks.map((tick, index) => (
+        <line
+          className={frame.classNames.gridLine}
+          key={`${frame.variant}-x-grid-${index}-${tick.value}`}
+          x1={tick.position}
+          x2={tick.position}
+          y1={frame.plot.top}
+          y2={frame.plot.bottom}
+        />
+      ))}
+      {frame.yTicks.map((tick, index) => (
+        <line
+          className={frame.classNames.gridLine}
+          key={`${frame.variant}-y-grid-${index}-${tick.value}`}
+          x1={frame.plot.left}
+          x2={frame.plot.right}
+          y1={tick.position}
+          y2={tick.position}
+        />
+      ))}
+      <line className={frame.classNames.axis} x1={frame.plot.left} x2={frame.plot.right} y1={frame.plot.bottom} y2={frame.plot.bottom} />
+      <line className={frame.classNames.axis} x1={frame.plot.left} x2={frame.plot.left} y1={frame.plot.top} y2={frame.plot.bottom} />
+      {frame.xTicks.map((tick, index) => (
+        <g key={`${frame.variant}-x-tick-${index}-${tick.value}`}>
+          <line
+            className={frame.classNames.tick}
+            x1={tick.position}
+            x2={tick.position}
+            y1={frame.plot.bottom}
+            y2={frame.plot.bottom + frame.axisLayout.tickLength}
+          />
+          <text
+            className={frame.classNames.tickLabel}
+            x={tick.position}
+            y={frame.plot.bottom + frame.axisLayout.xTickLabelOffset}
+            textAnchor="middle"
+          >
+            {tick.label}
+          </text>
+        </g>
+      ))}
+      {frame.yTicks.map((tick, index) => (
+        <g key={`${frame.variant}-y-tick-${index}-${tick.value}`}>
+          <line
+            className={frame.classNames.tick}
+            x1={frame.plot.left - frame.axisLayout.tickLength}
+            x2={frame.plot.left}
+            y1={tick.position}
+            y2={tick.position}
+          />
+          <text
+            className={frame.classNames.tickLabel}
+            x={frame.plot.left - frame.axisLayout.yTickLabelXOffset}
+            y={tick.position + frame.axisLayout.yTickLabelYOffset}
+            textAnchor="end"
+          >
+            {tick.label}
+          </text>
+        </g>
+      ))}
+      <text
+        className={frame.classNames.axisLabel}
+        x={(frame.plot.left + frame.plot.right) / 2}
+        y={frame.axisLayout.xAxisLabelY}
+        textAnchor="middle"
+      >
+        {frame.xAxisLabel}
+      </text>
+      <text
+        className={frame.classNames.axisLabel}
+        x={-(frame.plot.top + frame.plot.bottom) / 2}
+        y={frame.axisLayout.yAxisLabelY}
+        textAnchor="middle"
+        transform="rotate(-90)"
+      >
+        {frame.yAxisLabel}
+      </text>
+      {children}
+    </svg>
+  );
+}
+
+function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
+  const [layers, setLayers] = useState<AnalysisAfasLayerState>({ raw: false, fit: true, markers: true });
+  const [xDomain, setXDomain] = useState<[number, number] | null>(null);
+  const [hoverTarget, setHoverTarget] = useState<AnalysisAfasHoverTarget | null>(null);
+  const [brush, setBrush] = useState<{ start: number; current: number } | null>(null);
+  const brushRef = useRef<{ start: number; current: number } | null>(null);
+  const model = useMemo(
+    () => buildAnalysisAfasModel(analysis, {
+      width: ANALYSIS_AFAS_CHART_WIDTH,
+      height: ANALYSIS_AFAS_CHART_HEIGHT,
+      xDomain,
+      layers
+    }),
+    [analysis, layers, xDomain]
+  );
+  const brushRect = brush ? brushToRect(brush, model.plot) : null;
+
+  useEffect(() => {
+    setXDomain(null);
+    setHoverTarget(null);
+    setBrush(null);
+    brushRef.current = null;
+  }, [analysis]);
+
+  function patchLayer(key: keyof AnalysisAfasLayerState, checked: boolean) {
+    setLayers((current) => ({ ...current, [key]: checked }));
+  }
+
+  function handleMouseDown(event: React.MouseEvent<SVGSVGElement>) {
+    const point = svgEventPoint(event, model);
+    if (!pointInPlot(point.x, point.y, model.plot)) return;
+    event.preventDefault();
+    const nextBrush = { start: point.x, current: point.x };
+    brushRef.current = nextBrush;
+    setBrush(nextBrush);
+    setHoverTarget(null);
+  }
+
+  function handleMouseMove(event: React.MouseEvent<SVGSVGElement>) {
+    const point = svgEventPoint(event, model);
+    const activeBrush = brushRef.current;
+    if (activeBrush) {
+      const nextBrush = { ...activeBrush, current: clamp(point.x, model.plot.left, model.plot.right) };
+      brushRef.current = nextBrush;
+      setBrush(nextBrush);
+      return;
+    }
+    const nearest = nearestAnalysisAfasTarget(model, point.x, point.y);
+    setHoverTarget(nearest);
+  }
+
+  function handleMouseUp() {
+    const activeBrush = brushRef.current;
+    if (!activeBrush) return;
+    const start = clamp(activeBrush.start, model.plot.left, model.plot.right);
+    const current = clamp(activeBrush.current, model.plot.left, model.plot.right);
+    if (Math.abs(current - start) >= 18) {
+      const t1 = inverseScaleValue(start, model.plot.left, model.plot.right, model.xRange.min, model.xRange.max);
+      const t2 = inverseScaleValue(current, model.plot.left, model.plot.right, model.xRange.min, model.xRange.max);
+      setXDomain([Math.min(t1, t2), Math.max(t1, t2)]);
+    }
+    brushRef.current = null;
+    setBrush(null);
+  }
+
+  return (
+    <div className="analysisAfasShell">
+      <AnalysisAfasSummaryStrip model={model} />
+      <div className="analysisAfasToolbar">
+        <div className="analysisAfasLayerGroup" aria-label="AFAS chart layers">
+          <AnalysisLayerToggle
+            checked={layers.raw}
+            label="Raw"
+            onChange={(checked) => patchLayer("raw", checked)}
+          />
+          <AnalysisLayerToggle
+            checked={layers.fit}
+            label="Fit"
+            onChange={(checked) => patchLayer("fit", checked)}
+          />
+          <AnalysisLayerToggle
+            checked={layers.markers}
+            label="Markers"
+            onChange={(checked) => patchLayer("markers", checked)}
+          />
+        </div>
+        <button
+          className="secondaryButton analysisAfasResetButton"
+          disabled={!xDomain}
+          onClick={() => setXDomain(null)}
+          type="button"
+        >
+          <RefreshCcw size={15} aria-hidden="true" />
+          Reset zoom
+        </button>
+      </div>
+      <figure className="analysisAfasFigure">
+        <figcaption>
+          <span>AFAS temperature-distance review</span>
+          <span>{xDomain ? `${model.xRange.min.toFixed(2)}-${model.xRange.max.toFixed(2)} °C` : "Full analysis range"}</span>
+        </figcaption>
+        <IndustrialCurveView
+          className="analysisAfasSvg"
+          ariaLabel="AFAS temperature-distance review chart"
+          model={model}
+          onMouseDown={handleMouseDown}
+          onMouseLeave={() => {
+            setHoverTarget(null);
+            brushRef.current = null;
+            setBrush(null);
+          }}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          underlay={model.fitLines
+            .filter((line) => line.kind === "low_baseline" || line.kind === "high_baseline")
+            .map((line) => {
+              const x = Math.min(line.x1, line.x2);
+              const width = Math.abs(line.x2 - line.x1);
+              return (
+                <rect
+                  className={`analysisAfasFitBand analysisAfasFitBand--${line.kind}`}
+                  height={model.plot.bottom - model.plot.top}
+                  key={`band-${line.kind}`}
+                  width={width}
+                  x={x}
+                  y={model.plot.top}
+                />
+              );
+            })}
+          variant="analysis_review"
+        >
+          {model.rawPoints.map((point, index) => (
+            <circle
+              className="analysisAfasRawPoint"
+              cx={point.x}
+              cy={point.y}
+              key={`raw-${point.frameIndex ?? index}-${point.temperature}`}
+              r={2.6}
+            />
+          ))}
+          {model.outlierPoints.map((point, index) => (
+            <g className="analysisAfasOutlierPoint" key={`outlier-${point.frameIndex ?? index}-${point.temperature}`}>
+              <circle cx={point.x} cy={point.y} r={6} />
+              <line x1={point.x - 4.2} x2={point.x + 4.2} y1={point.y - 4.2} y2={point.y + 4.2} />
+              <line x1={point.x - 4.2} x2={point.x + 4.2} y1={point.y + 4.2} y2={point.y - 4.2} />
+            </g>
+          ))}
+          {model.fitLines
+            .filter((line) => line.kind !== "tangent")
+            .map((line) => (
+              <g className={`analysisAfasFitLineGroup analysisAfasFitLineGroup--${line.kind}`} key={`fit-${line.kind}`}>
+                <line className={`analysisAfasFitLine analysisAfasFitLine--${line.kind}`} x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
+                <text className="analysisAfasInlineLabel" x={line.labelX} y={line.labelY - 8} textAnchor="middle">
+                  {line.label}
+                </text>
+              </g>
+            ))}
+          {model.fitLines
+            .filter((line) => line.kind === "tangent")
+            .map((line) => (
+              <g className="analysisAfasFitLineGroup analysisAfasFitLineGroup--tangent" key="fit-tangent">
+                <line className="analysisAfasFitLine analysisAfasFitLine--tangent" x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
+                <text className="analysisAfasInlineLabel analysisAfasInlineLabel--tangent" x={line.labelX} y={line.labelY - 10} textAnchor="middle">
+                  Tangent
+                </text>
+              </g>
+            ))}
+          {model.constructionGuides.map((guide) => (
+            <line
+              aria-label={`${guide.label}; ${guide.role}`}
+              className={`analysisAfasConstructionGuide analysisAfasConstructionGuide--${guide.kind}`}
+              key={`guide-${guide.kind}`}
+              x1={guide.x1}
+              x2={guide.x2}
+              y1={guide.y1}
+              y2={guide.y2}
+            />
+          ))}
+          {model.smoothedPath ? (
+            <polyline className="analysisAfasSmoothedLine" points={model.smoothedPath} />
+          ) : null}
+          {model.smoothedPoints.length ? (
+            <text className="analysisAfasSmoothedLabel" x={smoothedLabelX(model)} y={smoothedLabelY(model)}>
+              Smoothed curve
+            </text>
+          ) : null}
+          {model.markers.map((marker) => (
+            marker.kind === "max_slope" ? (
+              <MaxSlopeMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
+            ) : (
+              <AfasReferenceMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
+            )
+          ))}
+          {brushRect ? (
+            <rect
+              className="analysisAfasBrush"
+              height={model.plot.bottom - model.plot.top}
+              width={brushRect.width}
+              x={brushRect.x}
+              y={model.plot.top}
+            />
+          ) : null}
+          {hoverTarget ? <AnalysisAfasTooltip target={hoverTarget} plot={model.plot} /> : null}
+          {!model.hasPoints ? (
+            <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
+              No AFAS temperature-distance points
+            </text>
+          ) : null}
+        </IndustrialCurveView>
+        <div className="analysisAfasLegend" aria-label="AFAS chart legend">
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--smooth">Smoothed curve</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--construction">As/Af guides</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--fit">Baseline fit</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--tangent">Tangent</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--raw">Raw diagnostic</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--marker">As / Af / Max slope</span>
+        </div>
+      </figure>
+    </div>
+  );
+}
+
+function AnalysisAfasSummaryStrip({ model }: { model: AnalysisAfasModel }) {
+  return (
+    <dl className="analysisAfasSummaryStrip">
+      <AnalysisAfasSummaryValue label="AFAS status" value={model.summary.status} />
+      <AnalysisAfasSummaryValue label="As" value={model.summary.asLabel} />
+      <AnalysisAfasSummaryValue label="Af-tan" value={model.summary.afTanLabel} />
+      <AnalysisAfasSummaryValue label="ΔT" value={model.summary.deltaLabel} />
+      <AnalysisAfasSummaryValue label="Max slope" value={model.summary.maxSlopeLabel} />
+      <AnalysisAfasSummaryValue label="Raw points" value={model.summary.rawCountLabel} />
+      <AnalysisAfasSummaryValue label="Smoothed points" value={model.summary.smoothedCountLabel} />
+      <AnalysisAfasSummaryValue label="Outliers" value={model.summary.outlierLabel} />
+    </dl>
+  );
+}
+
+function AnalysisAfasSummaryValue({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function AnalysisLayerToggle({
+  checked,
+  label,
+  onChange
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="analysisAfasLayerToggle">
+      <input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox" />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function AfasReferenceMarker({
+  marker,
+  plot
+}: {
+  marker: AnalysisAfasMarker;
+  plot: AnalysisAfasModel["plot"];
+}) {
+  const badgeWidth = marker.kind === "af_tan" ? 104 : 86;
+  const x = clamp(marker.x - badgeWidth / 2, plot.left + 4, plot.right - badgeWidth - 4);
+  const badgeY = plot.top + (marker.kind === "af_tan" ? 38 : 10);
+  return (
+    <g className={`analysisAfasReferenceMarker analysisAfasReferenceMarker--${marker.kind}`}>
+      <line x1={marker.x} x2={marker.x} y1={plot.top} y2={plot.bottom} />
+      <circle cx={marker.x} cy={marker.y} r={4.6} />
+      <rect x={x} y={badgeY} width={badgeWidth} height={24} rx={4} />
+      <text x={x + badgeWidth / 2} y={badgeY + 16} textAnchor="middle">
+        {marker.label} {marker.temperature.toFixed(2)}°C
+      </text>
+    </g>
+  );
+}
+
+function MaxSlopeMarker({
+  marker,
+  plot
+}: {
+  marker: AnalysisAfasMarker;
+  plot: AnalysisAfasModel["plot"];
+}) {
+  const labelX = marker.x > plot.right - 110 ? marker.x - 13 : marker.x + 13;
+  const labelY = marker.y < plot.top + 28 ? marker.y + 30 : marker.y - 14;
+  const textAnchor = labelX < marker.x ? "end" : "start";
+  return (
+    <g className="analysisAfasMaxSlopeMarker">
+      <polygon points={`${marker.x},${marker.y - 8} ${marker.x + 8},${marker.y} ${marker.x},${marker.y + 8} ${marker.x - 8},${marker.y}`} />
+      <text x={labelX} y={labelY} textAnchor={textAnchor}>
+        Max slope
+      </text>
+    </g>
+  );
+}
+
+function AnalysisAfasTooltip({
+  target,
+  plot
+}: {
+  target: AnalysisAfasHoverTarget;
+  plot: AnalysisAfasModel["plot"];
+}) {
+  const seriesLabel = target.source === "construction" ? "AFAS construction guide" : target.label;
+  const lines = [
+    `series: ${seriesLabel}`,
+    `temperature: ${target.temperature.toFixed(2)} °C`,
+    `distance: ${target.distance.toFixed(2)} px`,
+    `frame_index: ${target.frameIndex ?? "None"}`
+  ];
+  const width = 238;
+  const height = 76;
+  const x = target.x > plot.right - width - 14 ? target.x - width - 12 : target.x + 12;
+  const y = target.y > plot.bottom - height - 12 ? target.y - height - 12 : target.y + 12;
+  return (
+    <g className="analysisAfasTooltip">
+      <rect x={x} y={y} width={width} height={height} rx={5} />
+      {lines.map((line, index) => (
+        <text x={x + 10} y={y + 18 + index * 15} key={line}>
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+}
+
+function svgEventPoint(event: React.MouseEvent<SVGSVGElement>, model: AnalysisAfasModel): { x: number; y: number } {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return {
+    x: ((event.clientX - bounds.left) / bounds.width) * model.width,
+    y: ((event.clientY - bounds.top) / bounds.height) * model.height
+  };
+}
+
+function pointInPlot(
+  x: number,
+  y: number,
+  plot: AnalysisAfasModel["plot"]
+): boolean {
+  return x >= plot.left && x <= plot.right && y >= plot.top && y <= plot.bottom;
+}
+
+function nearestAnalysisAfasTarget(
+  model: AnalysisAfasModel,
+  x: number,
+  y: number
+): AnalysisAfasHoverTarget | null {
+  const candidates: AnalysisAfasHoverTarget[] = [
+    ...model.rawPoints.map((point) => afasPointHoverTarget(point, "raw", "Raw point")),
+    ...model.smoothedPoints.map((point) => afasPointHoverTarget(point, "smoothed", "Smoothed curve")),
+    ...model.outlierPoints.map((point) => afasPointHoverTarget(point, "outlier", "Outlier")),
+    ...model.constructionGuides.map((guide) => afasConstructionGuideHoverTarget(guide)),
+    ...model.markers.map((marker) => ({
+      source: "marker" as const,
+      label: marker.label,
+      temperature: marker.temperature,
+      distance: marker.distance,
+      frameIndex: null,
+      x: marker.x,
+      y: marker.y
+    }))
+  ];
+  if (!candidates.length) return null;
+  let nearest = candidates[0];
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const dx = candidate.x - x;
+    const dy = candidate.y - y;
+    const distance = dx * dx + dy * dy;
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+  return nearestDistance <= 1600 ? nearest : null;
+}
+
+function afasPointHoverTarget(
+  point: AnalysisAfasDataPoint,
+  source: AnalysisAfasHoverTarget["source"],
+  label: string
+): AnalysisAfasHoverTarget {
+  return {
+    source,
+    label,
+    temperature: point.temperature,
+    distance: point.distance,
+    frameIndex: point.frameIndex,
+    x: point.x,
+    y: point.y
+  };
+}
+
+function afasConstructionGuideHoverTarget(guide: AnalysisAfasConstructionGuide): AnalysisAfasHoverTarget {
+  return {
+    source: "construction",
+    label: guide.label,
+    temperature: guide.temperature,
+    distance: guide.distance,
+    frameIndex: null,
+    x: guide.labelX,
+    y: guide.labelY
+  };
+}
+
+function brushToRect(
+  brush: { start: number; current: number },
+  plot: AnalysisAfasModel["plot"]
+): { x: number; width: number } {
+  const start = clamp(brush.start, plot.left, plot.right);
+  const current = clamp(brush.current, plot.left, plot.right);
+  return {
+    x: Math.min(start, current),
+    width: Math.abs(current - start)
+  };
+}
+
+function inverseScaleValue(value: number, inMin: number, inMax: number, outMin: number, outMax: number): number {
+  if (Math.abs(inMax - inMin) < Number.EPSILON) return (outMin + outMax) / 2;
+  return outMin + ((value - inMin) * (outMax - outMin)) / (inMax - inMin);
+}
+
+function smoothedLabelX(model: AnalysisAfasModel): number {
+  const point = model.smoothedPoints[Math.max(0, Math.floor(model.smoothedPoints.length * 0.7))];
+  return point ? Math.min(model.plot.right - 132, Math.max(model.plot.left + 12, point.x + 12)) : model.plot.left + 12;
+}
+
+function smoothedLabelY(model: AnalysisAfasModel): number {
+  const point = model.smoothedPoints[Math.max(0, Math.floor(model.smoothedPoints.length * 0.7))];
+  return point ? Math.max(model.plot.top + 28, point.y - 18) : model.plot.top + 28;
+}
+
+function RunTrendChart({
+  analysis,
+  runId,
+  isRunning,
+  targetTemperature
+}: {
+  analysis: AnalysisResult;
+  runId: string | null;
+  isRunning: boolean;
+  targetTemperature: number | null;
+}) {
+  const width = 900;
+  const height = 420;
+  const stickyYAxisEnabled = isRunning;
+  const [stickyYRange, setStickyYRange] = useState<RunTrendYAxisRange | null>(null);
+  const model = useMemo(
+    () => buildRunTrendModel(analysis, {
+      mode: "full",
+      width,
+      height,
+      yAxis: {
+        rangeOverride: stickyYAxisEnabled ? stickyYRange : null
+      }
+    }),
+    [analysis, stickyYAxisEnabled, stickyYRange]
+  );
+  const [hoverPoint, setHoverPoint] = useState<RunTrendPoint | null>(null);
+
+  useEffect(() => {
+    setStickyYRange(null);
+  }, [runId]);
+
+  useEffect(() => {
+    if (!stickyYAxisEnabled) {
+      setStickyYRange((current) => (current === null ? current : null));
+      return;
+    }
+    setStickyYRange((current) => {
+      const next = resolveRunTrendStickyYAxisRange(current, model.dataYRange);
+      return sameYAxisRange(current, next) ? current : next;
+    });
+  }, [stickyYAxisEnabled, model.dataYRange.min, model.dataYRange.max]);
+  const targetX =
+    targetTemperature !== null &&
+    Number.isFinite(targetTemperature) &&
+    targetTemperature >= model.xRange.min &&
+    targetTemperature <= model.xRange.max
+      ? scaleValue(targetTemperature, model.xRange.min, model.xRange.max, model.plot.left, model.plot.right)
+      : null;
+  const activePoint = hoverPoint ?? model.latestPoint;
+
+  function handleMouseMove(event: React.MouseEvent<SVGSVGElement>) {
+    if (!model.formalPoints.length && !model.referencePoints.length) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - bounds.left) / bounds.width) * model.width;
+    const y = ((event.clientY - bounds.top) / bounds.height) * model.height;
+    const candidates = [...model.formalPoints, ...model.referencePoints];
+    let nearest = candidates[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const point of candidates) {
+      const dx = point.x - x;
+      const dy = point.y - y;
+      const distance = dx * dx + dy * dy;
+      if (distance < nearestDistance) {
+        nearest = point;
+        nearestDistance = distance;
+      }
+    }
+    setHoverPoint(nearest);
+  }
+
+  return (
+    <div className="runTrendShell">
+      <RunValueStrip valueStrip={model.valueStrip} />
+      <figure className="runTrendFigure">
+        <figcaption>
+          <span>{model.sourceLabel}</span>
+          <span>{isRunning ? "Current run so far" : "Full run"}</span>
+        </figcaption>
+        <IndustrialCurveView
+          className="runTrendSvg"
+          ariaLabel="Run temperature-distance trend chart"
+          model={model}
+          onMouseLeave={() => setHoverPoint(null)}
+          onMouseMove={handleMouseMove}
+          variant="run_monitor"
+        >
+          {targetX !== null ? (
+            <g className="runTrendTargetMarker">
+              <rect x={targetX - 9} y={model.plot.top} width={18} height={model.plot.bottom - model.plot.top} />
+              <line x1={targetX} x2={targetX} y1={model.plot.top} y2={model.plot.bottom} />
+              <text x={targetX + 12} y={model.plot.top + 18}>
+                Target {targetTemperature?.toFixed(2)}°C
+              </text>
+            </g>
+          ) : null}
+          {model.referencePoints.map((point) => (
+            <circle
+              className="runTrendReferencePoint"
+              cx={point.x}
+              cy={point.y}
+              key={`run-reference-${point.frameIndex}-${point.temperature}`}
+              r={2.3}
+            />
+          ))}
+          {model.formalSegments.map((segment, index) => (
+            segment.length > 1 ? (
+              <polyline
+                className="runTrendFormalLine"
+                key={`run-formal-segment-${index}`}
+                points={segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}
+              />
+            ) : (
+              <circle
+                className="runTrendFormalPoint"
+                cx={segment[0].x}
+                cy={segment[0].y}
+                key={`run-formal-segment-${index}`}
+                r={3.2}
+              />
+            )
+          ))}
+          {model.statusRugs.length ? (
+            <g className="runTrendRugTrack">
+              <line x1={model.plot.left} x2={model.plot.right} y1={model.plot.bottom + 31} y2={model.plot.bottom + 31} />
+              {model.statusRugs.map((rug) => (
+                <g className={`runTrendRug runTrendRug--${rug.kind}`} key={`rug-${rug.frameIndex}-${rug.kind}`}>
+                  <line x1={rug.x} x2={rug.x} y1={rug.y1} y2={rug.y2} />
+                  {rug.kind === "invalid" ? <rect x={rug.x - 3.5} y={rug.y2 - 3.5} width={7} height={7} /> : <circle cx={rug.x} cy={rug.y2} r={3.5} />}
+                </g>
+              ))}
+              <text x={model.plot.left} y={model.plot.bottom + 49}>
+                status rug: INVALID / stale / missing frames
+              </text>
+            </g>
+          ) : null}
+          {model.latestPoint ? (
+            <g className="runTrendLatestPoint">
+              <line x1={model.latestPoint.x} x2={model.latestPoint.x} y1={model.plot.top} y2={model.plot.bottom} />
+              <circle cx={model.latestPoint.x} cy={model.latestPoint.y} r={11} />
+              <circle cx={model.latestPoint.x} cy={model.latestPoint.y} r={6.4} />
+              <text
+                x={model.latestPoint.x > model.plot.right - 250 ? model.latestPoint.x - 10 : model.latestPoint.x + 10}
+                y={model.latestPoint.y < model.plot.top + 26 ? model.latestPoint.y + 30 : model.latestPoint.y - 14}
+                textAnchor={model.latestPoint.x > model.plot.right - 250 ? "end" : "start"}
+              >
+                {formatRunTrendPointLabel(model.latestPoint)}
+              </text>
+            </g>
+          ) : null}
+          {model.formalPoints.length ? (
+            <text
+              className="runTrendInlineLabel"
+              x={runTrendLineLabelPoint(model).x}
+              y={runTrendLineLabelPoint(model).y}
+            >
+              {runTrendLineLabel(model.source)}
+            </text>
+          ) : null}
+          {activePoint ? <RunTrendTooltip point={activePoint} plot={model.plot} /> : null}
+          {!model.hasPoints ? (
+            <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
+              No formal temperature-distance points
+            </text>
+          ) : null}
+        </IndustrialCurveView>
+      </figure>
+    </div>
+  );
+}
+
+function sameYAxisRange(
+  current: RunTrendYAxisRange | null,
+  next: RunTrendYAxisRange
+): boolean {
+  return (
+    current !== null &&
+    Math.abs(current.min - next.min) < 1e-9 &&
+    Math.abs(current.max - next.max) < 1e-9
+  );
+}
+
+function RunValueStrip({ valueStrip }: { valueStrip: ReturnType<typeof buildRunTrendModel>["valueStrip"] }) {
+  return (
+    <dl className="runValueStrip">
+      <RunValue label="Current distance" value={formatNullableNumber(valueStrip.currentDistance, " px", 1)} />
+      <RunValue label="Current temperature" value={formatNullableNumber(valueStrip.currentTemperature, " °C", 2)} />
+      <RunValue label="Frame" value={valueStrip.currentFrame?.toLocaleString() ?? "None"} />
+      <RunValue label="Sync status" value={shortStatus(valueStrip.syncStatus)} tone={statusTone(valueStrip.syncStatus, "sync")} />
+      <RunValue label="Valid / Invalid" value={shortStatus(valueStrip.detectionStatus)} tone={statusTone(valueStrip.detectionStatus, "detection")} />
+      <RunValue label="Temp-distance points" value={valueStrip.points.toLocaleString()} />
+    </dl>
+  );
+}
+
+function RunValue({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "ok" | "warn" | "bad" }) {
+  return (
+    <div className={tone ? `runValue runValue--${tone}` : "runValue"}>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function RunTrendTooltip({
+  point,
+  plot
+}: {
+  point: RunTrendPoint;
+  plot: { left: number; right: number; top: number; bottom: number };
+}) {
+  const lines = [
+    `frame_index: ${point.frameIndex ?? "None"}`,
+    `temperature: ${point.temperature.toFixed(2)} °C`,
+    `distance: ${point.distance.toFixed(2)} px`,
+    `sync status: ${point.syncStatus ?? "None"}`,
+    `detection status: ${point.detectionStatus ?? "VALID"}`,
+    `series: ${point.source}`
+  ];
+  const width = 258;
+  const height = 106;
+  const x = point.x > plot.right - width - 14 ? point.x - width - 12 : point.x + 12;
+  const y = point.y > plot.bottom - height - 12 ? point.y - height - 12 : point.y + 12;
+  return (
+    <g className="runTrendTooltip">
+      <rect x={x} y={y} width={width} height={height} rx={5} />
+      {lines.map((line, index) => (
+        <text x={x + 10} y={y + 18 + index * 15} key={line}>
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+}
+
+function scaleValue(value: number, min: number, max: number, outMin: number, outMax: number): number {
+  if (Math.abs(max - min) < Number.EPSILON) return (outMin + outMax) / 2;
+  return outMin + ((value - min) * (outMax - outMin)) / (max - min);
+}
+
+function formatRunTrendPointLabel(point: RunTrendPoint): string {
+  const prefix = point.frameIndex === null ? "curve point" : `frame ${point.frameIndex}`;
+  return `${prefix} · ${point.temperature.toFixed(2)}°C · ${point.distance.toFixed(1)}px`;
+}
+
+function runTrendLineLabel(source: RunTrendPoint["source"]): string {
+  if (source === "smoothed") return "backend smoothed curve";
+  if (source === "grouped") return "backend binned curve";
+  return "raw scatter";
+}
+
+function runTrendLineLabelPoint(model: ReturnType<typeof buildRunTrendModel>): { x: number; y: number } {
+  const point = model.formalPoints[Math.max(0, Math.floor(model.formalPoints.length * 0.7))];
+  if (!point) return { x: model.plot.left + 12, y: model.plot.top + 28 };
+  return {
+    x: Math.min(model.plot.right - 190, Math.max(model.plot.left + 12, point.x + 14)),
+    y: point.y < model.plot.top + 48 ? point.y + 44 : point.y - 24
+  };
+}
+
+function formatNullableNumber(value: number | null, suffix: string, digits: number): string {
+  return value === null || !Number.isFinite(value) ? "None" : `${value.toFixed(digits)}${suffix}`;
+}
+
+function shortStatus(status: string | null): string {
+  if (!status) return "None";
+  return status.replace(/^TEMP_SYNC_/, "").replace(/^INVALID_/, "INVALID ");
+}
+
+function statusTone(status: string | null, kind: "sync" | "detection"): "ok" | "warn" | "bad" {
+  if (kind === "sync") {
+    if (status === "TEMP_SYNC_OK") return "ok";
+    if (status === "TEMP_SYNC_INTERPOLATED") return "warn";
+    return "bad";
+  }
+  return status === "VALID" ? "ok" : "bad";
+}
+
 function CurveGrid({ analysis, variant }: { analysis: AnalysisResult; variant: "run" | "analysis" }) {
   const specs = variant === "run" ? buildRunCurveSpecs(analysis) : buildAnalysisCurveSpecs(analysis);
   return (
@@ -1801,26 +3408,65 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function previewValue(preview: CameraPreviewResponse | null, key: "model" | "serial_number" | "ip" | "pixel_format"): string {
+  const topLevel = preview?.[key];
+  if (topLevel) return topLevel;
+  const metaValue = preview?.camera_meta[key];
+  return typeof metaValue === "string" && metaValue ? metaValue : "None";
+}
+
+function cameraPreviewErrorFromUnknown(err: unknown): CameraPreviewError {
+  if (err instanceof ApiError) {
+    const detail = apiErrorDetailObject(err.detail);
+    return {
+      camera_status: detail?.camera_status ?? "unavailable",
+      message: detail?.message ?? err.message,
+      details: detail?.details ?? {},
+      http_status: err.status
+    };
+  }
+  return {
+    camera_status: "unavailable",
+    message: err instanceof Error ? err.message : String(err),
+    details: {},
+    http_status: null
+  };
+}
+
+function temperatureErrorFromUnknown(err: unknown): SetupTemperatureError {
+  if (err instanceof ApiError) {
+    const detail = apiErrorDetailObject(err.detail);
+    return {
+      temperature_status: detail?.temperature_status ?? "unavailable",
+      message: detail?.message ?? err.message,
+      details: detail?.details ?? {},
+      http_status: err.status
+    };
+  }
+  return {
+    temperature_status: "unavailable",
+    message: err instanceof Error ? err.message : String(err),
+    details: {},
+    http_status: null
+  };
+}
+
+function apiErrorDetailObject(detail: ApiErrorDetail | string | null): ApiErrorDetail | null {
+  return typeof detail === "object" && detail !== null ? detail : null;
+}
+
 function createDefaultMeasurement(
   dataset: OfflineDatasetListItem,
   shape: number[]
 ): MeasurementDefinition {
-  const height = shape[0] ?? 1;
-  const width = shape[1] ?? 1;
   return {
     measurement_id: `${dataset.id}-default`,
+    source: "offline_dataset",
     object_class: dataset.object_class,
     detector: dataset.default_detector,
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
-    roi: {
-      type: "rotated_rect",
-      center_x: width / 2,
-      center_y: height / 2,
-      width: width * 0.62,
-      height: height * 0.28,
-      angle_deg: 0
-    },
+    roi: createDefaultRoiForShape(shape),
     detector_config: DEFAULT_CONFIG
   };
 }

@@ -67,6 +67,7 @@ export type DetectorConfig = {
 
 export type MeasurementDefinition = {
   measurement_id: string;
+  source: "offline_dataset" | "real_camera";
   object_class: string;
   detector: string;
   width_mode: "max_width" | "min_width";
@@ -74,6 +75,8 @@ export type MeasurementDefinition = {
   roi: RotatedROI;
   detector_config: DetectorConfig;
 };
+
+type BackendMeasurementDefinition = Omit<MeasurementDefinition, "source">;
 
 export type ABPoint = { x: number; y: number };
 
@@ -258,7 +261,25 @@ export type CameraPreviewResponse = {
   timestamp_ms: number | null;
   shape: number[];
   dtype: string;
+  model: string;
+  serial_number: string;
+  ip: string;
+  pixel_format: string;
   camera_meta: Record<string, unknown>;
+  image_data_url?: string;
+};
+
+export type RealCameraSetupProbeResponse = ProbeResponse &
+  CameraPreviewResponse & {
+    image_data_url: string;
+  };
+
+export type ApiErrorDetail = {
+  camera_status?: string;
+  temperature_status?: string;
+  message?: string;
+  details?: Record<string, unknown>;
+  issues?: Array<{ field: string; path: string; message: string }>;
 };
 
 export type SerialPortInfo = {
@@ -278,15 +299,65 @@ export type TemperatureStatusResponse = {
   };
 };
 
-const API_BASE = import.meta.env.VITE_G3_API_BASE ?? "http://127.0.0.1:8000";
+const API_BASE = import.meta.env?.VITE_G3_API_BASE ?? "http://127.0.0.1:8000";
+
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+  detail: ApiErrorDetail | string | null;
+  body: string;
+
+  constructor({
+    body,
+    detail,
+    status,
+    statusText
+  }: {
+    body: string;
+    detail: ApiErrorDetail | string | null;
+    status: number;
+    statusText: string;
+  }) {
+    const message =
+      typeof detail === "object" && detail !== null && typeof detail.message === "string"
+        ? detail.message
+        : `${status} ${statusText}: ${body}`;
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.statusText = statusText;
+    this.detail = detail;
+    this.body = body;
+  }
+}
 
 async function requestJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    throw await apiErrorFromResponse(response);
   }
   return response.json() as Promise<T>;
+}
+
+async function apiErrorFromResponse(response: Response): Promise<ApiError> {
+  const body = await response.text();
+  let detail: ApiErrorDetail | string | null = null;
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    if (typeof parsed.detail === "string") {
+      detail = parsed.detail;
+    } else if (typeof parsed.detail === "object" && parsed.detail !== null) {
+      detail = parsed.detail as ApiErrorDetail;
+    }
+  } catch {
+    detail = null;
+  }
+  return new ApiError({
+    body,
+    detail,
+    status: response.status,
+    statusText: response.statusText
+  });
 }
 
 export async function listOfflineDatasets(): Promise<OfflineDatasetListItem[]> {
@@ -328,6 +399,38 @@ export function frameIndexImageUrl(
   );
 }
 
+export function buildRunFrameImageUrl(
+  apiBase: string,
+  runId: string,
+  frameIndex: number,
+  options?: FrameImageUrlOptions
+): string {
+  return withFrameImageUrlOptions(
+    `${apiBase}/api/runs/${encodeURIComponent(runId)}/frames/${frameIndex}.png`,
+    options
+  );
+}
+
+export function runFrameImageUrl(
+  runId: string,
+  frameIndex: number,
+  options?: FrameImageUrlOptions
+): string {
+  return buildRunFrameImageUrl(API_BASE, runId, frameIndex, options);
+}
+
+export function isRunFrameImageUrl(url: string, runId: string, frameIndex: number): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.pathname ===
+      `/api/runs/${encodeURIComponent(runId)}/frames/${frameIndex}.png`
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function apiUrlFromPath(path: string, options?: FrameImageUrlOptions): string {
   const url = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   return withFrameImageUrlOptions(url, options);
@@ -350,7 +453,7 @@ export async function probeFrame(
     body: JSON.stringify({
       dataset_id: datasetId,
       frame_index: frameIndex,
-      measurement_definition: measurementDefinition
+      measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
   if (!response.ok) {
@@ -358,6 +461,30 @@ export async function probeFrame(
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
   return response.json() as Promise<ProbeResponse>;
+}
+
+export async function probeRealCameraSetupFrame(
+  measurementDefinition: MeasurementDefinition,
+  options?: {
+    framePngDataUrl?: string;
+    frameTimestampMs?: number | null;
+    cameraMeta?: Record<string, unknown>;
+  }
+): Promise<RealCameraSetupProbeResponse> {
+  const response = await fetch(`${API_BASE}/api/camera/setup-probe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      measurement_definition: backendMeasurementDefinition(measurementDefinition),
+      frame_png_data_url: options?.framePngDataUrl,
+      frame_timestamp_ms: options?.frameTimestampMs,
+      camera_meta: options?.cameraMeta
+    })
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<RealCameraSetupProbeResponse>;
 }
 
 export async function createLiveOfflineRun(
@@ -373,7 +500,7 @@ export async function createLiveOfflineRun(
       start_frame: options.startFrame,
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
-      measurement_definition: measurementDefinition
+      measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
   if (!response.ok) {
@@ -398,7 +525,7 @@ export async function streamLiveOfflineRun(
       start_frame: options.startFrame,
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
-      measurement_definition: measurementDefinition
+      measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
   if (!response.ok) {
@@ -486,7 +613,7 @@ export async function createRealCameraRun(
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
       camera_profile: options.cameraProfile ?? { pixel_format: "mono8" },
-      measurement_definition: measurementDefinition
+      measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
   if (!response.ok) {
@@ -494,6 +621,13 @@ export async function createRealCameraRun(
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
   return response.json() as Promise<RunResponse>;
+}
+
+function backendMeasurementDefinition(
+  measurementDefinition: MeasurementDefinition
+): BackendMeasurementDefinition {
+  const { source: _source, ...backendDefinition } = measurementDefinition;
+  return backendDefinition;
 }
 
 export async function getRun(runId: string): Promise<RunResponse> {

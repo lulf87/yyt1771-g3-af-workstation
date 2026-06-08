@@ -9,6 +9,7 @@ from yyt1771_g3.core.enums import (
     DetectionStatus,
     DetectorType,
     MeasurementCoordinateKind,
+    MeasurementSource,
     ObjectClass,
     TemperatureSyncStatus,
     WidthMode,
@@ -97,6 +98,7 @@ class DetectorConfig(G3Model):
 
 class MeasurementDefinition(G3Model):
     measurement_id: str = "default"
+    source: MeasurementSource = MeasurementSource.OFFLINE_DATASET
     object_class: ObjectClass
     detector: DetectorType
     width_mode: WidthMode = WidthMode.MAX_WIDTH

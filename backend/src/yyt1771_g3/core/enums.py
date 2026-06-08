@@ -29,6 +29,11 @@ class MeasurementCoordinateKind(StrEnum):
     SOURCE_PIXEL = "source_pixel"
 
 
+class MeasurementSource(StrEnum):
+    OFFLINE_DATASET = "offline_dataset"
+    REAL_CAMERA = "real_camera"
+
+
 class DetectionStatus(StrEnum):
     VALID = "VALID"
     INVALID = "INVALID"

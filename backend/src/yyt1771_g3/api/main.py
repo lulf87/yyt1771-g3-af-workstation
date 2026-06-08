@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 import json
 import os
@@ -15,6 +17,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from yyt1771_g3.camera.hik_mvs_source import CameraUnavailableError, HikMvsCameraSource
+from yyt1771_g3.camera.base import CameraFrame
 from yyt1771_g3.core.hardware_config import HardwareConfig, load_hardware_config
 from yyt1771_g3.core.models import MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import (
@@ -24,7 +27,7 @@ from yyt1771_g3.services.offline_dataset import (
     OfflineDatasetError,
     load_dataset_registry,
 )
-from yyt1771_g3.services.probe_service import probe_offline_frame
+from yyt1771_g3.services.probe_service import probe_offline_frame, probe_setup_frame
 from yyt1771_g3.services.live_offline_run_service import (
     iter_live_offline_run_events,
     read_run,
@@ -209,6 +212,14 @@ class RealCameraRunRequest(BaseModel):
     camera_profile: dict[str, Any] | None = None
 
 
+class RealCameraSetupProbeRequest(BaseModel):
+    measurement_definition: MeasurementDefinition
+    frame_png_data_url: str | None = None
+    frame_timestamp_ms: int | None = None
+    camera_meta: dict[str, Any] | None = None
+    camera_profile: dict[str, Any] | None = None
+
+
 class AnalysisRecomputeRequest(BaseModel):
     afas_preprocessing_parameters: dict[str, Any] | None = None
     afas_analysis_parameters: dict[str, Any] | None = None
@@ -290,6 +301,38 @@ def get_run(run_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/runs/{run_id}/frames/{frame_index}.png")
+def get_run_frame_png(run_id: str, frame_index: int, max_width: int | None = None) -> Response:
+    if frame_index <= 0:
+        raise HTTPException(status_code=400, detail="frame_index must be a positive integer")
+    if max_width is not None and max_width <= 0:
+        raise HTTPException(status_code=400, detail="max_width must be a positive integer")
+    run_store = _run_store()
+    try:
+        manifest = run_store.read_run_manifest(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}") from exc
+
+    frame_record = next((record for record in manifest.frame_records if record.frame_index == frame_index), None)
+    if frame_record is None:
+        raise HTTPException(status_code=404, detail=f"Frame not found in run manifest: {frame_index}")
+
+    run_dir = run_store.run_dir(run_id).resolve()
+    frame_path = (run_dir / frame_record.frame_path).resolve()
+    if not frame_path.is_relative_to(run_dir):
+        raise HTTPException(status_code=400, detail="invalid frame path in run manifest")
+    if not frame_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Run frame file not found: {frame_index}")
+
+    try:
+        frame = np.load(frame_path, allow_pickle=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Run frame cannot be loaded: {frame_index}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Run frame file not found: {frame_index}") from exc
+    return Response(content=_array_to_png(frame, max_width=max_width), media_type="image/png")
+
+
 @app.get("/api/runs/{run_id}/availability")
 def get_run_availability(run_id: str) -> dict[str, Any]:
     availability = _run_store().run_availability(run_id)
@@ -338,7 +381,12 @@ def preview_real_camera() -> dict[str, Any]:
         "timestamp_ms": frame.timestamp_ms,
         "shape": list(frame.array.shape),
         "dtype": str(frame.array.dtype),
+        "model": str(frame.camera_meta.get("model", "")),
+        "serial_number": str(frame.camera_meta.get("serial_number", "")),
+        "ip": str(frame.camera_meta.get("ip", "")),
+        "pixel_format": str(frame.camera_meta.get("pixel_format", config.camera.pixel_format)),
         "camera_meta": frame.camera_meta,
+        "image_data_url": _array_to_png_data_url(frame.array),
     }
 
 
@@ -360,6 +408,58 @@ def preview_real_camera_png() -> Response:
     finally:
         source.close()
     return Response(content=_array_to_png(frame.array), media_type="image/png")
+
+
+@app.post("/api/camera/setup-probe")
+def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[str, Any]:
+    try:
+        if request.frame_png_data_url:
+            frame = _camera_frame_from_data_url(
+                request.frame_png_data_url,
+                timestamp_ms=request.frame_timestamp_ms,
+                camera_meta=request.camera_meta or {},
+            )
+        else:
+            config = _hardware_config()
+            camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
+            source = HikMvsCameraSource(profile=camera_profile)
+            try:
+                frame = source.preview_frame()
+            finally:
+                source.close()
+        payload = probe_setup_frame(
+            dataset_id="real_camera",
+            frame_array=frame.array,
+            measurement=request.measurement_definition,
+            frame_index=1,
+            frame_timestamp_ms=frame.timestamp_ms,
+            camera_meta=frame.camera_meta,
+        )
+        payload.update(
+            {
+                "camera_status": "ok",
+                "timestamp_ms": frame.timestamp_ms,
+                "shape": list(frame.array.shape),
+                "dtype": str(frame.array.dtype),
+                "model": str(frame.camera_meta.get("model", "")),
+                "serial_number": str(frame.camera_meta.get("serial_number", "")),
+                "ip": str(frame.camera_meta.get("ip", "")),
+                "pixel_format": str(frame.camera_meta.get("pixel_format", "")),
+                "image_data_url": _array_to_png_data_url(frame.array),
+            }
+        )
+        return payload
+    except CameraUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "camera_status": "unavailable",
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/hardware/profile")
@@ -525,3 +625,28 @@ def _array_to_png(array: np.ndarray, max_width: int | None = None) -> bytes:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _array_to_png_data_url(array: np.ndarray) -> str:
+    return "data:image/png;base64," + base64.b64encode(_array_to_png(array)).decode("ascii")
+
+
+def _camera_frame_from_data_url(
+    data_url: str,
+    *,
+    timestamp_ms: int | None,
+    camera_meta: dict[str, Any],
+) -> CameraFrame:
+    prefix = "data:image/png;base64,"
+    if not data_url.startswith(prefix):
+        raise ValueError("frame_png_data_url must be a PNG data URL")
+    try:
+        image_bytes = base64.b64decode(data_url[len(prefix) :], validate=True)
+    except binascii.Error as exc:
+        raise ValueError("frame_png_data_url contains invalid base64") from exc
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        array = np.asarray(image)
+    except Exception as exc:
+        raise ValueError("frame_png_data_url cannot be decoded as a PNG image") from exc
+    return CameraFrame(array=array, timestamp_ms=timestamp_ms, camera_meta=camera_meta)

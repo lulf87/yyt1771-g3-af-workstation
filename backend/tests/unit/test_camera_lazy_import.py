@@ -56,6 +56,48 @@ def test_hik_preview_uses_lazy_sdk_frame_source(monkeypatch: pytest.MonkeyPatch)
     assert captured.camera_meta["pixel_format"] == "mono8"
 
 
+def test_hik_sdk_loader_uses_profile_library_path_override_for_official_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    sdk_dir = tmp_path / "MvImport"
+    sdk_dir.mkdir()
+    library_path = tmp_path / "libMvCameraControl.dylib"
+    library_path.write_bytes(b"fake dylib")
+    (sdk_dir / "MvCameraControl_class.py").write_text(
+        "\n".join(
+            [
+                "import ctypes",
+                'MvCamCtrldll = ctypes.cdll.LoadLibrary("/usr/local/lib/libMvCameraControl.dylib")',
+                "class MvCamera:",
+                "    pass",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delitem(sys.modules, "MvCameraControl_class", raising=False)
+    monkeypatch.setattr(sys, "path", [item for item in sys.path if str(sdk_dir) != item])
+    loaded_paths: list[str] = []
+
+    def fake_load_library(path: str):  # noqa: ANN202
+        loaded_paths.append(path)
+        if path == str(library_path):
+            return SimpleNamespace(path=path)
+        raise OSError(f"wrong dylib path: {path}")
+
+    monkeypatch.setattr("ctypes.cdll.LoadLibrary", fake_load_library)
+
+    sdk = HikMvsCameraSource._load_sdk(
+        {
+            "sdk_python_paths": [str(sdk_dir)],
+            "sdk_library_path": str(library_path),
+        }
+    )
+
+    assert hasattr(sdk, "MvCamera")
+    assert str(library_path) in loaded_paths
+
+
 class _FakeDeviceList:
     def __init__(self) -> None:
         self.nDeviceNum = 0

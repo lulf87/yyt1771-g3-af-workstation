@@ -152,6 +152,24 @@ input {
   gap: 10px;
 }
 
+.compactButton {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.inlineWarning {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e6c66c;
+  border-radius: 8px;
+  background: #fff8df;
+  color: #75560f;
+  font-size: 13px;
+  font-weight: 720;
+}
+
 .workspace {
   min-height: 0;
   display: grid;
@@ -295,7 +313,8 @@ input {
   gap: 6px;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   min-height: 34px;
   border: 1px solid #bec9d3;
@@ -578,6 +597,276 @@ input {
   grid-template-columns: 1fr;
 }
 
+.runTrendHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.runTrendHeader h2 {
+  margin-bottom: 4px;
+}
+
+.runTrendHeader p {
+  margin: 0;
+  color: #64717f;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.runTrendStatusLabel {
+  flex: 0 0 auto;
+  border: 1px solid #cbd5df;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.runTrendShell {
+  display: grid;
+  gap: 12px;
+}
+
+.runValueStrip {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runValue {
+  min-width: 0;
+  border: 1px solid #d8e0e7;
+  border-left: 4px solid #94a3b8;
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #f8fafc;
+}
+
+.runValue--ok {
+  border-left-color: #0f766e;
+}
+
+.runValue--warn {
+  border-left-color: #a16207;
+}
+
+.runValue--bad {
+  border-left-color: #b91c1c;
+}
+
+.runValue dt {
+  color: #64717f;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.runValue dd {
+  margin: 4px 0 0;
+  color: #1f2933;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.runTrendFigure {
+  min-width: 0;
+  margin: 0;
+}
+
+.runTrendFigure figcaption {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #536170;
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 760;
+}
+
+.runTrendFigure figcaption span:last-child {
+  color: #64717f;
+  font-weight: 700;
+}
+
+.runTrendSvg {
+  display: block;
+  width: 100%;
+  height: 420px;
+  min-height: 360px;
+}
+
+.runTrendPlot {
+  fill: #fbfcfd;
+  stroke: #d8e0e7;
+}
+
+.runTrendGridLine {
+  stroke: #e5ebf1;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendAxis {
+  stroke: #64717f;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendTick {
+  stroke: #7b8794;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendTickLabel {
+  fill: #536170;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.runTrendAxisLabel {
+  fill: #293746;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.runTrendReferencePoint {
+  fill: rgba(100, 116, 139, 0.28);
+  stroke: rgba(100, 116, 139, 0.42);
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendFormalLine {
+  fill: none;
+  stroke: #0b6f69;
+  stroke-width: 3.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendFormalPoint {
+  fill: #0b6f69;
+  stroke: #ffffff;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendTargetMarker rect {
+  fill: rgba(15, 118, 110, 0.09);
+}
+
+.runTrendTargetMarker line {
+  stroke: rgba(15, 118, 110, 0.7);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendTargetMarker text {
+  fill: #0f5f59;
+  stroke: #ffffff;
+  stroke-width: 3;
+  paint-order: stroke;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.runTrendRugTrack > line {
+  stroke: #cbd5df;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendRugTrack text {
+  fill: #64717f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.runTrendRug line {
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendRug--sync line {
+  stroke: #a16207;
+}
+
+.runTrendRug--sync circle {
+  fill: #fff7ed;
+  stroke: #a16207;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendRug--invalid line {
+  stroke: #b91c1c;
+}
+
+.runTrendRug--invalid rect {
+  fill: #fee2e2;
+  stroke: #b91c1c;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendLatestPoint line {
+  stroke: rgba(15, 23, 42, 0.44);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendLatestPoint circle:first-of-type {
+  fill: rgba(15, 118, 110, 0.16);
+}
+
+.runTrendLatestPoint circle:last-of-type {
+  fill: #0b6f69;
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.runTrendLatestPoint text,
+.runTrendInlineLabel {
+  fill: #1f2933;
+  stroke: #ffffff;
+  stroke-width: 3;
+  paint-order: stroke;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.runTrendInlineLabel {
+  fill: #0b6f69;
+}
+
+.runTrendTooltip rect {
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: #b8c4cf;
+  stroke-width: 1;
+}
+
+.runTrendTooltip text {
+  fill: #1f2933;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .cameraPreview {
   min-width: 0;
   margin: 0;
@@ -604,6 +893,36 @@ input {
   width: 100%;
   aspect-ratio: 16 / 10;
   object-fit: contain;
+}
+
+.structuredError {
+  border: 1px solid #efb8b8;
+  border-radius: 8px;
+  background: #fff7f7;
+  padding: 10px;
+}
+
+.structuredError summary {
+  color: #9f2727;
+  font-size: 13px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.structuredError pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 10px 0 0;
+  color: #4b1f1f;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.previewPlaceholder {
+  min-height: 520px;
+  display: grid;
+  place-items: center;
 }
 
 .curveView {
@@ -863,6 +1182,437 @@ input {
   line-height: 1.45;
 }
 
+.analysisMainPanel {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.analysisPageGrid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.analysisExportPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.analysisExportPanel h2 {
+  grid-column: 1 / -1;
+}
+
+.analysisExportPanel .metricGrid.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.analysisExportPanel .primaryButton {
+  width: auto;
+  min-width: 154px;
+}
+
+.analysisExportPanel .artifactList,
+.analysisExportPanel .inlineError {
+  grid-column: 1 / -1;
+}
+
+.analysisAfasShell {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.analysisAfasSummaryStrip {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.analysisAfasSummaryStrip div {
+  min-width: 0;
+  border: 1px solid #d6dee6;
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #f8fafb;
+}
+
+.analysisAfasSummaryStrip dt {
+  color: #5c6977;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 720;
+}
+
+.analysisAfasSummaryStrip dd {
+  margin: 3px 0 0;
+  color: #17212b;
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 780;
+  overflow-wrap: anywhere;
+}
+
+.analysisAfasToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysisAfasLayerGroup {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.analysisAfasLayerToggle {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #bcc7d1;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #334251;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.analysisAfasLayerToggle input {
+  width: 15px;
+  min-height: 15px;
+  accent-color: #0f766e;
+}
+
+.analysisAfasResetButton {
+  width: auto;
+  min-width: 122px;
+}
+
+.analysisAfasFigure {
+  min-width: 0;
+  margin: 0;
+}
+
+.analysisAfasFigure figcaption {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #2c3947;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.analysisAfasFigure figcaption span:last-child {
+  color: #607080;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.analysisAfasSvg {
+  width: 100%;
+  height: 540px;
+  display: block;
+  touch-action: none;
+  user-select: none;
+}
+
+.analysisAfasFrame {
+  fill: #fbfcfd;
+  stroke: #ccd5de;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasFitBand {
+  pointer-events: none;
+}
+
+.analysisAfasFitBand--low_baseline {
+  fill: rgba(80, 126, 164, 0.13);
+}
+
+.analysisAfasFitBand--high_baseline {
+  fill: rgba(154, 126, 78, 0.14);
+}
+
+.analysisAfasGridLine {
+  stroke: #dce3e9;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasAxis {
+  stroke: #64717f;
+  stroke-width: 1.45;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasTick {
+  stroke: #64717f;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasTickLabel {
+  fill: #4e5c6a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analysisAfasAxisLabel {
+  fill: #263442;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.analysisAfasRawPoint {
+  fill: rgba(91, 103, 116, 0.16);
+  stroke: rgba(91, 103, 116, 0.22);
+  stroke-width: 0.7;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasOutlierPoint circle {
+  fill: #ffffff;
+  stroke: #7c2d12;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasOutlierPoint line {
+  stroke: #7c2d12;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasSmoothedLine {
+  fill: none;
+  stroke: #0f766e;
+  stroke-width: 3.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasFitLine {
+  fill: none;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasFitLine--low_baseline {
+  stroke: rgba(59, 93, 126, 0.68);
+  stroke-width: 1.6;
+  stroke-dasharray: 7 6;
+}
+
+.analysisAfasFitLine--high_baseline {
+  stroke: rgba(124, 92, 49, 0.68);
+  stroke-width: 1.6;
+  stroke-dasharray: 7 6;
+}
+
+.analysisAfasFitLine--tangent {
+  stroke: rgba(194, 65, 12, 0.82);
+  stroke-width: 2.35;
+}
+
+.analysisAfasConstructionGuide {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 6 5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+}
+
+.analysisAfasConstructionGuide--as_guide {
+  stroke: rgba(37, 99, 235, 0.58);
+}
+
+.analysisAfasConstructionGuide--af_tan_guide {
+  stroke: rgba(220, 70, 29, 0.58);
+}
+
+.analysisAfasInlineLabel,
+.analysisAfasSmoothedLabel {
+  fill: #344250;
+  stroke: #ffffff;
+  stroke-width: 4;
+  paint-order: stroke;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.analysisAfasInlineLabel--tangent {
+  fill: #9a3412;
+}
+
+.analysisAfasSmoothedLabel {
+  fill: #0b5f59;
+}
+
+.analysisAfasReferenceMarker line {
+  stroke-width: 1.45;
+  stroke-dasharray: 5 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasReferenceMarker circle {
+  stroke: #ffffff;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasReferenceMarker rect {
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasReferenceMarker text,
+.analysisAfasMaxSlopeMarker text {
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.analysisAfasReferenceMarker--as line,
+.analysisAfasReferenceMarker--as rect {
+  stroke: #1d4ed8;
+}
+
+.analysisAfasReferenceMarker--as circle,
+.analysisAfasReferenceMarker--as rect {
+  fill: #1d4ed8;
+}
+
+.analysisAfasReferenceMarker--af_tan line,
+.analysisAfasReferenceMarker--af_tan rect {
+  stroke: #b91c1c;
+}
+
+.analysisAfasReferenceMarker--af_tan circle,
+.analysisAfasReferenceMarker--af_tan rect {
+  fill: #b91c1c;
+}
+
+.analysisAfasReferenceMarker text {
+  fill: #ffffff;
+}
+
+.analysisAfasMaxSlopeMarker polygon {
+  fill: #ffffff;
+  stroke: #7c2d12;
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasMaxSlopeMarker text {
+  fill: #7c2d12;
+  stroke: #ffffff;
+  stroke-width: 4;
+  paint-order: stroke;
+}
+
+.analysisAfasBrush {
+  fill: rgba(15, 118, 110, 0.12);
+  stroke: rgba(15, 118, 110, 0.45);
+  stroke-width: 1.1;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasTooltip rect {
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: #aebac6;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasTooltip text {
+  fill: #253341;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analysisAfasLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.analysisAfasLegendItem {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #4d5c6b;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.analysisAfasLegendItem::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 3px solid #0f766e;
+}
+
+.analysisAfasLegendItem--raw::before {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(91, 103, 116, 0.45);
+  border-radius: 50%;
+  background: rgba(91, 103, 116, 0.24);
+}
+
+.analysisAfasLegendItem--fit::before {
+  border-top: 2px dashed rgba(59, 93, 126, 0.7);
+}
+
+.analysisAfasLegendItem--tangent::before {
+  border-top-color: #c2410c;
+}
+
+.analysisAfasLegendItem--construction::before {
+  border-top: 2px dashed rgba(37, 99, 235, 0.62);
+}
+
+.analysisAfasLegendItem--marker::before {
+  width: 9px;
+  height: 9px;
+  border: 2px solid #7c2d12;
+  transform: rotate(45deg);
+  background: #ffffff;
+}
+
+.analysisParameterDisclosure {
+  min-width: 0;
+  border-top: 1px solid #e2e7ec;
+  padding-top: 12px;
+}
+
+.analysisParameterDisclosure summary {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #344250;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .inlineError {
   margin-top: 10px;
   color: #8a231f;
@@ -908,8 +1658,24 @@ input {
     grid-template-columns: 1fr;
   }
 
+  .analysisExportPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .analysisExportPanel .metricGrid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .curveGrid {
     grid-template-columns: 1fr;
+  }
+
+  .runValueStrip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .analysisAfasSummaryStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .datasetRail {
@@ -937,11 +1703,59 @@ input {
   .twoColumnControls,
   .metricGrid,
   .buttonPair,
-  .analysisParameterMetrics {
+  .analysisParameterMetrics,
+  .runValueStrip,
+  .analysisExportPanel .metricGrid.compact {
     grid-template-columns: 1fr;
   }
 
   .frameCanvas {
     min-height: 320px;
+  }
+
+  .runTrendHeader {
+    display: grid;
+  }
+
+  .runTrendStatusLabel {
+    width: 100%;
+    white-space: normal;
+  }
+
+  .runTrendFigure {
+    overflow-x: auto;
+  }
+
+  .runTrendSvg {
+    min-width: 720px;
+    height: 380px;
+  }
+
+  .analysisAfasToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .analysisAfasLayerGroup,
+  .analysisAfasResetButton {
+    width: 100%;
+  }
+
+  .analysisAfasLayerToggle {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .analysisAfasFigure {
+    overflow-x: auto;
+  }
+
+  .analysisAfasSvg {
+    min-width: 760px;
+    height: 440px;
+  }
+
+  .analysisAfasSummaryStrip {
+    grid-template-columns: 1fr;
   }
 }

@@ -7,7 +7,16 @@ export type CurvePointInput = {
   sync_status?: string | null;
 };
 
+export type RunTrendFrameInput = {
+  frame_index?: number;
+  detection_status?: string | null;
+  distance_px?: number | null;
+  temperature_celsius?: number | null;
+  temperature_sync_status?: string | null;
+};
+
 export type AnalysisCurveSource = {
+  all_frames?: RunTrendFrameInput[];
   distance_time: CurvePointInput[];
   temperature_time: CurvePointInput[];
   temperature_distance: CurvePointInput[];
@@ -85,7 +94,265 @@ export type CurveViewModel = {
   hasPoints: boolean;
 };
 
+export type IndustrialCurveViewVariant = "run_monitor" | "analysis_review";
+
+export type IndustrialCurveFrameInput = {
+  variant: IndustrialCurveViewVariant;
+  width: number;
+  height: number;
+  plot: { left: number; right: number; top: number; bottom: number };
+  xTicks: CurveTick[];
+  yTicks: CurveTick[];
+  xAxisLabel: string;
+  yAxisLabel: string;
+};
+
+export type IndustrialCurveFrameModel = IndustrialCurveFrameInput & {
+  classNames: {
+    frame: string;
+    gridLine: string;
+    axis: string;
+    tick: string;
+    tickLabel: string;
+    axisLabel: string;
+  };
+  axisLayout: {
+    frameRadius: number;
+    tickLength: number;
+    xTickLabelOffset: number;
+    yTickLabelXOffset: number;
+    yTickLabelYOffset: number;
+    xAxisLabelY: number;
+    yAxisLabelY: number;
+  };
+  textMetrics: {
+    tickLabelFontPx: number;
+    axisLabelFontPx: number;
+  };
+};
+
+export type RunTrendWindowMode = "latest" | "full";
+export type RunTrendPointSource = "smoothed" | "grouped" | "raw";
+
+export type RunTrendModelOptions = {
+  mode: RunTrendWindowMode;
+  width: number;
+  height: number;
+  yAxis?: RunTrendYAxisOptions;
+};
+
+export type RunTrendYAxisRange = {
+  min: number;
+  max: number;
+};
+
+export type RunTrendYAxisOptions = {
+  minSpanPx?: number;
+  rangeOverride?: RunTrendYAxisRange | null;
+};
+
+export type RunTrendStickyYAxisOptions = {
+  minSpanPx?: number;
+  guardBandRatio?: number;
+  expandFactor?: number;
+};
+
+export type RunTrendPoint = {
+  frameIndex: number | null;
+  temperature: number;
+  distance: number;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+  source: RunTrendPointSource;
+  x: number;
+  y: number;
+};
+
+export type RunTrendStatusRug = {
+  frameIndex: number;
+  kind: "invalid" | "sync";
+  label: string;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+  x: number;
+  y1: number;
+  y2: number;
+};
+
+export type RunTrendValueStrip = {
+  currentDistance: number | null;
+  currentTemperature: number | null;
+  currentFrame: number | null;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+  points: number;
+};
+
+export type RunTrendModel = {
+  width: number;
+  height: number;
+  padding: { top: number; right: number; bottom: number; left: number };
+  plot: { left: number; right: number; top: number; bottom: number };
+  windowMode: RunTrendWindowMode;
+  source: RunTrendPointSource;
+  sourceLabel: string;
+  formalPoints: RunTrendPoint[];
+  referencePoints: RunTrendPoint[];
+  formalSegments: RunTrendPoint[][];
+  statusRugs: RunTrendStatusRug[];
+  latestPoint: RunTrendPoint | null;
+  xTicks: CurveTick[];
+  yTicks: CurveTick[];
+  xAxisLabel: string;
+  yAxisLabel: string;
+  xRange: { min: number; max: number };
+  yRange: { min: number; max: number };
+  dataYRange: RunTrendYAxisRange;
+  valueStrip: RunTrendValueStrip;
+  hasPoints: boolean;
+};
+
+export type AnalysisAfasLayerKey = "raw" | "fit" | "markers";
+
+export type AnalysisAfasLayerState = Record<AnalysisAfasLayerKey, boolean>;
+
+export type AnalysisAfasModelOptions = {
+  width: number;
+  height: number;
+  xDomain?: [number, number] | null;
+  layers?: Partial<AnalysisAfasLayerState>;
+};
+
+export type AnalysisAfasDataPoint = {
+  temperature: number;
+  distance: number;
+  frameIndex: number | null;
+  x: number;
+  y: number;
+};
+
+export type AnalysisAfasFitLine = {
+  kind: CurveOverlayLineSpec["kind"];
+  label: string;
+  dataRange: [number, number] | null;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  labelX: number;
+  labelY: number;
+};
+
+export type AnalysisAfasConstructionGuide = {
+  kind: "as_guide" | "af_tan_guide";
+  label: string;
+  role: "AFAS construction guide";
+  temperature: number;
+  distance: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  labelX: number;
+  labelY: number;
+};
+
+export type AnalysisAfasMarker = {
+  kind: CurveOverlayMarkerSpec["kind"];
+  label: string;
+  valueLabel: string;
+  temperature: number;
+  distance: number;
+  x: number;
+  y: number;
+  yClipped: boolean;
+};
+
+export type AnalysisAfasSummary = {
+  status: string;
+  asLabel: string;
+  afTanLabel: string;
+  deltaLabel: string;
+  maxSlopeLabel: string;
+  outlierLabel: string;
+  rawCountLabel: string;
+  smoothedCountLabel: string;
+};
+
+export type AnalysisAfasModel = {
+  width: number;
+  height: number;
+  padding: { top: number; right: number; bottom: number; left: number };
+  plot: { left: number; right: number; top: number; bottom: number };
+  layers: AnalysisAfasLayerState;
+  rawPoints: AnalysisAfasDataPoint[];
+  outlierPoints: AnalysisAfasDataPoint[];
+  smoothedPoints: AnalysisAfasDataPoint[];
+  smoothedPath: string;
+  fitLines: AnalysisAfasFitLine[];
+  constructionGuides: AnalysisAfasConstructionGuide[];
+  markers: AnalysisAfasMarker[];
+  xTicks: CurveTick[];
+  yTicks: CurveTick[];
+  xAxisLabel: string;
+  yAxisLabel: string;
+  xRange: { min: number; max: number };
+  yRange: { min: number; max: number };
+  summary: AnalysisAfasSummary;
+  hasPoints: boolean;
+};
+
 const FORMAL_COLOR = "#0f766e";
+const DEFAULT_RUN_TREND_Y_AXIS_MIN_SPAN_PX = 40;
+const DEFAULT_RUN_TREND_Y_AXIS_GUARD_BAND_RATIO = 0.1;
+const DEFAULT_RUN_TREND_Y_AXIS_EXPAND_FACTOR = 1.5;
+const DEFAULT_ANALYSIS_AFAS_Y_AXIS_MIN_SPAN_PX = 20;
+const DISPLAY_Y_AXIS_OUTLIER_MIN_DEVIATION_PX = 8;
+const DISPLAY_Y_AXIS_OUTLIER_MAD_MULTIPLIER = 8;
+const DEFAULT_ANALYSIS_AFAS_LAYERS: AnalysisAfasLayerState = {
+  raw: false,
+  fit: true,
+  markers: true
+};
+
+export function buildIndustrialCurveFrameModel(
+  input: IndustrialCurveFrameInput
+): IndustrialCurveFrameModel {
+  const isRunMonitor = input.variant === "run_monitor";
+  return {
+    ...input,
+    classNames: isRunMonitor
+      ? {
+        frame: "runTrendPlot",
+        gridLine: "runTrendGridLine",
+        axis: "runTrendAxis",
+        tick: "runTrendTick",
+        tickLabel: "runTrendTickLabel",
+        axisLabel: "runTrendAxisLabel"
+      }
+      : {
+        frame: "analysisAfasFrame",
+        gridLine: "analysisAfasGridLine",
+        axis: "analysisAfasAxis",
+        tick: "analysisAfasTick",
+        tickLabel: "analysisAfasTickLabel",
+        axisLabel: "analysisAfasAxisLabel"
+      },
+    axisLayout: {
+      frameRadius: 6,
+      tickLength: 6,
+      xTickLabelOffset: isRunMonitor ? 24 : 25,
+      yTickLabelXOffset: isRunMonitor ? 11 : 12,
+      yTickLabelYOffset: 4,
+      xAxisLabelY: input.height - (isRunMonitor ? 16 : 18),
+      yAxisLabelY: isRunMonitor ? 22 : 24
+    },
+    textMetrics: {
+      tickLabelFontPx: 12,
+      axisLabelFontPx: 13
+    }
+  };
+}
 
 type RawOverlayLineSegment = CurveOverlayLineSpec & {
   x1: number;
@@ -129,20 +396,790 @@ export function buildAnalysisCurveSpecs(analysis: AnalysisCurveSource): CurveSpe
 }
 
 function readSmoothedTemperatureDistance(analysis: AnalysisCurveSource): CurvePointInput[] | null {
+  return readPreprocessedTemperatureDistance(analysis, "smoothed", { attachRawFrameMetadata: true });
+}
+
+function readPreprocessedTemperatureDistance(
+  analysis: AnalysisCurveSource,
+  key: "grouped" | "smoothed",
+  options: { attachRawFrameMetadata?: boolean } = {}
+): CurvePointInput[] | null {
   const preprocessing = analysis.afas_preprocessing;
   if (!preprocessing || typeof preprocessing !== "object") return null;
-  const smoothed = (preprocessing as { smoothed?: unknown }).smoothed;
-  if (!smoothed || typeof smoothed !== "object") return null;
-  const temperatures = (smoothed as { temperature_celsius?: unknown }).temperature_celsius;
-  const values = (smoothed as { values?: unknown }).values;
+  const series = (preprocessing as Record<string, unknown>)[key];
+  if (!series || typeof series !== "object") return null;
+  const temperatures = (series as { temperature_celsius?: unknown }).temperature_celsius;
+  const values = (series as { values?: unknown }).values;
   if (!Array.isArray(temperatures) || !Array.isArray(values)) return null;
   const points = temperatures.flatMap((temperature, index) => {
     const value = values[index];
     if (typeof temperature !== "number" || typeof value !== "number") return [];
     if (!Number.isFinite(temperature) || !Number.isFinite(value)) return [];
-    return [{ x: temperature, y: value, frame_index: index + 1, sync_status: null }];
+    const rawPoint = options.attachRawFrameMetadata ? analysis.temperature_distance[index] : null;
+    return [{
+      x: temperature,
+      y: value,
+      frame_index: rawPoint?.frame_index,
+      sync_status: rawPoint?.sync_status
+    }];
   });
-  return points.length ? points : null;
+  return points.length
+    ? [...points].sort((a, b) => a.x - b.x)
+    : null;
+}
+
+export function buildRunTrendModel(
+  analysis: AnalysisCurveSource,
+  options: RunTrendModelOptions
+): RunTrendModel {
+  const width = options.width;
+  const height = options.height;
+  const padding = { top: 34, right: 28, bottom: 72, left: 76 };
+  const plot = {
+    left: padding.left,
+    right: width - padding.right,
+    top: padding.top,
+    bottom: height - padding.bottom
+  };
+  const frameMap = buildFrameMap(analysis.all_frames ?? []);
+  const allReferenceData = normalizeRunTrendDataPoints(analysis.temperature_distance, "raw", frameMap)
+    .filter((point) => isFormalTrendPoint(point));
+  const allStatusData = normalizeRunTrendStatusData(analysis, frameMap);
+  const visibleReferenceData = allReferenceData;
+  const visibleStatusData = allStatusData;
+  const trendSource = readRunTrendCurveSource(analysis);
+  const allFormalData = trendSource.points
+    ? normalizeRunTrendDataPoints(trendSource.points, trendSource.source, frameMap, { preserveMissingFrameIndex: true })
+      .filter((point) => isFormalTrendPoint(point))
+      .sort((a, b) => a.temperature - b.temperature)
+    : [];
+  const visibleFormalData = allFormalData;
+  const xValues = [
+    ...visibleFormalData.map((point) => point.temperature),
+    ...visibleReferenceData.map((point) => point.temperature),
+    ...visibleStatusData.map((rug) => rug.temperature)
+  ].filter(Number.isFinite);
+  const formalYValues = visibleFormalData.map((point) => point.distance).filter(Number.isFinite);
+  const referenceYValues = visibleReferenceData.map((point) => point.distance).filter(Number.isFinite);
+  const yValues = formalYValues.length ? formalYValues : filterIsolatedDisplayYOutliers(referenceYValues);
+  const xRange = paddedRange(xValues.length ? Math.min(...xValues) : 0, xValues.length ? Math.max(...xValues) : 1);
+  const dataYRange = observedRange(yValues);
+  const yRange = buildRunTrendYAxisRange(yValues, options.yAxis);
+  const formalPoints = visibleFormalData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
+  const referencePoints = visibleReferenceData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
+  const statusRugs = visibleStatusData.map((rug) => scaleRunTrendStatusRug(rug, xRange, plot));
+  const formalSegments = buildRunTrendSegments(formalPoints, statusRugs);
+  const xTicks = buildTicks(xRange.min, xRange.max, 5).map((value) => ({
+    value,
+    position: scaleLinear(value, xRange.min, xRange.max, plot.left, plot.right),
+    label: formatRunTrendTick(value, xRange)
+  }));
+  const yTicks = buildTicks(yRange.min, yRange.max, 5).map((value) => ({
+    value,
+    position: scaleLinear(value, yRange.min, yRange.max, plot.bottom, plot.top),
+    label: formatRunTrendTick(value, yRange)
+  }));
+
+  return {
+    width,
+    height,
+    padding,
+    plot,
+    windowMode: options.mode,
+    source: trendSource.source,
+    sourceLabel: trendSource.label,
+    formalPoints,
+    referencePoints,
+    formalSegments,
+    statusRugs,
+    latestPoint: referencePoints.length ? referencePoints[referencePoints.length - 1] : null,
+    xTicks,
+    yTicks,
+    xAxisLabel: "Temperature (°C)",
+    yAxisLabel: "Distance (px)",
+    xRange,
+    yRange,
+    dataYRange,
+    valueStrip: buildRunTrendValueStrip(analysis),
+    hasPoints: formalPoints.length > 0 || referencePoints.length > 0
+  };
+}
+
+export function buildRunTrendYAxisRange(
+  yValues: number[],
+  options: RunTrendYAxisOptions = {}
+): RunTrendYAxisRange {
+  const override = options.rangeOverride;
+  if (override && isFiniteRange(override)) return override;
+
+  const finiteValues = yValues.filter(Number.isFinite);
+  const minSpanPx = Math.max(1, options.minSpanPx ?? DEFAULT_RUN_TREND_Y_AXIS_MIN_SPAN_PX);
+  if (!finiteValues.length) {
+    return { min: 0, max: minSpanPx };
+  }
+
+  const minValue = Math.min(...finiteValues);
+  const maxValue = Math.max(...finiteValues);
+  const center = median(finiteValues);
+  return ensureMinimumRangeSpan(paddedRange(minValue, maxValue), minSpanPx, center);
+}
+
+export function buildAnalysisAfasYAxisRange(
+  yValues: number[],
+  minSpanPx = DEFAULT_ANALYSIS_AFAS_Y_AXIS_MIN_SPAN_PX
+): RunTrendYAxisRange {
+  const finiteValues = yValues.filter(Number.isFinite);
+  const minSpan = Math.max(1, minSpanPx);
+  if (!finiteValues.length) {
+    return { min: 0, max: minSpan };
+  }
+
+  const minValue = Math.min(...finiteValues);
+  const maxValue = Math.max(...finiteValues);
+  const center = median(finiteValues);
+  return ensureMinimumRangeSpan(paddedRange(minValue, maxValue), minSpan, center);
+}
+
+export function resolveRunTrendStickyYAxisRange(
+  previousRange: RunTrendYAxisRange | null,
+  dataRange: RunTrendYAxisRange,
+  options: RunTrendStickyYAxisOptions = {}
+): RunTrendYAxisRange {
+  const minSpanPx = Math.max(1, options.minSpanPx ?? DEFAULT_RUN_TREND_Y_AXIS_MIN_SPAN_PX);
+  const hasObservedRange = isFiniteObservedRange(dataRange);
+  const observedDataRange = hasObservedRange
+    ? dataRange
+    : buildRunTrendYAxisRange([], { minSpanPx });
+  const initialRange = hasObservedRange
+    ? ensureMinimumRangeSpan(observedDataRange, minSpanPx, (observedDataRange.min + observedDataRange.max) / 2)
+    : observedDataRange;
+  if (!previousRange || !isFiniteRange(previousRange)) return initialRange;
+
+  const previous = ensureMinimumRangeSpan(
+    previousRange,
+    minSpanPx,
+    (previousRange.min + previousRange.max) / 2
+  );
+  const previousSpan = previous.max - previous.min;
+  const guardBandRatio = clampNumber(
+    options.guardBandRatio ?? DEFAULT_RUN_TREND_Y_AXIS_GUARD_BAND_RATIO,
+    0,
+    0.45
+  );
+  const guardBand = previousSpan * guardBandRatio;
+  const touchesGuard =
+    observedDataRange.min <= previous.min + guardBand ||
+    observedDataRange.max >= previous.max - guardBand;
+  const outsideRange = observedDataRange.min < previous.min || observedDataRange.max > previous.max;
+  if (!touchesGuard && !outsideRange) return previous;
+
+  const expandFactor = Math.max(1.01, options.expandFactor ?? DEFAULT_RUN_TREND_Y_AXIS_EXPAND_FACTOR);
+  const desiredMin = Math.min(previous.min, observedDataRange.min - guardBand);
+  const desiredMax = Math.max(previous.max, observedDataRange.max + guardBand);
+  const desiredSpan = desiredMax - desiredMin;
+  const nextSpan = Math.max(previousSpan * expandFactor, desiredSpan, minSpanPx);
+  const nextCenter = (desiredMin + desiredMax) / 2;
+  return {
+    min: nextCenter - nextSpan / 2,
+    max: nextCenter + nextSpan / 2
+  };
+}
+
+function readRunTrendCurveSource(analysis: AnalysisCurveSource): {
+  source: RunTrendPointSource;
+  label: string;
+  points: CurvePointInput[] | null;
+} {
+  const smoothed = readPreprocessedTemperatureDistance(analysis, "smoothed");
+  if (smoothed?.length) {
+    return {
+      source: "smoothed",
+      label: "Backend smoothed temperature-distance",
+      points: smoothed
+    };
+  }
+  const grouped = readPreprocessedTemperatureDistance(analysis, "grouped");
+  if (grouped?.length) {
+    return {
+      source: "grouped",
+      label: "Backend binned temperature-distance",
+      points: grouped
+    };
+  }
+  return {
+    source: "raw",
+    label: "Raw frame scatter; backend smooth pending",
+    points: null
+  };
+}
+
+type RunTrendDataPoint = {
+  frameIndex: number | null;
+  temperature: number;
+  distance: number;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+  source: RunTrendPointSource;
+};
+
+type RunTrendStatusData = {
+  frameIndex: number;
+  temperature: number;
+  kind: "invalid" | "sync";
+  label: string;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+};
+
+function buildFrameMap(frames: RunTrendFrameInput[]): Map<number, RunTrendFrameInput> {
+  const frameMap = new Map<number, RunTrendFrameInput>();
+  for (const frame of frames) {
+    const frameIndex = readFiniteNumber(frame.frame_index);
+    if (frameIndex !== null) frameMap.set(Math.round(frameIndex), frame);
+  }
+  return frameMap;
+}
+
+function normalizeRunTrendDataPoints(
+  points: CurvePointInput[],
+  source: RunTrendPointSource,
+  frameMap: Map<number, RunTrendFrameInput>,
+  options: { preserveMissingFrameIndex?: boolean } = {}
+): RunTrendDataPoint[] {
+  return points.flatMap((point, index) => {
+    const temperature = readFiniteNumber(point.x);
+    const distance = readFiniteNumber(point.y);
+    if (temperature === null || distance === null) return [];
+    const rawFrameIndex = readFiniteNumber(point.frame_index);
+    const frameIndex = rawFrameIndex === null && options.preserveMissingFrameIndex
+      ? null
+      : Math.round(rawFrameIndex ?? index + 1);
+    const frame = frameIndex === null ? undefined : frameMap.get(frameIndex);
+    return [{
+      frameIndex,
+      temperature,
+      distance,
+      syncStatus: readString(frame?.temperature_sync_status) ?? readString(point.sync_status),
+      detectionStatus: readString(frame?.detection_status),
+      source
+    }];
+  });
+}
+
+function normalizeRunTrendStatusData(
+  analysis: AnalysisCurveSource,
+  frameMap: Map<number, RunTrendFrameInput>
+): RunTrendStatusData[] {
+  const rawPointByFrame = new Map<number, CurvePointInput>();
+  for (const point of analysis.temperature_distance) {
+    const frameIndex = readFiniteNumber(point.frame_index);
+    if (frameIndex !== null) rawPointByFrame.set(Math.round(frameIndex), point);
+  }
+  return [...frameMap.entries()].flatMap(([frameIndex, frame]) => {
+    const syncStatus = readString(frame.temperature_sync_status);
+    const detectionStatus = readString(frame.detection_status);
+    const invalid = !isDetectionStatusValid(detectionStatus);
+    const syncBlocked = !isSyncStatusFormal(syncStatus);
+    if (!invalid && !syncBlocked) return [];
+    const temperature = readFiniteNumber(frame.temperature_celsius) ?? readFiniteNumber(rawPointByFrame.get(frameIndex)?.x);
+    if (temperature === null) return [];
+    const kind: RunTrendStatusData["kind"] = invalid ? "invalid" : "sync";
+    return [{
+      frameIndex,
+      temperature,
+      kind,
+      label: invalid ? "Invalid" : formatSyncStatusShort(syncStatus),
+      syncStatus,
+      detectionStatus
+    }];
+  }).sort((a, b) => a.frameIndex - b.frameIndex);
+}
+
+function isFormalTrendPoint(point: RunTrendDataPoint): boolean {
+  return isDetectionStatusValid(point.detectionStatus) && isSyncStatusFormal(point.syncStatus);
+}
+
+function isDetectionStatusValid(status: string | null): boolean {
+  return status === null || status === "" || status === "VALID";
+}
+
+function isSyncStatusFormal(status: string | null): boolean {
+  return status === null || status === "" || status === "TEMP_SYNC_OK" || status === "TEMP_SYNC_INTERPOLATED";
+}
+
+function scaleRunTrendPoint(
+  point: RunTrendDataPoint,
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: RunTrendModel["plot"]
+): RunTrendPoint {
+  return {
+    ...point,
+    x: scaleLinear(point.temperature, xRange.min, xRange.max, plot.left, plot.right),
+    y: scaleLinear(point.distance, yRange.min, yRange.max, plot.bottom, plot.top)
+  };
+}
+
+function scaleRunTrendStatusRug(
+  rug: RunTrendStatusData,
+  xRange: { min: number; max: number },
+  plot: RunTrendModel["plot"]
+): RunTrendStatusRug {
+  return {
+    frameIndex: rug.frameIndex,
+    kind: rug.kind,
+    label: rug.label,
+    syncStatus: rug.syncStatus,
+    detectionStatus: rug.detectionStatus,
+    x: scaleLinear(rug.temperature, xRange.min, xRange.max, plot.left, plot.right),
+    y1: plot.bottom + 12,
+    y2: plot.bottom + 26
+  };
+}
+
+function buildRunTrendSegments(
+  formalPoints: RunTrendPoint[],
+  statusRugs: RunTrendStatusRug[]
+): RunTrendPoint[][] {
+  if (!formalPoints.length) return [];
+  const segments: RunTrendPoint[][] = [];
+  let current: RunTrendPoint[] = [];
+  for (const point of formalPoints) {
+    const previous = current[current.length - 1];
+    if (
+      previous &&
+      previous.frameIndex !== null &&
+      point.frameIndex !== null &&
+      hasStatusBreakBetween(previous.frameIndex, point.frameIndex, statusRugs)
+    ) {
+      segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length) segments.push(current);
+  return segments;
+}
+
+function hasStatusBreakBetween(
+  previousFrame: number,
+  nextFrame: number,
+  statusRugs: RunTrendStatusRug[]
+): boolean {
+  const low = Math.min(previousFrame, nextFrame);
+  const high = Math.max(previousFrame, nextFrame);
+  return statusRugs.some((rug) => rug.frameIndex > low && rug.frameIndex < high);
+}
+
+function buildRunTrendValueStrip(analysis: AnalysisCurveSource): RunTrendValueStrip {
+  const latestFrame = analysis.all_frames?.length ? analysis.all_frames[analysis.all_frames.length - 1] : null;
+  const latestPoint = analysis.temperature_distance.length
+    ? analysis.temperature_distance[analysis.temperature_distance.length - 1]
+    : null;
+  return {
+    currentDistance: readFiniteNumber(latestFrame?.distance_px) ?? readFiniteNumber(latestPoint?.y),
+    currentTemperature: readFiniteNumber(latestFrame?.temperature_celsius) ?? readFiniteNumber(latestPoint?.x),
+    currentFrame: Math.round(readFiniteNumber(latestFrame?.frame_index) ?? readFiniteNumber(latestPoint?.frame_index) ?? NaN) || null,
+    syncStatus: readString(latestFrame?.temperature_sync_status) ?? readString(latestPoint?.sync_status),
+    detectionStatus: readString(latestFrame?.detection_status),
+    points: analysis.temperature_distance.length
+  };
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function formatSyncStatusShort(status: string | null): string {
+  if (status === "TEMP_SYNC_STALE") return "Stale";
+  if (status === "TEMP_SYNC_MISSING") return "Missing";
+  if (status === "TEMP_SYNC_INTERPOLATED") return "Interpolated";
+  if (status === "TEMP_SYNC_OK") return "OK";
+  return status || "Sync";
+}
+
+function formatRunTrendTick(value: number, range: { min: number; max: number }): string {
+  const span = Math.abs(range.max - range.min);
+  if (span < 1) return value.toFixed(2);
+  if (span < 10) return value.toFixed(1);
+  return formatTick(value);
+}
+
+export function buildAnalysisAfasModel(
+  analysis: AnalysisCurveSource,
+  options: AnalysisAfasModelOptions
+): AnalysisAfasModel {
+  const width = options.width;
+  const height = options.height;
+  const padding = { top: 42, right: 40, bottom: 74, left: 82 };
+  const plot = {
+    left: padding.left,
+    right: width - padding.right,
+    top: padding.top,
+    bottom: height - padding.bottom
+  };
+  const layers: AnalysisAfasLayerState = {
+    ...DEFAULT_ANALYSIS_AFAS_LAYERS,
+    ...(options.layers ?? {})
+  };
+  const rawData = readAfasRawData(analysis);
+  const smoothedData = readAfasSmoothedData(analysis);
+  const outlierData = readAfasOutlierData(analysis);
+  const overlays = readAfasOverlays(analysis) ?? { lines: [], markers: [] };
+  const markerData = readAfasMarkerData(overlays.markers);
+  const xDomain = normalizeAnalysisDomain(options.xDomain);
+  const xValues = xDomain ? [] : [
+    ...rawData.map((point) => point.temperature),
+    ...smoothedData.map((point) => point.temperature),
+    ...outlierData.map((point) => point.temperature),
+    ...overlays.lines.flatMap((line) => line.range ?? []),
+    ...markerData.map((marker) => marker.temperature)
+  ].filter(Number.isFinite);
+  const xRange = xDomain ?? paddedRange(
+    xValues.length ? Math.min(...xValues) : 0,
+    xValues.length ? Math.max(...xValues) : 1
+  );
+  const visibleRawData = layers.raw ? rawData.filter((point) => valueInRange(point.temperature, xRange)) : [];
+  const visibleOutlierData = layers.raw ? outlierData.filter((point) => valueInRange(point.temperature, xRange)) : [];
+  const visibleSmoothedData = smoothedData.filter((point) => valueInRange(point.temperature, xRange));
+  const visibleNonOutlierRawData = excludeAnalysisAfasOutlierPoints(visibleRawData, visibleOutlierData);
+  const yAxisData = visibleSmoothedData.length
+    ? [...visibleSmoothedData, ...visibleNonOutlierRawData]
+    : visibleNonOutlierRawData;
+  const fallbackYData = yAxisData.length ? yAxisData : visibleRawData;
+  const yValues = fallbackYData.map((point) => point.distance).filter(Number.isFinite);
+  const yRange = buildAnalysisAfasYAxisRange(yValues);
+  const rawPoints = visibleRawData.map((point) => scaleAfasPoint(point, xRange, yRange, plot, { clampY: true }));
+  const outlierPoints = visibleOutlierData.map((point) => scaleAfasPoint(point, xRange, yRange, plot, { clampY: true }));
+  const smoothedPoints = visibleSmoothedData.map((point) => scaleAfasPoint(point, xRange, yRange, plot));
+  const smoothedPath = smoothedPoints
+    .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+    .join(" ");
+  const fitLines = layers.fit
+    ? overlays.lines
+      .flatMap((line) => buildAnalysisAfasFitLine(line, xRange, yRange, plot))
+    : [];
+  const constructionGuides = layers.fit
+    ? buildAnalysisAfasConstructionGuides(markerData, overlays.lines, xRange, yRange, plot)
+    : [];
+  const markers = layers.markers
+    ? markerData
+      .filter((marker) => valueInRange(marker.temperature, xRange))
+      .map((marker) => scaleAfasMarker(marker, xRange, yRange, plot))
+    : [];
+  const xTicks = buildTicks(xRange.min, xRange.max, 5).map((value) => ({
+    value,
+    position: scaleLinear(value, xRange.min, xRange.max, plot.left, plot.right),
+    label: formatRunTrendTick(value, xRange)
+  }));
+  const yTicks = buildTicks(yRange.min, yRange.max, 5).map((value) => ({
+    value,
+    position: scaleLinear(value, yRange.min, yRange.max, plot.bottom, plot.top),
+    label: formatRunTrendTick(value, yRange)
+  }));
+
+  return {
+    width,
+    height,
+    padding,
+    plot,
+    layers,
+    rawPoints,
+    outlierPoints,
+    smoothedPoints,
+    smoothedPath,
+    fitLines,
+    constructionGuides,
+    markers,
+    xTicks,
+    yTicks,
+    xAxisLabel: "Temperature (°C)",
+    yAxisLabel: "Distance (px)",
+    xRange,
+    yRange,
+    summary: buildAnalysisAfasSummary(analysis, rawData.length, smoothedData.length),
+    hasPoints: smoothedPoints.length > 0 || rawPoints.length > 0
+  };
+}
+
+type AnalysisAfasRawPoint = {
+  temperature: number;
+  distance: number;
+  frameIndex: number | null;
+};
+
+type AnalysisAfasMarkerData = {
+  kind: CurveOverlayMarkerSpec["kind"];
+  label: string;
+  valueLabel: string;
+  temperature: number;
+  distance: number;
+};
+
+function readAfasRawData(analysis: AnalysisCurveSource): AnalysisAfasRawPoint[] {
+  const preprocessing = readRecord(analysis.afas_preprocessing);
+  const raw = readRecord(preprocessing.raw);
+  const rawPoints = readAfasSeries(raw.temperature_celsius, raw.values, raw.frame_indexes);
+  if (rawPoints.length) return rawPoints;
+  return analysis.temperature_distance.flatMap((point, index) => {
+    const temperature = readFiniteNumber(point.x);
+    const distance = readFiniteNumber(point.y);
+    if (temperature === null || distance === null || !isSyncStatusFormal(readString(point.sync_status))) return [];
+    return [{
+      temperature,
+      distance,
+      frameIndex: Math.round(readFiniteNumber(point.frame_index) ?? index + 1)
+    }];
+  });
+}
+
+function readAfasSmoothedData(analysis: AnalysisCurveSource): AnalysisAfasRawPoint[] {
+  const smoothed = readPreprocessedTemperatureDistance(analysis, "smoothed");
+  const grouped = readPreprocessedTemperatureDistance(analysis, "grouped");
+  const source = smoothed && smoothed.length ? smoothed : grouped;
+  if (!source?.length) return [];
+  return source.flatMap((point) => {
+    const temperature = readFiniteNumber(point.x);
+    const distance = readFiniteNumber(point.y);
+    if (temperature === null || distance === null) return [];
+    return [{
+      temperature,
+      distance,
+      frameIndex: null
+    }];
+  });
+}
+
+function readAfasOutlierData(analysis: AnalysisCurveSource): AnalysisAfasRawPoint[] {
+  const preprocessing = readRecord(analysis.afas_preprocessing);
+  const outlierRepair = readRecord(preprocessing.outlier_repair);
+  const mask = readBooleanArray(outlierRepair.outlier_mask);
+  if (!mask.length) return [];
+  const grouped = readRecord(preprocessing.grouped);
+  const raw = readRecord(preprocessing.raw);
+  const source = seriesLengthMatches(grouped, mask.length) ? grouped : raw;
+  const points = readAfasSeries(source.temperature_celsius, source.values, source.frame_indexes);
+  return points.filter((_, index) => mask[index] === true);
+}
+
+function readAfasSeries(
+  temperatures: unknown,
+  values: unknown,
+  frameIndexes: unknown
+): AnalysisAfasRawPoint[] {
+  if (!Array.isArray(temperatures) || !Array.isArray(values)) return [];
+  const frames = Array.isArray(frameIndexes) ? frameIndexes : [];
+  return temperatures.flatMap((temperature, index) => {
+    const distance = values[index];
+    const tempValue = readFiniteNumber(temperature);
+    const distanceValue = readFiniteNumber(distance);
+    if (tempValue === null || distanceValue === null) return [];
+    return [{
+      temperature: tempValue,
+      distance: distanceValue,
+      frameIndex: Math.round(readFiniteNumber(frames[index]) ?? NaN) || null
+    }];
+  });
+}
+
+function seriesLengthMatches(series: Record<string, unknown>, length: number): boolean {
+  return Array.isArray(series.temperature_celsius) && Array.isArray(series.values) &&
+    series.temperature_celsius.length === length &&
+    series.values.length === length;
+}
+
+function readBooleanArray(value: unknown): boolean[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => item === true);
+}
+
+function readAfasMarkerData(markers: CurveOverlayMarkerSpec[]): AnalysisAfasMarkerData[] {
+  return markers.flatMap((marker) => {
+    if (!Number.isFinite(marker.x) || !Number.isFinite(marker.y)) return [];
+    return [{
+      kind: marker.kind,
+      label: marker.label,
+      valueLabel: marker.kind === "max_slope" ? "Max slope" : `${marker.label} ${marker.x.toFixed(2)}°C`,
+      temperature: marker.x,
+      distance: marker.y
+    }];
+  });
+}
+
+function normalizeAnalysisDomain(value: [number, number] | null | undefined): { min: number; max: number } | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const start = readFiniteNumber(value[0]);
+  const end = readFiniteNumber(value[1]);
+  if (start === null || end === null || Math.abs(start - end) < Number.EPSILON) return null;
+  return { min: Math.min(start, end), max: Math.max(start, end) };
+}
+
+function valueInRange(value: number, range: { min: number; max: number }): boolean {
+  return value >= range.min && value <= range.max;
+}
+
+function excludeAnalysisAfasOutlierPoints(
+  points: AnalysisAfasRawPoint[],
+  outliers: AnalysisAfasRawPoint[]
+): AnalysisAfasRawPoint[] {
+  if (!points.length || !outliers.length) return points;
+  return points.filter((point) => !outliers.some((outlier) => analysisAfasPointsMatch(point, outlier)));
+}
+
+function analysisAfasPointsMatch(point: AnalysisAfasRawPoint, outlier: AnalysisAfasRawPoint): boolean {
+  if (point.frameIndex !== null && outlier.frameIndex !== null) {
+    return point.frameIndex === outlier.frameIndex;
+  }
+  return Math.abs(point.temperature - outlier.temperature) < 1e-9;
+}
+
+function scaleAfasPoint(
+  point: AnalysisAfasRawPoint,
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: AnalysisAfasModel["plot"],
+  options: { clampY?: boolean } = {}
+): AnalysisAfasDataPoint {
+  const distance = options.clampY
+    ? Math.min(yRange.max, Math.max(yRange.min, point.distance))
+    : point.distance;
+  return {
+    ...point,
+    x: scaleLinear(point.temperature, xRange.min, xRange.max, plot.left, plot.right),
+    y: scaleLinear(distance, yRange.min, yRange.max, plot.bottom, plot.top)
+  };
+}
+
+function buildAnalysisAfasFitLine(
+  line: CurveOverlayLineSpec,
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: AnalysisAfasModel["plot"]
+): AnalysisAfasFitLine[] {
+  const raw = rawOverlayLineSegments([line], xRange)
+    .map((segment) => clipOverlayLineToYRange(segment, yRange))
+    .filter((segment): segment is RawOverlayLineSegment => segment !== null)[0];
+  if (!raw) return [];
+  const x1 = scaleLinear(raw.x1, xRange.min, xRange.max, plot.left, plot.right);
+  const y1 = scaleLinear(raw.y1, yRange.min, yRange.max, plot.bottom, plot.top);
+  const x2 = scaleLinear(raw.x2, xRange.min, xRange.max, plot.left, plot.right);
+  const y2 = scaleLinear(raw.y2, yRange.min, yRange.max, plot.bottom, plot.top);
+  return [{
+    kind: raw.kind,
+    label: raw.label,
+    dataRange: raw.range ?? null,
+    x1,
+    y1,
+    x2,
+    y2,
+    labelX: (x1 + x2) / 2,
+    labelY: (y1 + y2) / 2
+  }];
+}
+
+function buildAnalysisAfasConstructionGuides(
+  markers: AnalysisAfasMarkerData[],
+  lines: CurveOverlayLineSpec[],
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: AnalysisAfasModel["plot"]
+): AnalysisAfasConstructionGuide[] {
+  const tangent = lines.find((line) => line.kind === "tangent");
+  if (!tangent) return [];
+  return markers
+    .filter((marker) => marker.kind === "as" || marker.kind === "af_tan")
+    .filter((marker) => valueInRange(marker.temperature, xRange))
+    .flatMap((marker) => buildAnalysisAfasConstructionGuide(marker, tangent, xRange, yRange, plot));
+}
+
+function buildAnalysisAfasConstructionGuide(
+  marker: AnalysisAfasMarkerData,
+  tangent: CurveOverlayLineSpec,
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: AnalysisAfasModel["plot"]
+): AnalysisAfasConstructionGuide[] {
+  const span = Math.max(Math.abs(xRange.max - xRange.min), 1);
+  const halfWidth = Math.max(span * 0.055, 0.04);
+  const rawGuide = rawOverlayLineSegments([{
+    ...tangent,
+    range: [
+      Math.max(xRange.min, marker.temperature - halfWidth),
+      Math.min(xRange.max, marker.temperature + halfWidth)
+    ]
+  }], xRange)
+    .map((segment) => clipOverlayLineToYRange(segment, yRange))
+    .filter((segment): segment is RawOverlayLineSegment => segment !== null)[0];
+  if (!rawGuide) return [];
+
+  const x1 = scaleLinear(rawGuide.x1, xRange.min, xRange.max, plot.left, plot.right);
+  const y1 = scaleLinear(rawGuide.y1, yRange.min, yRange.max, plot.bottom, plot.top);
+  const x2 = scaleLinear(rawGuide.x2, xRange.min, xRange.max, plot.left, plot.right);
+  const y2 = scaleLinear(rawGuide.y2, yRange.min, yRange.max, plot.bottom, plot.top);
+  const kind = marker.kind === "as" ? "as_guide" : "af_tan_guide";
+  return [{
+    kind,
+    label: marker.kind === "as" ? "As tangent guide" : "Af-tan tangent guide",
+    role: "AFAS construction guide",
+    temperature: marker.temperature,
+    distance: marker.distance,
+    x1,
+    y1,
+    x2,
+    y2,
+    labelX: (x1 + x2) / 2,
+    labelY: (y1 + y2) / 2
+  }];
+}
+
+function scaleAfasMarker(
+  marker: AnalysisAfasMarkerData,
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: AnalysisAfasModel["plot"]
+): AnalysisAfasMarker {
+  const yClipped = marker.distance < yRange.min || marker.distance > yRange.max;
+  return {
+    ...marker,
+    x: scaleLinear(marker.temperature, xRange.min, xRange.max, plot.left, plot.right),
+    y: scaleLinear(
+      Math.min(yRange.max, Math.max(yRange.min, marker.distance)),
+      yRange.min,
+      yRange.max,
+      plot.bottom,
+      plot.top
+    ),
+    yClipped
+  };
+}
+
+function buildAnalysisAfasSummary(
+  analysis: AnalysisCurveSource,
+  rawCount: number,
+  smoothedCount: number
+): AnalysisAfasSummary {
+  const afas = readRecord(analysis.afas_analysis);
+  const result = readRecord(afas.result);
+  const fit = readRecord(afas.fit);
+  const asValue = readFiniteNumber(result.As);
+  const afTan = readFiniteNumber(result.Af_tan);
+  const maxSlope = readFiniteNumber(result.max_slope_temp) ?? readFiniteNumber(fit.max_slope_temperature_celsius);
+  const outlierCount = readFiniteNumber(afas.outlier_count) ??
+    readFiniteNumber(readRecord(readRecord(analysis.afas_preprocessing).outlier_repair).outlier_count);
+  return {
+    status: readString(afas.result_status) ?? "unavailable",
+    asLabel: formatAnalysisAfasTemperature(asValue),
+    afTanLabel: formatAnalysisAfasTemperature(afTan),
+    deltaLabel: asValue !== null && afTan !== null ? `${(afTan - asValue).toFixed(2)} °C` : "None",
+    maxSlopeLabel: formatAnalysisAfasTemperature(maxSlope),
+    outlierLabel: outlierCount === null ? "None" : `${Math.round(outlierCount)}`,
+    rawCountLabel: rawCount.toLocaleString(),
+    smoothedCountLabel: smoothedCount.toLocaleString()
+  };
+}
+
+function formatAnalysisAfasTemperature(value: number | null): string {
+  return value === null ? "None" : `${value.toFixed(2)} °C`;
 }
 
 function readAfasOverlays(analysis: AnalysisCurveSource): CurveOverlaySpec | undefined {
@@ -459,6 +1496,65 @@ function paddedRange(min: number, max: number): { min: number; max: number } {
   const span = max - min;
   const pad = span * 0.08;
   return { min: min - pad, max: max + pad };
+}
+
+function ensureMinimumRangeSpan(
+  range: RunTrendYAxisRange,
+  minSpan: number,
+  center: number
+): RunTrendYAxisRange {
+  const span = range.max - range.min;
+  if (Number.isFinite(span) && span >= minSpan) return range;
+  const safeCenter = Number.isFinite(center) ? center : (range.min + range.max) / 2;
+  const halfSpan = minSpan / 2;
+  return {
+    min: safeCenter - halfSpan,
+    max: safeCenter + halfSpan
+  };
+}
+
+function observedRange(values: number[]): RunTrendYAxisRange {
+  const finiteValues = values.filter(Number.isFinite);
+  if (!finiteValues.length) return { min: Number.NaN, max: Number.NaN };
+  return {
+    min: Math.min(...finiteValues),
+    max: Math.max(...finiteValues)
+  };
+}
+
+function filterIsolatedDisplayYOutliers(values: number[]): number[] {
+  const finiteValues = values.filter(Number.isFinite);
+  if (finiteValues.length < 4) return finiteValues;
+
+  const center = median(finiteValues);
+  const deviations = finiteValues.map((value) => Math.abs(value - center));
+  const mad = median(deviations);
+  const threshold = Math.max(
+    DISPLAY_Y_AXIS_OUTLIER_MIN_DEVIATION_PX,
+    mad * DISPLAY_Y_AXIS_OUTLIER_MAD_MULTIPLIER
+  );
+  const filtered = finiteValues.filter((value) => Math.abs(value - center) <= threshold);
+  return filtered.length >= 2 ? filtered : finiteValues;
+}
+
+function median(values: number[]): number {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2) return sorted[middle];
+  return (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function isFiniteRange(range: RunTrendYAxisRange): boolean {
+  return Number.isFinite(range.min) && Number.isFinite(range.max) && range.max > range.min;
+}
+
+function isFiniteObservedRange(range: RunTrendYAxisRange): boolean {
+  return Number.isFinite(range.min) && Number.isFinite(range.max) && range.max >= range.min;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function buildTicks(min: number, max: number, targetCount: number): number[] {

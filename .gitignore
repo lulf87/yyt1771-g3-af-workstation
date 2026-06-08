@@ -16,6 +16,7 @@ frontend/dist/
 # Local browser/test artifacts
 .playwright-cli/
 .playwright-mcp/
+MvSdkLog/
 output/
 *.png
 

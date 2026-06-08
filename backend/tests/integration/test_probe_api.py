@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 
 def _write_probe_dataset(root: Path) -> None:
@@ -115,3 +117,124 @@ def test_probe_endpoint_detects_current_frame_with_measurement_roi(
     assert len(result["debug_artifacts"]["contour_direction_arrow"]) == 2
     assert payload["overlay"]["ab_points"] == result["ab_points"]
     assert payload["frame"]["frame_index"] == 1
+
+
+def test_real_camera_setup_probe_uses_frozen_setup_frame_without_opening_camera(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yyt1771_g3.api import main
+
+    opened_camera = False
+
+    class ForbiddenCameraSource:
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            nonlocal opened_camera
+            opened_camera = True
+
+    client = TestClient(main.app)
+    monkeypatch.setattr(main, "HikMvsCameraSource", ForbiddenCameraSource)
+    response = client.post(
+        "/api/camera/setup-probe",
+        json={
+            "frame_png_data_url": _probe_frame_data_url(),
+            "frame_timestamp_ms": 1779448000123,
+            "camera_meta": {"model": "frozen-fixture", "pixel_format": "mono8"},
+            "measurement_definition": _probe_measurement(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert opened_camera is False
+    payload = response.json()
+    result = payload["detection_result"]
+    assert payload["dataset_id"] == "real_camera"
+    assert payload["frame"]["timestamp_ms"] == 1779448000123
+    assert payload["measurement_definition"]["source"] == "real_camera"
+    assert result["detection_status"] == "VALID"
+    assert result["distance_px"] == pytest.approx(50.0, abs=2.0)
+    assert result["frame_timestamp_ms"] == 1779448000123
+    assert result["temperature_sync_status"] == "TEMP_SYNC_MISSING"
+    assert result["debug_artifacts"]["contour_measurement_mode"] == "archived_mesh_envelope_rows"
+    assert payload["overlay"]["ab_points"] == result["ab_points"]
+    assert payload["image_data_url"].startswith("data:image/png;base64,")
+
+
+def test_real_camera_setup_probe_live_captures_latest_camera_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yyt1771_g3.api import main
+    from yyt1771_g3.camera.base import CameraFrame
+
+    calls = {"preview": 0, "close": 0}
+    frame = np.full((80, 120), 245, dtype=np.uint8)
+    frame[25:46, 35:86] = 30
+
+    class FakeCameraSource:
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            self.profile = profile or {}
+
+        def preview_frame(self) -> CameraFrame:
+            calls["preview"] += 1
+            return CameraFrame(
+                array=frame,
+                timestamp_ms=1779448000456,
+                camera_meta={"model": "live-fixture", "pixel_format": self.profile.get("pixel_format", "mono8")},
+            )
+
+        def close(self) -> None:
+            calls["close"] += 1
+
+    monkeypatch.setattr(main, "HikMvsCameraSource", FakeCameraSource)
+    monkeypatch.setattr(
+        main,
+        "_hardware_config",
+        lambda: SimpleNamespace(camera=SimpleNamespace(to_profile=lambda: {"pixel_format": "mono8"})),
+    )
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/camera/setup-probe",
+        json={"measurement_definition": _probe_measurement()},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert calls == {"preview": 1, "close": 1}
+    assert payload["frame"]["timestamp_ms"] == 1779448000456
+    assert payload["frame"]["shape"] == [80, 120]
+    assert payload["camera_status"] == "ok"
+    assert payload["camera_meta"]["model"] == "live-fixture"
+    assert payload["detection_result"]["detection_status"] == "VALID"
+    assert payload["image_data_url"].startswith("data:image/png;base64,")
+
+
+def _probe_measurement() -> dict[str, object]:
+    return {
+        "measurement_id": "real-camera-setup-probe",
+        "source": "real_camera",
+        "object_class": "A_BALLOON_ENVELOPE",
+        "detector": "BalloonEnvelopeDetector",
+        "width_mode": "max_width",
+        "measurement_coordinates": "source_pixel",
+        "roi": {
+            "type": "rotated_rect",
+            "center_x": 60.0,
+            "center_y": 35.0,
+            "width": 70.0,
+            "height": 40.0,
+            "angle_deg": 0.0,
+        },
+        "detector_config": {"min_component_area_px": 20},
+    }
+
+
+def _probe_frame_data_url() -> str:
+    import base64
+    import io
+
+    frame = np.full((80, 120), 245, dtype=np.uint8)
+    frame[25:46, 35:86] = 30
+    image = Image.fromarray(frame, mode="L")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")

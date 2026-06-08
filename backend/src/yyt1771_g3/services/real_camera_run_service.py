@@ -119,22 +119,28 @@ def _prepare_temperature_controller(
 ) -> str:
     if temperature_controller is None:
         return ""
-    try:
-        target = measurement.detector_config.target_temperature_celsius
-        if target is not None:
-            setter = getattr(temperature_controller, "set_target_temperature", None)
-            if callable(setter):
-                setter(float(target))
-        power = measurement.detector_config.temperature_power_percent
-        power_setter = getattr(temperature_controller, "set_output_power_percent", None)
-        if callable(power_setter):
-            power_setter(float(power))
-        starter = getattr(temperature_controller, "start_output", None)
-        if callable(starter):
-            starter()
-    except Exception as exc:
-        return str(exc)
-    return ""
+    errors: list[str] = []
+
+    def attempt(label: str, action: Any) -> None:
+        if not callable(action):
+            return
+        try:
+            action()
+        except Exception as exc:  # pragma: no cover - exercised through integration behavior
+            errors.append(f"{label}: {exc}")
+
+    target = measurement.detector_config.target_temperature_celsius
+    if target is not None:
+        setter = getattr(temperature_controller, "set_target_temperature", None)
+        attempt("set_target_temperature", lambda: setter(float(target)) if callable(setter) else None)
+
+    power = measurement.detector_config.temperature_power_percent
+    power_setter = getattr(temperature_controller, "set_output_power_percent", None)
+    attempt("set_output_power_percent", lambda: power_setter(float(power)) if callable(power_setter) else None)
+
+    starter = getattr(temperature_controller, "start_output", None)
+    attempt("start_output", starter)
+    return "; ".join(errors)
 
 
 def _stop_temperature_controller(temperature_controller: TemperatureController | None) -> None:

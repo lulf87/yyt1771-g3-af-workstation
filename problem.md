@@ -43,7 +43,7 @@
 | P-0017 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / live offline run / frame display | C 类全帧 Run 时底图可能变黑，只剩 overlay 和曲线继续更新 | 2026-06-05 | 2026-06-05 | Codex | C 类 Run 页面真实浏览器复测已通过 |
 | P-0018 | RESOLVED_BROWSER_VERIFIED | P0 | analysis / run / setup / temperature control | Run/Analysis 应以 distance-temperature 和 AFAS As/Af 后处理为主，并补温控显示/设置 | 2026-06-05 | 2026-06-05 | Codex | Setup + Run + Analysis 浏览器复测已通过 |
 | P-0019 | RESOLVED_BROWSER_VERIFIED | P1 | backend / CORS / dev server | Vite 自动回退到 5177 时 backend CORS 未放行导致前端 Failed to fetch | 2026-06-05 | 2026-06-05 | Codex | Run 页面浏览器复测已通过 |
-| P-0020 | BLOCKED | P0 | camera / temperature / real run | G3 真实相机 + LU92XX 温控链路需接入并等待真实硬件复测 | 2026-06-05 | 2026-06-06 | Codex | 当前无真实 Hik 相机 / MVS SDK / LU92XX 连接，硬件实测阻塞 |
+| P-0020 | BLOCKED | P0 | camera / temperature / real run | G3 真实相机 + LU92XX 温控链路需接入并等待真实硬件复测 | 2026-06-05 | 2026-06-08 | Codex | 真实 Hik 相机 Setup→Run 完整浏览器复测 PASS；Setup 温控 unavailable 显示已复测；LU92XX `/dev/cu.usbserial-1210` 缺失，完整温控链路仍阻塞 |
 | P-0021 | RESOLVED_BROWSER_VERIFIED | P1 | backend / real camera run / temperature fallback | 本地 LU92XX 串口配置存在但未连接时会盖过相机 SDK 缺失错误 | 2026-06-05 | 2026-06-06 | Codex | no-hardware 浏览器 fallback 复测已通过；真实硬件见 P-0020 |
 | P-0022 | RESOLVED_BROWSER_VERIFIED | P0 | run curves / AFAS preprocessing | Run 实时 temperature-distance 曲线仍使用原始点，未采用 starter 平滑预处理 | 2026-06-06 | 2026-06-06 | Codex | A 类 Run + Analysis 真实浏览器复测已通过 |
 | P-0023 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / live offline run stop | 手动 Stop 后等待 partial run 落盘期间会产生短暂 404 网络日志 | 2026-06-06 | 2026-06-06 | Codex | Stop partial run 浏览器复测已通过，无 `/api/runs/{id}` 404 |
@@ -55,7 +55,22 @@
 | P-0029 | RESOLVED_BROWSER_VERIFIED | P1 | local env / archived scripts | 系统 Python 的 OpenCV wheel 与 NumPy 2.x ABI 不兼容，归档脚本无法 import cv2 | 2026-06-06 | 2026-06-06 | Codex | 环境类问题，浏览器复测不适用；cv2 导入和归档脚本合成图运行已通过 |
 | P-0030 | RESOLVED_BROWSER_VERIFIED | P0 | vision / live offline run / detector audit | A/C 图示 ROI 需采用归档前处理 + G3 稳定支撑列/同窗口 A/B 规则并全帧浏览器审计 | 2026-06-06 | 2026-06-06 | Codex | A/C 图示 ROI 真实浏览器全帧 run + manifest 审计已通过 |
 | P-0031 | OPEN | P1 | vision / setup overlay / archive comparison | A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全 | 2026-06-06 | 2026-06-06 | Codex | 待确认是否增加 outer_contour / filled_contour overlay 或调整说明 |
-| P-0032 | OPEN | P1 | vision / archive comparison / curve stability | A 类当前 ROI 下归档网格类跨 row 宽度也会产生尖峰，不宜直接替换 G3 正式 distance | 2026-06-06 | 2026-06-06 | Codex | 待确认是否仅作为诊断或引入额外稳定约束 |
+| P-0032 | OPEN | P1 | vision / archive comparison / curve stability | A 类当前 ROI 下归档网格类跨 row 宽度也会产生尖峰，不宜直接替换 G3 正式 distance | 2026-06-06 | 2026-06-08 | Codex | 待确认是否仅作为诊断或引入额外稳定约束 |
+| P-0038 | OPEN | P1 | run curves / realtime AF | Run 结束时缺少独立实时结果链 As/Af/AF95，与 Analysis AFAS 后处理未形成两套分析 | 2026-06-07 | 2026-06-07 | Codex | 待实现后用 A/C Run + Analysis 浏览器复测 |
+| P-0039 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run trend chart | Run 页实时 temperature-distance 曲线过小且缺少监护式状态分层 | 2026-06-07 | 2026-06-07 | Codex | golden A Run 页真实浏览器复测已通过 |
+| P-0040 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis / Export 页 AFAS 曲线过小且 raw/smoothed/baseline/tangent/markers 视觉权重未分层 | 2026-06-07 | 2026-06-07 | Codex | golden A Analysis/Export 真实浏览器复测已通过 |
+| P-0041 | RESOLVED_BROWSER_VERIFIED | P0 | camera / Hik MVS runtime | G3 未复用 starter 的 MVS runtime bootstrap，真机连接后仍无法加载 SDK binding | 2026-06-07 | 2026-06-07 | Codex | 真实 Hik 相机 Preview/Run 浏览器复测已通过 |
+| P-0042 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / real camera run frame display | Real Camera Run 后帧画布仍显示当前离线 dataset frame，真实 run 底图来源不一致 | 2026-06-07 | 2026-06-07 | Codex | 真实 Hik 相机 Run 画布使用 run raw frame，浏览器复测已通过 |
+| P-0043 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / shared curve view | Run/Analysis 曲线需要共享 variant 化底层 CurveView 并保持工业曲线层级 | 2026-06-07 | 2026-06-07 | Codex | golden A Run + Analysis 浏览器复测已通过 |
+| P-0044 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis 曲线不应把重复温度 raw frame 点按帧顺序连成正式折线 | 2026-06-07 | 2026-06-07 | Codex | golden A Run + Analysis 浏览器复测已通过 |
+| P-0045 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Setup source / camera preview | Setup 页面需要统一 Source 入口并自动显示真实相机 preview | 2026-06-07 | 2026-06-08 | Codex | 真实 Hik 相机 Setup Live/Freeze/ROI/参数刷新/温控 no-refresh/formal Run measurement_definition 浏览器复测通过；LU92XX 完整闭环仍由 P-0020 跟踪 |
+| P-0046 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run trend y-axis | Run Live Trend Y 轴按 latest window 局部 min/max 自动缩放，放大 1 px 检测抖动 | 2026-06-07 | 2026-06-08 | Codex | golden A Run 页 sticky y-axis 浏览器复测已通过 |
+| P-0047 | OPEN | P1 | frontend / live offline run stop | Playwright 复测中点击 Stop 后 Run 页面仍显示 Running | 2026-06-08 | 2026-06-08 | Codex | 待单独复现并修复后做 Stop partial run 浏览器复测 |
+| P-0048 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / API client / probe | Offline Probe 请求把前端 setup source 字段发给 backend，导致 422 extra_forbidden | 2026-06-08 | 2026-06-08 | Codex | golden A Setup Probe current frame 浏览器复测已通过 |
+| P-0049 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis temperature-distance X 轴不应使用 Latest window 或局部温度窗口 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis 浏览器复测已通过 |
+| P-0050 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis y-axis | Run/Analysis temperature-distance Y 轴需兼顾完整范围、最小细节跨度和 outlier 抑制 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis Y 轴浏览器复测已通过 |
+| P-0051 | OPEN | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | 待修复后用 Playback 1400/1460/1461 + Run 浏览器复测 |
+| P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 
 ---
 
@@ -1893,7 +1908,7 @@ RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/camera`, `backend/src/yyt1771_g3/temperature`, `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `frontend/src/main.tsx`
 - Found date: 2026-06-05
-- Last update: 2026-06-06
+- Last update: 2026-06-08
 - Owner/tool: Codex
 
 #### Problem
@@ -1910,7 +1925,9 @@ G3 原有真实相机路径只覆盖 lazy import / fake SDK / 缺 SDK 错误态�
 3. 相机 adapter 支持官方 MVS Python binding 的枚举、打开、Mono8、ROI、FPS、取帧。
 4. LU92XX adapter 按 starter 已验证寄存器读 PV、写 SV、写输出功率。
 5. Real camera run 每帧保存 raw frame、FrameRecord.camera_meta、TemperatureRecord、DetectionResult temperature fields 和 run/analysis。
-6. Run 页面提供当前温度读取、串口列表、真实相机 Preview/Run；前端不计算正式 A/B/distance/温度同步。
+6. Setup 页面提供当前温度读取、串口列表、target/power 配置和 unavailable/error 状态；温控调整不得触发真实相机 setup frame refresh。
+7. Real camera Run 只使用 Setup 保存的 target/power，开始时 best-effort 设置 target/power/start_output，每帧保存 TemperatureRecord 和 DetectionResult。
+8. TEMP_SYNC_OK / TEMP_SYNC_INTERPOLATED 才进入正式 temperature-distance / Af 曲线；TEMP_SYNC_MISSING / TEMP_SYNC_STALE 不得进入正式 Af 曲线。
 ```
 
 #### Fix summary
@@ -1927,6 +1944,15 @@ G3 原有真实相机路径只覆盖 lazy import / fake SDK / 缺 SDK 错误态�
 7. Run 页面新增 `Read temp` 和 `Ports` 控件，显示温控 source/current 和串口列表。
 ```
 
+2026-06-08:
+
+```text
+1. 温控配置迁移到 Setup 页面：Read temp、Ports、target_temperature_celsius、temperature_power_percent、source/status/current/error 均在 Setup Temperature Control 中显示。
+2. Run 页面移除温控 Read temp / Ports 操作，只显示 Setup summary 和 backend run result，避免 Run 承担临时温控配置职责。
+3. `run_real_camera()` 的 target/power/start_output 改为逐项 best-effort：某一项失败时仍尝试后续控制动作，错误写入 TemperatureRecord。
+4. Setup 中 Read temp、Ports、target/power 调整均不调用真实相机 preview refresh；Real camera preview、Freeze、ROI、Run 继续可用。
+```
+
 #### Tests run
 
 ```text
@@ -1938,6 +1964,15 @@ Result: 58 passed
 
 npm run build
 Result: PASS
+
+npm test -- tests/setupSources.test.mjs
+Result: PASS, 28 tests passed.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_real_camera_run_service.py::test_real_camera_run_best_effort_temperature_startup_attempts_all_controls
+Result: PASS
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py backend/tests/unit/test_analysis_service.py
+Result: PASS, 18 tests passed.
 ```
 
 #### Browser retest log
@@ -1961,15 +1996,128 @@ Result: PASS
 
 2026-06-06：用户确认当前没有实际连接相机和温控。代码路径、fake source、无硬件 fallback 均已验证；以下真实硬件步骤被硬件条件阻塞，不能标记为浏览器验证通过。
 
-需要在真实 Hik 相机、MVS SDK、LU92XX 串口均可用时补做：
+2026-06-07：真实 Hik 相机已连接并完成 x86 MVS runtime、API 和浏览器复测。相机部分不再阻塞：
 
 ```text
-1. 填写 configs/local/realcamera_temp.local.yaml。
-2. Run 页面 Real Camera Preview 成功显示真实帧。
-3. Read temp 成功读取 LU92XX PV。
-4. Real Camera Run 成功写 target/power/start，逐帧保存 temperature OK/STALE 状态，结束 stop_output。
-5. 记录截图、run manifest、analysis_result 和必要日志。
+Camera model: MV-CA060-11GM
+Serial number: 00J67378626
+IP: 192.168.3.211
+Frame shape: 1364 x 2048, uint8, Mono8
+Real Camera Preview: PASS
+Real Camera Run: PASS, 160 frames saved
+Run id: run-real_camera-20260607T143255949515Z
+FrameRecord source: hik_gige_mvs
+Temperature sync: TEMP_SYNC_MISSING for all frames because LU92XX serial is unavailable
+Formal temperature-distance points: 0, as required for TEMP_SYNC_MISSING
 ```
+
+LU92XX 温控仍阻塞：当前系统串口只看到 `/dev/cu.Bluetooth-Incoming-Port` 和 `/dev/cu.debug-console`，配置中的 `/dev/cu.usbserial-1210` 不存在；`GET /api/temperature/status` 返回 503：
+
+```text
+Failed to open LU92XX serial transport:
+[Errno 2] could not open port /dev/cu.usbserial-1210
+```
+
+因此 P-0020 仍保持 `BLOCKED`，需要在 LU92XX 控制器和串口连接后补做：
+
+```text
+1. Read temp 成功读取 LU92XX PV。
+2. Real Camera Run 成功写 target/power/start。
+3. 图像帧与 LU92XX 温度时间戳达到 <=10 ms 目标或明确记录 INTERPOLATED/STALE/MISSING。
+4. 至少出现 TEMP_SYNC_OK 或 TEMP_SYNC_INTERPOLATED 点，并进入正式 temperature-distance 曲线。
+5. 结束时 stop_output/close 成功，并记录截图、run manifest、analysis_result 和必要日志。
+```
+
+#### Real camera browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via Playwright
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8032/`
+- Dataset: `real_camera`
+- Page: Run
+- Steps: Start x86 backend with starter MVS runtime; open frontend; click `Read temp`; click Real Camera `Preview`; click Real Camera `Run`; wait for 160-frame run; inspect trend, frame canvas, API responses, and saved raw-frame URL.
+- Expected: Real camera Preview/Run succeeds with Hik camera metadata; run saves raw frames and backend detections; TEMP_SYNC_MISSING frames do not enter formal temperature-distance curve while LU92XX serial is absent.
+- Actual: Preview returned `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`, shape `1364 x 2048`; Real Camera Run saved 160 frames, all first statuses sampled were `VALID`, sync statuses were `TEMP_SYNC_MISSING`, and formal temperature-distance point count was `0`. `Read temp` remained unavailable because `/dev/cu.usbserial-1210` was missing.
+- Result: PASS for real camera; BLOCKED for LU92XX temperature controller.
+- Evidence:
+  - `output/playwright/p0042_realcamera_preview_browser_20260607.png`
+  - `output/playwright/p0042_realcamera_run_browser_20260607.png`
+  - `output/playwright/p0042_realcamera_browser_summary_20260607.json`
+  - `output/hardware/real_camera_api_summary_20260607_after_p0042.json`
+
+#### Setup temperature browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5174/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: `golden_a_20260522_dev_lab` plus mocked `real_camera` preview/run and mocked LU92XX unavailable response
+- Page: Setup / Run
+- Steps:
+  1. Install Playwright routes for `/api/camera/preview`, `/api/temperature/status`, `/api/temperature/serial-ports`, `/api/real-camera-runs`, and `/api/runs/{run_id}/frames/1.png`.
+  2. Open Setup, select `Real camera`, and let Setup auto-read temperature status.
+  3. Confirm Setup Temperature Control shows `Status = unavailable`, `Error = /dev/cu.usbserial-1210 not found`, `Read temp`, `Ports`, `target_temperature_celsius`, and `temperature_power_percent`.
+  4. Freeze the real-camera setup frame, then click `Read temp`, click `Ports`, and edit target/power to `42.5` / `55`.
+  5. Confirm preview request count stays unchanged after those temperature actions.
+  6. Open Run and start real-camera run; inspect intercepted `/api/real-camera-runs` request body and resulting frame display.
+- Expected: Missing `/dev/cu.usbserial-1210` is clearly shown in Setup; temperature actions do not refresh true-camera setup frames; Real camera preview/Freeze/ROI/Run remain usable; Run uses Setup target/power and does not offer Read temp / Ports.
+- Actual:
+  - Setup displayed Real Camera Preview in Frozen frame mode with ROI overlay, and Temperature Control showed unavailable status plus structured `/dev/cu.usbserial-1210 not found` error.
+  - `previewRequests = 2`, `previewAfterFreeze = 2`, `previewAfterTempActions = 2`; Read temp, Ports, target, and power changes did not trigger a new camera preview request.
+  - Intercepted `/api/real-camera-runs` request contained `measurement_definition.detector_config.target_temperature_celsius = 42.5` and `temperature_power_percent = 55`.
+  - Mock run result displayed `TEMP_SYNC_MISSING`; `analysis_result.temperature_distance` was empty.
+  - Run page did not contain `Read temp`; run frame image source was `/api/runs/run-real_camera-temp-setup-fixture/frames/1.png?max_width=1024`; ROI edit handles count was `0`.
+- Result: PASS for Setup unavailable UI and mocked formal run behavior; BLOCKED for full LU92XX hardware chain.
+- Evidence:
+  - `output/playwright/p0045_setup_temperature_control_unavailable.png`
+  - `output/playwright/p0045_setup_temperature_control_unavailable_run_formal.png`
+
+#### Real hardware Setup→Run browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8032/`
+- Dataset: `real_camera`
+- Page: Setup / Run
+- Steps:
+  1. Start backend with x86 MVS environment on `8032` and frontend on `5177`.
+  2. Open Setup, select `Source = Real camera`, and confirm automatic real camera preview.
+  3. Confirm Setup shows `camera_status = ok`, model `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`, `pixel_format = mono8`, frame shape `1364 × 2048`, frame timestamp, and preview refresh status.
+  4. Click `Freeze`; confirm `Preview mode = Frozen frame`, `Frozen timestamp = 1780854696122`, and `Live refresh = Paused`.
+  5. Use `New / reset ROI` and ROI controls on the frozen frame to set source-pixel ROI `center = 960,700`, `size = 900 × 300`, `angle = -4.5°`.
+  6. Click `Capture new setup frame`; confirm frozen timestamp advances to `1780854783058` and ROI remains unchanged.
+  7. Edit detector parameter `min_component_area_px = 95`; confirm frozen-frame guidance is visible and no `/api/camera/preview` request is sent.
+  8. Edit `target_temperature_celsius = 42.5` and `temperature_power_percent = 55`, then click `Read temp` and `Ports`; confirm no `/api/camera/preview` request is sent.
+  9. Open Run; confirm Setup Summary shows Real camera source, ROI, detector/object/width mode, `max_frames_per_run = 160`, `target_fps = 8`, target temperature `42.50 °C`, and power `55 %`.
+  10. Click `Start real camera run`; inspect the POST body to `/api/real-camera-runs`.
+  11. Wait for run completion and inspect `GET /api/runs/run-real_camera-20260607T175434488916Z`.
+- Expected: Real camera Setup preview, Freeze, ROI editing, frozen refresh, detector-parameter frozen behavior, and formal Run should all work with the real Hik camera; missing LU92XX should be shown as unavailable and must not block camera preview/ROI/run; formal temperature-distance must exclude `TEMP_SYNC_MISSING` / `TEMP_SYNC_STALE`.
+- Actual:
+  - Camera Setup preview and Run passed with Hik camera metadata: `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`, shape `1364 × 2048`, `mono8`.
+  - Frozen `Capture new setup frame` updated timestamp from `1780854696122` to `1780854783058` and kept ROI `960,700 / 900 × 300 / -4.5°`.
+  - Frozen detector edit and temperature actions sent `0` new `/api/camera/preview` requests.
+  - `/api/temperature/status` remained `503 unavailable`; `/api/temperature/serial-ports` returned only `/dev/cu.Bluetooth-Incoming-Port` and `/dev/cu.debug-console`; configured `/dev/cu.usbserial-1210` was absent.
+  - `/api/real-camera-runs` request used Setup `measurement_definition.source = real_camera`, `measurement_coordinates = source_pixel`, ROI `960,700 / 900 × 300 / -4.5°`, `min_component_area_px = 95`, `target_temperature_celsius = 42.5`, and `temperature_power_percent = 55`.
+  - Run `run-real_camera-20260607T175434488916Z` saved 160 `FrameRecord`, 160 `TemperatureRecord`, and 160 `DetectionResult`; all detections were `VALID`; all detection temperature sync statuses were `TEMP_SYNC_MISSING`.
+  - Run canvas image source was `http://127.0.0.1:8032/api/runs/run-real_camera-20260607T175434488916Z/frames/160.png?max_width=1024`.
+  - `analysis_result.temperature_distance` contained `0` points, so no `TEMP_SYNC_MISSING` / `TEMP_SYNC_STALE` point entered the formal temperature-distance / Af curve.
+- Result: PASS for real Hik camera Setup→Run; BLOCKED for full LU92XX temperature hardware chain because `/dev/cu.usbserial-1210` is not connected.
+- Evidence:
+  - `output/playwright/p0045_real_camera_setup_live_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_before_roi_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_roi_adjusted_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_refresh_roi_kept_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_params_temperature_20260608.png`
+  - `output/playwright/p0045_real_camera_run_setup_summary_before_start_20260608.png`
+  - `output/playwright/p0045_real_camera_run_result_20260608.png`
+  - `output/hardware/p0045_real_camera_setup_run_summary_20260608.json`
+  - `output/runs/run-real_camera-20260607T175434488916Z/run_manifest.json`
+  - `output/runs/run-real_camera-20260607T175434488916Z/analysis_result.json`
 
 #### Final status
 
@@ -2074,7 +2222,7 @@ The LU92XX serial error no longer masks the camera unavailable response.
 - Result: PASS
 - Evidence: `output/playwright/p0021_no_hardware_fallback_retest.png`, `output/playwright/p0021_no_hardware_fallback_eval.json`
 
-Real hardware browser verification remains part of P-0020 and is blocked until hardware is connected.
+Full real camera + LU92XX browser verification remains tracked in P-0020; camera now passes, LU92XX remains blocked until `/dev/cu.usbserial-1210` is connected.
 
 #### Final status
 
@@ -2895,7 +3043,7 @@ OPEN
 - Priority: P1
 - Module: `backend/src/yyt1771_g3/vision/detectors.py`, archive comparison, curve stability
 - Found date: 2026-06-06
-- Last update: 2026-06-06
+- Last update: 2026-06-08
 - Owner/tool: Codex
 
 #### Problem
@@ -2957,6 +3105,55 @@ output/audits/p0032_archive_mesh_curve_compare/screenshot_angle_minus_12_50/key_
 ```text
 归档网格类不应直接整体替换 G3 当前正式 distance 口径。
 更安全的方向是：保留归档前处理和 closed/fill contour 作为诊断层；正式 distance 继续使用同一 selected row/window，并可考虑增加 row-window 时间稳定约束或把 archive global width 作为辅助诊断曲线。
+```
+
+#### Additional investigation — 2026-06-08 screenshot ROI local increase
+
+用户反馈 Run 页面在如下设置下出现温度升高但 distance 同步升高：
+
+```text
+dataset_id = golden_a_20260522_dev_lab
+start_frame = 616
+ROI = center_x 1139.42, center_y 719.16, width 1269.76, height 746.43, angle_deg -14.05
+detector = BalloonEnvelopeDetector
+width_mode = max_width
+```
+
+按截图 ROI 用后端正式 detector 重算 frame 616-730，确认该现象来自后端 raw DetectionResult，而不是前端单独连线或温度同步：
+
+```text
+frame 616: T=2.4958°C, distance=1006.0px, selected row v=512.0, left=153.0, right=1159.0
+frame 706: T=3.0000°C, distance=1019.7px, selected row v=511.0, left=138.3, right=1158.0
+frame 707: T=3.0299°C, distance=1005.0px, selected row v=211.0, left=181.0, right=1186.0
+```
+
+0.05°C 温度 bin 中位数显示 2.50-3.00°C 局部上升：
+
+```text
+2.50°C median=1005.00px
+2.70°C median=1007.00px
+2.80°C median=1011.00px
+2.90°C median=1014.00px
+3.00°C median=1018.00px
+3.05°C median=1005.00px
+```
+
+当前判断：
+
+```text
+1. 截图中红框内的上升是真实进入后端 formal temperature-distance raw points 的检测结果。
+2. 上升主要来自左侧 local boundary 从约 153px 漂到约 138px，右侧边界基本保持 1158-1161px。
+3. frame 707 的 row/window 从下侧主体行 v≈511 切到上侧主体行 v=211，distance 立即回落，说明 A 类当前 row-window 选择仍缺少足够的时间稳定/物理单调约束。
+4. 该 ROI 高度较大，包含底部连接丝/夹持结构，不符合“ROI 只框有效测量主体，不包含连接丝、夹具”的推荐规则，会放大 row-window 候选切换风险。
+```
+
+证据：
+
+```text
+output/investigations/p0032_screenshot_roi_temperature_distance_20260608/frame_616_overlay.png
+output/investigations/p0032_screenshot_roi_temperature_distance_20260608/frame_706_overlay.png
+output/investigations/p0032_screenshot_roi_temperature_distance_20260608/frame_707_overlay.png
+output/investigations/p0032_screenshot_roi_temperature_distance_20260608/frame_730_overlay.png
 ```
 
 #### Final status
@@ -3530,6 +3727,2129 @@ Result: PASS.
 - Actual: `browser_console_messages(level="error", all=false)` 返回 Errors=0, Warnings=0。
 - Result: PASS
 - Evidence: Playwright console output in Codex session.
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0038 — Run 结束时缺少独立实时结果链 As/Af/AF95，与 Analysis AFAS 后处理未形成两套分析
+
+- Status: OPEN
+- Priority: P1
+- Module: `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `frontend/src/main.tsx`, `frontend/src/curves.ts`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户要求工程上区分两套曲线分析：
+
+```text
+1. Run 实时结果链：轻量版，用于 run 结束时快速给出 As / Af / AF95。
+2. Analysis Studio AFAS 后处理链：完整工程版，包含温度分组、异常点修复、Savitzky-Golay 平滑、参数化切线分析和 As / Af-tan。
+```
+
+当前代码只确认了完整 AFAS 后处理链；Run 侧尚未发现独立的轻量 `As / Af / AF95` 结果链。
+
+#### Expected
+
+Run 结束或实时状态中应存在独立轻量分析结果：
+
+```text
+SyncPoint / DetectionResult formal temperature-distance 点
+至少 5 个有效点
+相邻点/中心差分导数
+最大斜率点切线
+前 N 点低温基线
+后 N 点高温基线
+As / Af 交点
+归一化 95% 阈值插值得到 AF95
+```
+
+Analysis Studio 则继续使用完整 AFAS 后处理链：
+
+```text
+温度分组 -> 异常点修复 -> Savitzky-Golay 平滑 -> 导数 -> 最大斜率点
+-> 低/高温基线 -> 中间切线 -> 三线交点 -> As / Af-tan
+```
+
+#### Actual
+
+当前核验结果：
+
+```text
+1. backend/src/yyt1771_g3/services/analysis_service.py::build_analysis_result()
+   始终调用 build_afas_postprocessing() 生成 afas_preprocessing / afas_analysis。
+
+2. backend/src/yyt1771_g3/services/live_offline_run_service.py
+   - 每帧发送 raw curve_points。
+   - 每 10 帧发送一次轻量 AFAS preprocessing preview，只包含 smoothed / warnings 等预览字段。
+   - frame event 中 afas_analysis 固定为 {"result_status": "pending"}。
+   - complete event 写入的 analysis_result 仍来自 build_analysis_result() 的完整 AFAS 后处理。
+
+3. 全仓库搜索未发现 AF95 / af95 / Af95 / AF_95 实现或字段。
+```
+
+因此当前工程实际是：
+
+```text
+Run 实时曲线预览 = raw formal points + 低频 AFAS smoothed preview
+Run 完成结果 = 完整 AFAS analysis_result
+Analysis Studio = 完整 AFAS analysis_result + 参数重算
+```
+
+尚未形成用户要求的“两套结果分析”：`Run lightweight As/Af/AF95` 与 `Analysis AFAS As/Af-tan`。
+
+#### Suspected cause
+
+P-0022 / P-0036 已把 Run 曲线显示对齐到 AFAS 平滑预览，但目标是实时曲线观感和 payload 控制，并未新增独立的实时 `As / Af / AF95` 数值合同。
+
+#### Fix summary
+
+待实现。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src python3 -m pytest backend/tests/unit/test_analysis_service.py backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_frame_events_emit_lightweight_smoothed_afas_preview backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_short_frame_events_defer_afas_preview -q
+Result: PASS, 9 passed.
+
+rg -n "AF95|af95|Af95|AF_95|normalized 95|95%|As / Af|Af-tan|lightweight|轻量|实时结果链" backend/src frontend/src backend/tests frontend/tests problem.md docs --glob '!frontend/dist/**' --glob '!frontend/node_modules/**'
+Result: 未发现 AF95 或独立 Run realtime As/Af 轻量分析实现；仅发现 AFAS As/Af-tan 和 smoothed preview 相关记录。
+```
+
+#### Browser retest log
+
+- Retest date:
+- Browser:
+- OS:
+- Frontend URL:
+- Backend URL:
+- Dataset:
+- Page:
+- Steps:
+- Expected:
+- Actual:
+- Result: PASS / FAIL
+- Evidence:
+
+#### Final status
+
+OPEN
+
+
+### P-0039 — Run 页实时 temperature-distance 曲线过小且缺少监护式状态分层
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/styles.css`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+Run 页实时 temperature-distance 曲线仍更像小型报告图，未充分承担实时监护 / 工业 trend chart 的核心信息角色。当前表现包括：
+
+```text
+1. 曲线视觉面积和层级不足。
+2. 当前 distance / temperature / frame / sync / valid 状态不够集中。
+3. raw / smoothed / 状态语义未形成 Run 专用分层。
+4. TEMP_SYNC_STALE / TEMP_SYNC_MISSING / INVALID 的断线和状态 rug 语义缺少可测模型。
+5. target temperature 缺少淡色 vertical band/marker。
+```
+
+#### Expected
+
+```text
+Run 页曲线作为右侧结果面板核心信息。
+桌面端曲线高度 >= 360px。
+图上方显示 compact value strip。
+主曲线仅显示正式可进入 temperature-distance 曲线的数据。
+raw/reference 点低透明显示。
+latest point 显示更大圆点、vertical cursor 和可读标签。
+STALE / MISSING / INVALID 不连成正式有效曲线，图底部使用状态 rug/timeline 标记。
+target temperature 使用淡色 vertical band/marker。
+支持 latest window / full run 切换，运行中默认 latest，停止后默认 full。
+tick label >= 12px，axis label >= 13px。
+```
+
+#### Actual
+
+修复前 Run 页复用通用 `CurveView` / `CurveGrid`，更偏小型报告图；Run 图未形成专用 value strip、断线模型、状态 rug、latest cursor 和 target band。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - 新增 `buildRunTrendModel()` Run 专用曲线模型。
+   - 输出 formal segments、reference points、status rugs、latest point、value strip、latest/full window。
+   - `TEMP_SYNC_STALE`、`TEMP_SYNC_MISSING`、`INVALID*` 不进入 formal line；中间存在异常 rug 时 formal line 自动断开。
+   - live smoothed preview 只有覆盖到最新 raw formal point 时才作为 Run 主线，否则回退为后端正式 raw temperature-distance，避免 latest cursor 滞后。
+   - Run trend tick 根据数值范围保留小数，避免平坦曲线出现重复 tick label。
+
+2. `frontend/src/main.tsx`
+   - 新增 `RunTrendChart`、`RunValueStrip`、hover tooltip、latest cursor/label、target temperature band。
+   - Run 页右侧结果面板改为 trend chart 优先，frame overlay 下移。
+   - 运行中默认 `Latest window`，停止/已有结果默认 `Full run`。
+
+3. `frontend/src/styles.css`
+   - Run trend 桌面 SVG 高度 420px、最小高度 360px。
+   - 主线 3.8px 高对比实线，raw/reference 点低透明灰色。
+   - tick label 12px，axis label 13px，value strip 关键值 16px。
+   - 状态 rug 使用线型 + marker 形状区分，不只依赖颜色。
+
+#### Tests run
+
+```bash
+npm test
+Result: PASS, 9 passed.
+
+npm run build
+Result: PASS, Vite production build completed.
+```
+
+新增/覆盖前端测试：
+
+```text
+run trend model breaks invalid and stale points out of the formal curve
+run trend model defaults to a recent window while running
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via DevTools Protocol
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run
+- Steps:
+  1. Open G3 frontend in Chrome.
+  2. Select `golden_a_20260522_dev_lab`.
+  3. Run Live Offline from frame 1.
+  4. Confirm Run trend appears at top of right result panel.
+  5. Confirm running mode defaults to `Latest window`.
+  6. Wait until at least 24 formal temp-distance points are present.
+  7. Confirm compact value strip, latest cursor/label, reference points, chart height, tick/axis font sizes.
+  8. Stop run and confirm default mode changes to `Full run`.
+  9. Set target temperature to `1.30 °C` and confirm target band/marker appears.
+- Expected: Run chart behaves as industrial realtime trend chart; invalid/stale/missing are not connected by model; desktop chart height >= 360px; target band visible when target falls in x-range.
+- Actual:
+  - Chart height: `420px`.
+  - Running active mode: `Latest window`.
+  - Stopped active mode: `Full run`.
+  - Tick labels: `12px`.
+  - Axis labels: `13px`.
+  - Latest point label example: `frame 25 · 1.40°C · 988.0px`.
+  - Target marker text: `Target 1.30°C`.
+  - Formal line and reference points rendered; status rug behavior covered by unit test model.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0039_run_trend_live_latest.png`
+  - `output/playwright/p0039_run_trend_stopped_full.png`
+  - `output/playwright/p0039_run_trend_target_band.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+### P-0040 — Analysis / Export 页 AFAS 曲线过小且 raw/smoothed/baseline/tangent/markers 视觉权重未分层
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/styles.css`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+Analysis / Export 页 AFAS temperature-distance 曲线仍更像小型报告图，不适合工程复核和报告前检查。当前表现包括：
+
+```text
+1. Analysis 曲线区域被 Export / 参数面板挤压，桌面端视觉面积不足。
+2. raw points、smoothed curve、baseline、tangent、As/Af、max slope 的视觉权重接近。
+3. baseline/tangent/marker 多条线和虚线争夺注意力。
+4. 图内直接标注不足，工程复核人员需要依赖图例和颜色猜语义。
+5. 缺少 Raw / Fit / Markers 图层开关和 brush zoom / reset zoom 复核交互。
+```
+
+#### Expected
+
+```text
+Analysis 图表区域成为页面主视觉，桌面端高度 480-560px。
+结果指标放图上方横向 summary strip。
+Raw points 使用低透明灰色小点。
+Smoothed curve 为主曲线，深青/蓝绿色 3.5-4px 实线。
+Low baseline / High baseline 仅作为辅助拟合线，只在拟合温度区间内显示，并明显弱于主曲线。
+Tangent 为 AFAS 判定核心线，橙红/红色 2.5-3px 实线。
+As / Af-tan 为 vertical reference rule + badge，badge 显示温度值。
+Max slope 使用 diamond / outlined marker 并直接标注。
+Outliers 使用小叉或 hollow marker。
+支持 hover tooltip、Raw/Fit/Markers 图层开关、brush zoom 和 reset zoom。
+tick label >= 12px，axis label >= 13px，marker label >= 12px。
+前端只展示后端 AFAS 输出，不重新推导正式 AFAS。
+```
+
+#### Actual
+
+修复前 Analysis 页复用通用 `CurveView` / `CurveGrid`，图高约 220px，raw/smoothed/baseline/tangent/markers 视觉层级不够清晰，参数面板和结果指标占用主图空间。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - 新增 `buildAnalysisAfasModel()` 专用显示模型。
+   - 从后端 `afas_preprocessing.raw`、`afas_preprocessing.smoothed`、`afas_preprocessing.outlier_repair.outlier_mask`、`afas_analysis.fit`、`afas_analysis.result` 读取展示数据。
+   - 输出 raw points、outlier points、smoothed path、fit lines、As/Af/max slope markers、summary strip、ticks、x/y domain。
+   - baseline line 按后端 `range_celsius` 和当前 zoom domain 裁剪；tangent 只做后端 slope/intercept 的显示映射。
+   - Raw / Fit / Markers 图层开关只影响展示层，不改动后端结果。
+
+2. `frontend/src/main.tsx`
+   - 新增 `AnalysisAfasChart`、summary strip、图层 checkbox、hover tooltip、brush zoom、reset zoom。
+   - Analysis 页面改为纵向工作台：Export / run 信息置顶，AFAS 主图占完整工作区宽度，参数面板移到图下方折叠区。
+   - 修复快速 brush drag 时 React state 可能尚未重渲染的问题，使用 `useRef` 保存正在拖拽的 brush 状态。
+
+3. `frontend/src/styles.css`
+   - Analysis AFAS 图桌面高度 540px。
+   - raw 点低透明灰色；smoothed 主线 3.8px；baseline 弱虚线 + 淡拟合区间；tangent 2.9px 橙红实线。
+   - As/Af 使用 reference rule + badge；max slope 使用 diamond marker。
+   - tick label 12px，axis label 13px，marker label 12px。
+   - 移动端保留横向滚动最小图宽，避免字体被压缩。
+
+#### Tests run
+
+```bash
+npm test -- --test-name-pattern "analysis AFAS model"
+Result: PASS, 11 passed under filtered node:test run.
+
+npm test
+Result: PASS, 11 passed.
+
+npm run build
+Result: PASS, Vite production build completed.
+
+VITE_G3_API_BASE=http://127.0.0.1:8020 npm run build
+Result: PASS, Vite production build completed for preview check. Preview on 5181 was not used for final browser retest because backend CORS did not allow that port.
+```
+
+新增前端测试：
+
+```text
+analysis AFAS model separates review layers and keeps baselines clipped to fit ranges
+analysis AFAS model honors layer toggles and zoom domain without recalculating data
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via Playwright
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / Analysis / Export
+- Steps:
+  1. Open G3 frontend in Chrome.
+  2. Select `golden_a_20260522_dev_lab`.
+  3. On Setup, set `Frame = 350` and `Target °C = 2.0`.
+  4. Start Live Offline Run.
+  5. Wait until run completes at `121 / 121` frames.
+  6. Open Analysis / Export.
+  7. Confirm AFAS summary strip, 540px chart, raw/smoothed/baseline/tangent/As/Af/max slope layers.
+  8. Confirm Raw / Fit / Markers toggles hide their corresponding layers while smoothed curve remains.
+  9. Brush-drag over chart; confirm zoom caption changes to `1.73-1.90 °C` and Reset zoom becomes enabled.
+  10. Click Reset zoom; confirm caption returns to `Full analysis range`.
+- Expected: Analysis AFAS chart is the main visual; layer weights match engineering review requirements; fonts meet minimum sizes; interactions work without frontend recalculating AFAS.
+- Actual:
+  - Run id: `run-golden_a_20260522_dev_lab-20260607T135603826107Z`
+  - Formal temp-distance points: `121`
+  - Raw points rendered: `121`
+  - Fit lines rendered: `3`
+  - Markers rendered: `3`
+  - SVG chart box: `880px × 540px`
+  - Tick label font: `12px`
+  - Axis label font: `13px`
+  - Marker label font: `12px`
+  - Raw/Fit/Markers toggles all hid their corresponding layers; smoothed curve remained.
+  - Brush zoom changed caption from `Full analysis range` to `1.73-1.90 °C`; reset restored full range.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0040_analysis_afas_chart_full_verified.png`
+  - `output/playwright/p0040_analysis_afas_layers_off.png`
+  - `output/playwright/p0040_analysis_afas_brush_zoom.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0041 — G3 未复用 starter 的 MVS runtime bootstrap，真机连接后仍无法加载 SDK binding
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `configs/local/realcamera_temp.local.yaml`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户已连接真实 Hik 相机，并要求在 `realcamera-temp` 分支按 `/Users/lulingfeng/Documents/工作/开发/奥氏体变换/1771/yyt1771_starter` 的相机设置进行真机调试。G3 当前 local hardware profile 中 `sdk_python_paths` 和 `sdk_library_path` 为空；用默认 arm64 Python 直接导入 `MvCameraControl_class` 失败。
+
+进一步按 starter 环境检查发现：
+
+```text
+MVS Python binding:
+/Users/lulingfeng/Documents/工作/开发/奥氏体变换/1771/_local/tmp_hik/MVS_inner_expand_current/Install.pkg/Payload/MVS_SDK/Samples/Python/MvImport/MvCameraControl_class.py
+
+MVS patched dylib:
+/Users/lulingfeng/Documents/工作/开发/奥氏体变换/1771/_local/tmp_hik/patched_runtime_dlopen_20260525_1738/lib/libMvCameraControl.dylib
+
+Dedicated x86 Python:
+/Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3
+```
+
+但 G3 当前 `HikMvsCameraSource._load_sdk()` 只尝试普通 import，缺少 starter 中的 `HIK_MVS_LIBRARY_PATH` source override / sidecar bootstrap。直接在 x86 环境添加 `HIK_MVS_PYTHON_PATH` 后仍会因为官方 binding 硬编码 `/usr/local/lib/libMvCameraControl.dylib` 而失败。
+
+#### Expected
+
+```text
+1. G3 使用和 starter 等价的 MVS Python binding 路径、patched dylib 路径和 sidecar runtime。
+2. 无 SDK 时仍保持 lazy import / offline fallback。
+3. 用 x86_64 MVS runtime 时能导入 SDK、枚举相机、preview 真实帧。
+4. Real Camera Run 保存 raw frame、FrameRecord、DetectionResult 和温度同步字段。
+```
+
+#### Actual
+
+```text
+Default Python:
+arm64 /Users/lulingfeng/miniforge3/bin/python3
+MvCameraControl_class import: ModuleNotFoundError
+
+x86 MVS Python:
+x86_64 /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3
+MvCameraControl_class import with HIK_MVS_PYTHON_PATH:
+OSError: dlopen(/usr/local/lib/libMvCameraControl.dylib): no such file
+```
+
+#### Suspected cause
+
+G3 没有 starter 的 `_import_hik_mvs_sdk_module_with_library_override()` 逻辑，无法把官方 binding 中的 `/usr/local/lib/libMvCameraControl.dylib` 替换为本地 patched runtime；同时真机调试必须用 x86_64 Python，因为本机 MVS dylib 是 x86_64。
+
+#### Fix summary
+
+2026-06-07:
+
+```text
+1. `backend/src/yyt1771_g3/camera/hik_mvs_source.py` 增加 starter 等价的 MVS SDK source override：
+   - 从 hardware profile / env 读取 `sdk_python_paths` / `sdk_library_path`。
+   - 找到官方 `MvCameraControl_class.py` 后，将硬编码 `/usr/local/lib/libMvCameraControl.dylib` 替换为 profile 中的 patched dylib。
+   - 将 starter runtime sidecar dylib 通过 `/tmp/mvs` symlink staging 提供给 patched runtime。
+2. 保持 lazy import：无 SDK、无相机、arm64 默认 Python 下 offline/playback/live offline 仍不受影响。
+3. `configs/local/realcamera_temp.local.yaml` 写入本机已验证 starter MvImport 路径和 patched dylib 路径；源码中没有硬编码这些绝对路径。
+4. 新增 regression，验证官方 binding 的 hardcoded dylib 会被 profile `sdk_library_path` 覆盖。
+```
+
+#### Tests run
+
+```bash
+Initial diagnostics:
+PYTHONPATH=backend/src python3 -c "import MvCameraControl_class"
+Result: FAIL, ModuleNotFoundError
+
+HIK_MVS_PYTHON_PATH=<starter MvImport> HIK_MVS_LIBRARY_PATH=<starter patched dylib> /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -c "import MvCameraControl_class"
+Result: FAIL, official binding still tried /usr/local/lib/libMvCameraControl.dylib
+
+PYTHONPATH=backend/src python3 -m pytest backend/tests/unit/test_camera_lazy_import.py -q
+Result: PASS, 5 passed
+
+PYTHONPATH=backend/src python3 -m pytest backend/tests -q
+Result: PASS, 78 passed
+
+cd frontend && npm test
+Result: PASS, 13 passed
+
+cd frontend && npm run build
+Result: PASS
+```
+
+#### API / hardware retest log
+
+```text
+Python: /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3
+Architecture: x86_64
+Backend URL: http://127.0.0.1:8032/
+
+SDK load:
+G3 loaded starter MvCameraControl_class.py with profile patched dylib override.
+has MvCamera: True
+
+MVS enum:
+enum ret: 0
+device count: 1
+transport: 1
+
+GET /api/camera/preview:
+HTTP 200
+camera_status: ok
+shape: [1364, 2048]
+dtype: uint8
+model: MV-CA060-11GM
+serial_number: 00J67378626
+ip: 192.168.3.211
+camera_resulting_fps: 10.0
+
+POST /api/real-camera-runs:
+HTTP 200
+run_id: run-real_camera-20260607T143255949515Z
+dataset_id: real_camera
+frames saved: 160
+detection statuses sampled: VALID
+sync statuses sampled: TEMP_SYNC_MISSING
+temperature_distance_points: 0
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via Playwright
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8032/`
+- Dataset: `real_camera`
+- Page: Run
+- Steps: Start backend with x86 MVS environment; open G3 frontend; click Run tab; click Real Camera `Preview`; click Real Camera `Run`; wait for run completion and inspect run trend, saved frame canvas and API responses.
+- Expected: Preview/Run uses real Hik camera through starter-equivalent MVS runtime; run manifest contains camera metadata and raw frames; no SDK import error appears.
+- Actual: Preview returned real Hik metadata (`MV-CA060-11GM`, `00J67378626`, `192.168.3.211`); Real Camera Run completed in browser with 160 saved frames and run id `run-real_camera-20260607T143255949515Z`; no `MvCameraControl_class` / dylib import error appeared.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0042_realcamera_preview_browser_20260607.png`
+  - `output/playwright/p0042_realcamera_run_browser_20260607.png`
+  - `output/playwright/p0042_realcamera_browser_summary_20260607.json`
+  - `output/hardware/real_camera_api_summary_20260607_after_p0042.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0042 — Real Camera Run 后帧画布仍显示当前离线 dataset frame，真实 run 底图来源不一致
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+真实 Hik 相机已可通过 G3 API 进行 Preview / Run，但浏览器真实 run 复测发现：Run Trend 标题显示 `Real camera run · run-real_camera-...`，下方帧画布标题和图片仍来自当前离线 dataset，例如 `golden_a_20260522_dev_lab · live frame 160`。
+
+这会造成 Real camera run 的 UI 显示结果与后端保存的真实 raw frame 不一致，违反 `Offline playback / Live offline run / Real camera run 结果不一致` 必须登记和修复的规则。
+
+#### Expected
+
+```text
+Real Camera Run 完成后，帧画布应使用该 run manifest 中 frame_records 对应的真实 raw frame。
+标题应标明 Real camera run 和 run_id，而不是当前离线 dataset id。
+如果真实 run frame 不存在或无法读取，应明确显示 unavailable，不能退回离线 dataset frame 冒充真实 run。
+```
+
+#### Actual
+
+```text
+Browser Real Camera Run:
+Run Trend: Real camera run · run-real_camera-20260607T141626763680Z
+Frame canvas title: golden_a_20260522_dev_lab · live frame 160
+Frame image URL: offline dataset frame URL
+```
+
+#### Suspected cause
+
+`RunPage` 中 `latestFrameUrl` 在 `liveRun?.frameUrl` 不存在时，无论 run 来源如何都退回 `frameIndexImageUrl(dataset.id, latestDetection.frame_index)`；真实相机 run 没有前端可用的 run raw frame PNG endpoint，因此显示了当前离线 dataset frame。
+
+#### Fix summary
+
+2026-06-07:
+
+```text
+1. 新增 `GET /api/runs/{run_id}/frames/{frame_index}.png`：
+   - 只通过 run manifest 的 `frame_records` 查找帧。
+   - 只读取 run 目录下的相对 `frame_path`，防止任意路径读取。
+   - 支持 `max_width` 缩放，返回 PNG。
+2. 前端 API client 新增 `runFrameImageUrl()` / `buildRunFrameImageUrl()`。
+3. Run 页在 `run_manifest.dataset_id === "real_camera"` 且非 live offline run 时：
+   - 使用 `/api/runs/{run_id}/frames/{frame_index}.png` 作为底图。
+   - 标题显示 `Real camera run · {run_id} · frame {frame_index}`。
+   - `FrameCanvas.sourceShape` 使用真实 run `frame_records[].shape`。
+4. 若 run frame PNG 不存在，浏览器会显示 frame unavailable，不会回退到当前离线 dataset frame。
+```
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src python3 -m pytest backend/tests/integration/test_camera_api.py::test_real_camera_run_endpoint_passes_temperature_controller_and_profile -q
+Initial result before endpoint: FAIL, `/api/runs/{run_id}/frames/1.png` returned 404
+After fix: PASS, 1 passed
+
+cd frontend && npm test -- --test-name-pattern "run frame image URL"
+Initial result before helper: FAIL, `buildRunFrameImageUrl is not a function`
+After fix: PASS, 13 passed under filtered run
+
+PYTHONPATH=backend/src python3 -m pytest backend/tests -q
+Result: PASS, 78 passed
+
+cd frontend && npm test
+Result: PASS, 13 passed
+
+cd frontend && npm run build
+Result: PASS
+```
+
+#### API retest log
+
+```text
+Backend URL: http://127.0.0.1:8032/
+POST /api/real-camera-runs:
+HTTP 200
+run_id: run-real_camera-20260607T142912384336Z
+dataset_id: real_camera
+frames: 3
+
+GET /api/runs/run-real_camera-20260607T142912384336Z/frames/1.png?max_width=720:
+HTTP 200
+content-type: image/png
+bytes: 59313
+Evidence:
+output/hardware/real_camera_run_frame_api_20260607_after_p0042.png
+output/hardware/real_camera_api_summary_20260607_after_p0042.json
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via Playwright
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8032/`
+- Dataset: `real_camera`
+- Page: Run
+- Steps:
+  1. Open frontend and select Run tab.
+  2. Click `Read temp` and confirm LU92XX remains unavailable while serial is missing.
+  3. Click Real Camera `Preview`.
+  4. Click Real Camera `Run`.
+  5. Wait for `run-real_camera-20260607T143255949515Z` to complete.
+  6. Assert final frame canvas image URL contains `/api/runs/run-real_camera-20260607T143255949515Z/frames/160.png`.
+  7. Assert body contains `Real camera run · run-real_camera-20260607T143255949515Z · frame 160`.
+  8. Assert body no longer contains `golden_a_20260522_dev_lab · live frame`.
+- Expected: Real camera run canvas uses saved run raw frame and real run title; no offline dataset fallback.
+- Actual:
+  - Run id: `run-real_camera-20260607T143255949515Z`
+  - Frame count: `160`
+  - Frame canvas image URL: `http://127.0.0.1:8032/api/runs/run-real_camera-20260607T143255949515Z/frames/160.png?max_width=1024`
+  - Frame image natural size: `1024 x 682`
+  - `hasRealRunFrameTitle`: true
+  - `hasOfflineGoldenLiveFrameTitle`: false
+  - run frame PNG response: HTTP 200, `image/png`
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0042_realcamera_run_initial_20260607.png`
+  - `output/playwright/p0042_realcamera_preview_browser_20260607.png`
+  - `output/playwright/p0042_realcamera_run_browser_20260607.png`
+  - `output/playwright/p0042_realcamera_browser_summary_20260607.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0043 — Run/Analysis 曲线需要共享 variant 化底层 CurveView 并保持工业曲线层级
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/curves.ts`, `frontend/src/main.tsx`, `frontend/tests/curveSpecs.test.mjs`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+Run 页和 Analysis / Export 页的 G3 曲线已经分别完成工业监护式和工程复核式 redesign，但底层 SVG 坐标框、grid、axis、tick、axis label 仍在 `RunTrendChart` 和 `AnalysisAfasChart` 中各自手写一份。用户明确要求可以共享底层 `CurveView`，但必须支持不同 variant：
+
+```text
+run_monitor
+analysis_review
+```
+
+如果继续保留两份坐标框绘制逻辑，后续字号、tick、坐标轴间距和浅色工业风格容易发生漂移，也更容易破坏 tick label >= 12px / axis label >= 13px 的硬性要求。
+
+#### Expected
+
+```text
+1. Run 和 Analysis 使用共享底层曲线 frame/grid/axis/tick/axis label view。
+2. 共享 view 支持 run_monitor 和 analysis_review 两种 variant。
+3. Run / Analysis 各自的数据层、hover、brush、status rug、markers 和 layer toggles 保持独立。
+4. 前端只展示后端输出，不计算正式 A/B、distance、temperature sync 或 AFAS。
+5. stale/missing/invalid 仍不得被连成正式有效曲线。
+6. 字号、线宽、marker、直接标签和浅色工业软件风格保持 P-0039 / P-0040 的浏览器验收效果。
+```
+
+#### Actual
+
+修复前 `RunTrendChart` 与 `AnalysisAfasChart` 各自渲染 SVG frame、grid line、axis、tick 和 axis label。视觉效果可用，但底层 curve view 未按 variant 收敛。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - 新增 `IndustrialCurveViewVariant = "run_monitor" | "analysis_review"`。
+   - 新增 `buildIndustrialCurveFrameModel()`，集中返回 variant 对应的 frame/grid/axis/tick/label class mapping、axis layout 和最小文字指标。
+   - 该模型只处理显示框架，不读取或推导任何后端正式测量 / AFAS 结果。
+
+2. `frontend/src/main.tsx`
+   - 新增共享 `IndustrialCurveView` React 组件。
+   - `RunTrendChart` 改为 `variant="run_monitor"`，保留 value strip、正式曲线断线、reference points、target band、status rug、latest cursor 和 tooltip。
+   - `AnalysisAfasChart` 改为 `variant="analysis_review"`，fit bands 作为 underlay，raw/outlier/smoothed/baseline/tangent/As/Af/max slope、layer toggle、brush zoom、reset zoom 和 tooltip 保持原逻辑。
+
+3. `frontend/tests/curveSpecs.test.mjs`
+   - 增加共享 frame model 测试，覆盖 `run_monitor` / `analysis_review` variant、class mapping 和 tick/axis 最小字号约束。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand
+Result: PASS, 12 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+
+git diff --check
+Result: PASS, no whitespace errors.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via Playwright
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / Analysis / Export
+- Steps:
+  1. Open G3 frontend in Chrome.
+  2. Select `golden_a_20260522_dev_lab`.
+  3. On Setup, set `Target °C = 2.00`.
+  4. Open Run and start Live Offline Run.
+  5. During run, verify Run monitor chart renders value strip, 420px chart SVG, thick formal temperature-distance line, latest cursor/tooltip and current point label.
+  6. Wait until run returns to idle; open Analysis / Export.
+  7. Verify Analysis summary strip, 540px AFAS review chart, raw points, smoothed curve, baseline fit bands/labels, tangent, As/Af-tan badges and Max slope marker.
+  8. Toggle `Fit` layer off; confirm smoothed/raw/markers remain while fit layers hide.
+  9. Brush-drag the AFAS chart; confirm zoom range caption changes and Reset zoom becomes enabled.
+- Expected: Run and Analysis charts retain P-0039/P-0040 visual hierarchy while sharing the variant-based SVG frame; no backend result is recalculated by the frontend.
+- Actual:
+  - Run id: `run-golden_a_20260522_dev_lab-20260607T141426899025Z`.
+  - Run chart observed while running at frame `122`; value strip showed `Current distance = 987.0 px`, `Current temperature = 1.20 °C`, `Sync status = INTERPOLATED`, `Valid / Invalid = VALID`, `Temp-distance points = 121`.
+  - Run completed and returned to idle at live frame `470`; Analysis showed `Formal temp-distance points = 469` and `AFAS status = ok`.
+  - Analysis summary showed `As = 1.34 °C`, `Af-tan = 1.48 °C`, `Max slope = 1.37 °C`, `Raw points = 469`, `Smoothed points = 29`, `Outliers = 0`.
+  - Analysis chart rendered direct labels for `Low baseline`, `High baseline`, `Tangent`, `Smoothed curve`, `As 1.34°C`, `Af-tan 1.48°C`, and `Max slope`.
+  - Fit toggle hid fit layers; brush zoom changed caption to `1.38-1.77 °C` and enabled Reset zoom.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0043_run_monitor_shared_curve.png`
+  - `output/playwright/p0043_analysis_review_shared_curve.png`
+  - `output/playwright/p0043_analysis_review_zoom_toggle.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0044 — Run/Analysis 曲线不应把重复温度 raw frame 点按帧顺序连成正式折线
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/curves.ts`, `frontend/src/main.tsx`, `frontend/tests/curveSpecs.test.mjs`
+- Found date: 2026-06-07
+- Last update: 2026-06-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户指出 Run 页 Latest window 截图中的 temperature-distance 曲线不符合物理相变曲线形状，更像是把同一温度下多个 raw frame 点按帧顺序连成折线。由于温度同步值可能重复、插值、轻微回退，同一温度 bin 下会有多个帧和多个 distance_px。若直接连 raw frame points，会产生竖线、三角形、折返线，误导操作员认为样品物理变化异常。
+
+#### Expected
+
+```text
+1. Raw frame temperature-distance points 只作为低权重 scatter/reference points。
+2. Run 页正式线优先展示后端已有 `afas_preprocessing.smoothed`。
+3. 若无 smoothed 但有 `afas_preprocessing.grouped`，展示后端 grouped/binned curve。
+4. 若后端预处理曲线尚未输出，则只显示 raw scatter 和 latest cursor，不把 raw 点连成 formal line。
+5. Analysis 页同样不得把 raw fallback 画成 smoothed line；smoothed line 只能来自后端 smoothed/grouped 预处理层。
+6. 前端不得重新计算正式 A/B、distance、temperature sync、temperature bin、median/mean 或 AFAS，只展示后端结果。
+```
+
+#### Actual
+
+修复前 `buildRunTrendModel()` 只有在 smoothed preview 被判断为覆盖最新 raw frame 时才使用 smoothed，否则退回 `analysis.temperature_distance` 并把 raw points 连成 `formalSegments`。由于后端 smoothed preview 不携带逐帧 frame_index，前端会误判 smoothed “不新鲜”，从而在 Run latest window 中连接 raw frame points。`buildAnalysisAfasModel()` 在缺少 smoothed 时也会把 raw `temperature_distance` fallback 成 `smoothedPath`。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - 新增 `readPreprocessedTemperatureDistance()`，只读取后端 `afas_preprocessing.smoothed` 或 `grouped`。
+   - Run line source 改为优先 backend smoothed，其次 backend grouped；无后端预处理曲线时不生成 formal line。
+   - Run raw `temperature_distance` 固定作为 `referencePoints` scatter 和 latest cursor 来源。
+   - Run latest window 以 raw reference window 为准，backend smoothed/grouped line 仅按该窗口温度范围裁剪显示。
+   - `latestPoint` 改为最新 raw reference point，避免把 smoothed curve point 伪装成 frame point。
+   - Analysis smoothed path 不再 fallback raw points；缺少后端 smoothed/grouped 时只显示 raw scatter。
+
+2. `frontend/src/main.tsx`
+   - Run inline label 改为 `backend smoothed curve` / `backend binned curve`。
+   - Run tooltip 对无 frame_index 的 curve point 显示 `None`；latest cursor 仍显示 raw frame index。
+
+3. `frontend/tests/curveSpecs.test.mjs`
+   - 新增 regression：重复温度 raw frame points 只作为 scatter，backend smoothed points 按温度升序连线，latest cursor 来自 raw frame。
+   - 更新旧断言：无后端预处理曲线时 latest window 只保留 raw scatter，不生成 raw formalSegments。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand
+Result: PASS, 14 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Headless Google Chrome via Playwright
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / Analysis / Export
+- Steps:
+  1. Open G3 frontend and select `golden_a_20260522_dev_lab`.
+  2. On Setup, set `Target °C = 1.60` with keyboard input and confirm Run page shows `Target = 1.60 °C`.
+  3. Start Live Offline Run and observe Run trend during live updates.
+  4. Confirm Run chart labels line source as `Backend smoothed temperature-distance`.
+  5. Inspect Run SVG DOM layers: raw/reference frame points render as `circle.runTrendReferencePoint`; formal line renders as `polyline.runTrendFormalLine` with monotonic x positions from backend smoothed points.
+  6. Wait until the run naturally stops at the target temperature.
+  7. Open Analysis / Export and inspect AFAS chart layer counts and direct labels.
+- Expected: Run and Analysis never connect raw frame temperature-distance points as the formal curve; raw frame points remain scatter; smoothed line is sourced only from backend `afas_preprocessing.smoothed`/`grouped`; latest cursor still points to the latest raw frame.
+- Actual:
+  - Run completed as `run-golden_a_20260522_dev_lab-20260607T153030317864Z`.
+  - Run completed at frame `317`, temperature `1.60 °C`, with `316` formal temp-distance raw points.
+  - Run chart displayed `Backend smoothed temperature-distance`; value strip showed latest raw frame cursor `frame 317 · 1.60°C · 985.0px`.
+  - Run SVG layer inspection recorded `80` `circle.runTrendReferencePoint` elements for the live latest window and one `polyline.runTrendFormalLine`; the formal polyline used backend smoothed points with increasing x coordinates, not raw frame order.
+  - Analysis / Export showed `Raw points = 316`, `Smoothed points = 17`, `Outliers = 0`.
+  - Analysis SVG layer inspection recorded `circle.analysisAfasRawPoint: 316` and one `polyline.analysisAfasSmoothedLine`, plus fit bands/fit lines/tangent/As/Af/Max slope marker layers.
+  - Analysis chart directly labeled `Low baseline`, `High baseline`, `Tangent`, `Smoothed curve`, `As`, `Af-tan`, and `Max slope`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0044_run_raw_scatter_backend_smoothed.png`
+  - `output/playwright/p0044_run_completed_backend_smoothed_full.png`
+  - `output/playwright/p0044_run_svg_layers.json`
+  - `output/playwright/p0044_run_svg_line_layers.json`
+  - `output/playwright/p0044_analysis_smoothed_no_raw_fallback.png`
+  - `output/playwright/p0044_analysis_smoothed_no_raw_fallback_fullpage.png`
+  - `output/playwright/p0044_analysis_svg_layers.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0045 — Setup 页面需要统一 Source 入口并自动显示真实相机 preview
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/setupSources.ts`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/services/probe_service.py`, `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/core/enums.py`
+- Found date: 2026-06-07
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+Setup 页面此前以离线 dataset 为唯一画布来源；真实相机 preview 只在 Run 页由用户手动点击 Preview 触发。这样真实相机不像离线素材一样作为 Setup source 参与 ROI 选框和调参，用户必须先跳到 Run 页才能看到真机当前帧。
+
+#### Expected
+
+```text
+1. Setup 页面有 Source 选择：Offline dataset / Real camera。
+2. 选择 Real camera，或当前 source 已是 Real camera 且进入 Setup 页面时，自动启动真实相机 preview。
+3. Setup 页面直接显示真实相机当前帧，preview 仅用于选框和调参，不作为正式 run 数据。
+4. Setup 页面显示 camera_status、model、serial_number、ip、pixel_format、frame shape、timestamp 和 preview refresh status。
+5. 真实相机不可用时显示结构化错误，Offline dataset 流程不受影响。
+6. Hik MVS SDK 继续 lazy import，不得影响普通 offline playback / live offline run。
+7. 不在源码中硬编码本机 MVS 绝对路径；继续通过 `configs/local/realcamera_temp.local.yaml` 或 env/profile 读取。
+8. Real camera Setup 支持 Live / Freeze / Resume Live / Refresh frame：
+   - Live 以低频 UI preview 持续刷新当前帧、timestamp 和 metadata。
+   - Freeze 固定当前显示帧，ROI 编辑继续叠加在冻结帧上。
+   - Resume Live 后 ROI 保持 source pixel 坐标；若 frame shape 变化，必须提示 ROI 重新确认。
+   - Frozen 状态下仍可 Capture new setup frame，且不清空已有 ROI，除非 shape 不兼容并提示确认。
+9. Real camera Setup 使用与 Offline dataset 完全相同的 ROI 编辑器：
+   - 支持新建/重置、移动、缩放、旋转 ROI。
+   - 显示 ROI center / width / height / angle。
+   - ROI 始终保存为 measurement/source pixel 坐标，浏览器窗口、CSS 和 canvas/image 尺寸不得影响正式 ROI。
+   - Live 模式 ROI 编辑完成后刷新最新 setup frame 并叠加同一 ROI；Freeze 模式只更新冻结帧 overlay。
+   - 保存/正式 run 的 measurement_definition 必须包含 `source = real_camera`、`measurement_coordinates = source_pixel`、当前 ROI、object_class、detector、width_mode 和 detector_config。
+   - 前端只保存和显示 ROI，不计算正式 A/B 或 distance。
+10. Real camera Setup 参数变化后的 frame refresh 规则：
+   - ROI 数值、object_class、detector、width_mode 和影响 detector preview 的 detector_config 调整完成后，Live 模式 debounce 刷新最新 frame。
+   - Freeze 模式不自动换掉冻结帧，只在冻结帧上更新 ROI / 参数 overlay，并提示用户用 Capture new setup frame 或 Resume live 查看最新画面。
+   - target_temperature_celsius、temperature_power_percent、温控动作和 AFAS 后处理参数不得触发真实相机 frame refresh。
+11. Real camera Setup 可选 Probe current frame：
+   - Live 模式先抓取一张最新 setup frame 再 probe。
+   - Freeze 模式使用冻结帧或最近一次 setup frame，不自动换成新相机帧。
+   - Probe 请求必须发送当前 `measurement_definition` 到 backend。
+   - Backend 返回 `DetectionResult` 后，Setup 显示 ROI、A/B overlay、distance_px、detection_status、rejected_reason 和 debug_artifacts。
+   - Probe 结果仅用于 Setup 调试，不写入正式 run manifest；INVALID 必须如实显示，不得伪造正常 A/B。
+12. Run 页面只负责正式测试：
+   - 显示 Setup 保存的 source、ROI、object_class、detector、width_mode、max_frames_per_run、target_fps、target_temperature_celsius 和 temperature_power_percent。
+   - Offline dataset source 保持现有 live offline run 流程。
+   - Real camera source 点击 Run 时调用 `/api/real-camera-runs`，请求体中的 `measurement_definition` 必须完整来自 Setup 保存的定义。
+   - Real camera run 结果画布必须显示 `/api/runs/{run_id}/frames/{frame_index}.png`，标题为 `Real camera run · {run_id} · frame {frame_index}`。
+   - Run 页面不得承担 ROI 编辑职责；如需修改 ROI，必须回到 Setup。
+13. Setup 页面 Temperature Control 区域包含 Read temp、Ports、target_temperature_celsius、temperature_power_percent、source/status、当前温度值和 unavailable/error 状态；温控参数变化、Read temp、Ports 均不得触发真实相机 frame refresh。
+```
+
+#### Actual
+
+修复前 Setup 没有 Source 入口，也不会自动触发真实相机 preview。真机 preview 状态分散在 Run 页，错误只会进入全局字符串错误提示。
+
+#### Fix summary
+
+1. `backend/src/yyt1771_g3/api/main.py`
+   - `/api/camera/preview` 响应增加顶层 `model`、`serial_number`、`ip`、`pixel_format` 字段，仍从 lazy `HikMvsCameraSource` 返回的 `camera_meta` 派生。
+   - `/api/camera/preview` 响应增加 `image_data_url`，Setup 能显示与 metadata 同一次抓取对应的 frame，避免 metadata 与画面来自两次相机读取。
+   - 新增 `/api/camera/setup-probe`：当请求不带 `frame_png_data_url` 时抓取最新真实相机 frame 并 probe；当请求带 `frame_png_data_url` 时直接使用该 setup frame probe，不打开相机。
+   - `/api/camera/setup-probe` 返回 `DetectionResult`、ROI/A/B overlay payload、camera metadata 和同一帧 `image_data_url`，不写 run manifest。
+   - 未改变 SDK 加载路径；仍通过 hardware config / env profile 读取，不硬编码本机 MVS 路径。
+
+2. `backend/src/yyt1771_g3/services/probe_service.py`
+   - 新增 `probe_setup_frame()`，复用正式 backend detector 对给定 frame array + measurement_definition 执行 Setup probe。
+   - Probe 结果保持 `DetectionResult` 的 VALID/INVALID 契约：INVALID 不携带正式 A/B 和 distance。
+
+3. `frontend/src/api/client.ts`
+   - `CameraPreviewResponse` 补齐 Setup 需要显示的相机 metadata 字段。
+   - `CameraPreviewResponse` 增加可选 `image_data_url`。
+   - 新增 `probeRealCameraSetupFrame()`，向 `/api/camera/setup-probe` 发送 `measurement_definition`，Freeze 时额外发送当前 setup frame 的 PNG data URL、timestamp 和 camera_meta。
+   - 新增 `ApiError` / `ApiErrorDetail`，保留 FastAPI 结构化 `detail`，便于 Setup 显示 `camera_status`、`message` 和 `details`。
+   - `MeasurementDefinition` 增加 `source: offline_dataset | real_camera`，使 Setup 保存的数据源进入正式 run 请求体。
+
+4. `frontend/src/setupSources.ts`
+   - 新增 `SETUP_SOURCE_OPTIONS`：`Offline dataset` / `Real camera`。
+   - 新增 real-camera preview measurement helper：首次切到真机时按 preview frame shape 初始化 ROI；后续刷新不重置用户已调好的真机 ROI。
+   - 新增 `createDefaultRoiForShape()`，离线素材和真实相机的 New / reset ROI 使用同一套 source-shape 规则。
+   - 新增 preview refresh status label。
+   - 新增 Real camera Setup preview 状态机：`live` / `frozen`、低频轮询判定、冻结 timestamp、shape 变化检测和 ROI 重新确认状态。
+   - 新增 `shouldRefreshRealCameraFrameAfterRoiCommit()`，只在 Setup + Real camera + Live 模式的 ROI commit 后触发 frame refresh。
+   - 新增 preview-affecting change 分类：ROI / object_class / detector / width_mode / detector preview config 会在 Live 模式刷新；温控和 AFAS 后处理参数不会刷新。
+   - 新增 Frozen frame 提示文案 helper。
+   - Real camera preview measurement refresh 保留已有 `width_mode`，避免参数刷新时静默覆盖用户选择。
+   - 新增 `buildRunSetupSummary()`，Run 页面 summary 直接由 Setup 保存的 `measurement_definition` 派生，不在 Run 页面重建 ROI 或默认参数。
+   - 新增 `runResultMatchesSetupSource()`，避免 source 切换后显示不匹配的旧 run 结果。
+
+5. `frontend/src/main.tsx`
+   - Setup 页面新增 Source segmented control。
+   - 当 source 为 `real_camera` 且进入 Setup 且 preview mode 为 Live 时，以 1 fps UI preview 频率自动调用 `previewRealCamera()`。
+   - Real camera Setup 显示 preview 状态、metadata、frame shape、timestamp、refresh status 和结构化错误；可手动 Refresh preview。
+   - Real camera preview 只作为 Setup 选框/调参画布，不显示 probe A/B overlay，也不创建正式 run 数据。
+   - Real camera Setup 新增 Live / Freeze 控制：Freeze 固定当前画面并停止自动刷新，Resume live 恢复低频刷新，Capture new setup frame 在 Frozen 状态也可抓取最新帧并保持 ROI。
+   - 如果 Live/Refresh 后 frame shape 与上一帧不同，Setup 显示 ROI 需确认的结构化提示，用户确认前不静默视为安全 ROI。
+   - 点击左侧 offline dataset 会切回 `offline_dataset` source，离线 Setup / Probe 流程保持原路径。
+   - Offline dataset 和 Real camera 共用同一个 `FrameCanvas` ROI 编辑器；真实相机 preview 图像上可移动、缩放、旋转 ROI。
+   - `FrameCanvas` 增加 ROI commit 回调：拖拽中只更新 overlay/ROI 数值，pointer up 后才在 Real camera Live 模式触发最新 frame refresh；Freeze 模式不自动刷新。
+   - Measurement ROI 面板新增 `New / reset ROI`，按当前 source frame shape 生成 source-pixel ROI，并继续显示 center / width / height / angle。
+   - Real camera measurement 更新时同步内部 measurement ref，避免 Live 模式 ROI commit 后刷新 frame 时发送旧 ROI。
+   - 新增 Detector Setup 面板：object_class、detector、width_mode、min_component_area_px、envelope_window_px、envelope_step_px、mask_open_kernel_px、mask_close_kernel_px、mask_dilate_kernel_px。
+   - ROI 数值框和 Detector Setup 数值框用 blur / Enter 作为调整完成时机；连续 detector_config 输入通过 500 ms debounce 合并，避免频繁打开相机。
+   - Freeze 时清理 pending debounce，并忽略 Freeze 后才返回的旧 Live preview 响应，防止冻结帧被晚到的自动刷新替换。
+   - Temperature Control 面板继续只更新温控字段，不触发真实相机 preview refresh。
+   - Real camera Setup 状态面板新增 `Probe current frame`。
+   - Live Probe 调用 `/api/camera/setup-probe` 让 backend 抓取最新 frame 并返回同一 frame 的 DetectionResult / image_data_url。
+   - Freeze Probe 将当前 setup frame 的 PNG data URL 随 `measurement_definition` 发给 backend，避免在冻结状态下偷偷换成新相机帧。
+   - Real camera Setup 显示 Probe Result：frame timestamp、detection_status、distance_px、rejected_reason 和 debug_artifacts 数量；展开 diagnostics 可查看完整 response，包括 ROI、DetectionResult 和 debug_artifacts。
+   - Real camera FrameCanvas 复用离线素材同一个 ROI/A/B/debug overlay；只显示当前 source 匹配的 probe 结果，preview 自动刷新会清除旧 probe，避免 stale A/B overlay 贴到新 frame。
+   - Run 页面 mode 改为由 Setup source 派生：`offline_dataset` 显示 Live Offline Run 并执行 live offline run，`real_camera` 显示 Real Camera Run 并执行正式 real camera run。
+   - Run 页面移除旧的手动 Real Camera Preview 面板和 preview frame；Run 只消费 Setup 保存的 measurement definition。
+   - Run 页面新增 Setup Summary，显示 Source、ROI center / width / height / angle、object_class、detector、width_mode、max_frames_per_run、target_fps、target_temperature_celsius、temperature_power_percent。
+   - 切换 Setup source 时清理旧 probe / runResult / liveRun，防止 Offline dataset frame 或旧 real-camera run 结果残留在当前 source 下。
+   - Real camera run 完成后，右侧只读 `FrameCanvas` 使用 `runFrameImageUrl(run_id, frame_index)` 指向 `/api/runs/{run_id}/frames/{frame_index}.png`，标题显示 `Real camera run · {run_id} · frame {frame_index}`，overlay / A/B / distance / temperature / sync status 均来自 backend run result。
+   - Setup Temperature Control 新增 Read temp / Ports 操作、温控 source/status/current/error 显示和结构化 unavailable 展开区；target/power 仍写入 Setup `measurement_definition.detector_config`。
+   - Run 页面移除温控 Read temp / Ports 面板，Run 只消费 Setup summary 和 backend run result。
+
+6. `backend/src/yyt1771_g3/core/enums.py`, `backend/src/yyt1771_g3/core/models.py`
+   - 新增 `MeasurementSource` 枚举。
+   - `MeasurementDefinition` 增加 `source` 字段，默认 `offline_dataset`，兼容旧离线请求；real camera run 可显式保存并回传 `source = real_camera`。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py::test_camera_preview_endpoint_returns_setup_metadata
+Result: PASS
+
+npm test -- tests/setupSources.test.mjs
+Result: PASS, 23 tests passed.
+
+npm test -- tests/setupSources.test.mjs tests/roiCoordinates.test.mjs
+Result: PASS, 24 tests passed.
+
+npm test -- tests/apiClientUrls.test.mjs
+Result: PASS, 24 tests passed.
+
+npm test -- tests/apiClientUrls.test.mjs tests/setupSources.test.mjs tests/roiCoordinates.test.mjs
+Result: PASS, 24 tests passed.
+
+npm run build
+Result: PASS
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py::test_real_camera_run_endpoint_passes_temperature_controller_and_profile
+Result: PASS
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py backend/tests/unit/test_camera_lazy_import.py
+Result: PASS, 12 tests passed.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py
+Result: PASS, 3 tests passed.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py backend/tests/integration/test_camera_api.py backend/tests/unit/test_camera_lazy_import.py
+Result: PASS, 15 tests passed.
+
+git diff --check
+Result: PASS
+
+npm test -- tests/setupSources.test.mjs
+Result: PASS, 26 tests passed.
+
+npm test -- tests/apiClientUrls.test.mjs tests/setupSources.test.mjs tests/roiCoordinates.test.mjs
+Result: PASS, 27 tests passed.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py backend/tests/unit/test_camera_lazy_import.py
+Result: PASS, 12 tests passed.
+
+npm run build
+Result: PASS
+
+git diff --check
+Result: PASS
+
+rg -n "/Users/lulingfeng|MVS_inner_expand|patched_runtime_dlopen|MvImport" backend/src frontend/src backend/tests frontend/tests
+Result: PASS, only `backend/tests/unit/test_camera_lazy_import.py` references temporary test `MvImport`.
+
+npm test -- tests/setupSources.test.mjs
+Result: PASS, 28 tests passed.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_real_camera_run_service.py::test_real_camera_run_best_effort_temperature_startup_attempts_all_controls
+Result: PASS
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py backend/tests/unit/test_analysis_service.py
+Result: PASS, 18 tests passed.
+
+npm run build
+Result: PASS
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-07
+- Browser: Playwright CLI Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/` for browser flow and latest direct `/api/camera/preview` check; earlier new-code preview check also ran against `http://127.0.0.1:8034/api/camera/preview`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps:
+  1. Open Setup page.
+  2. Confirm Source control shows `Offline dataset` and `Real camera`.
+  3. Confirm default Offline dataset source lists `golden_a_20260522_dev_lab`, displays frame 1, and keeps Frame / Probe controls.
+  4. Click `Real camera`.
+  5. Confirm browser automatically issues `/api/camera/preview`.
+  6. Confirm Setup shows `camera_status`, `model`, `serial_number`, `ip`, `pixel_format`, frame shape, timestamp, and preview refresh status.
+  7. Because current SDK/runtime is unavailable, confirm structured error panel appears and the preview placeholder shows the error without breaking the page.
+  8. Click `Offline dataset` and confirm offline frame 1, Frame / Probe controls, dataset status, and ROI controls return.
+  9. Select `Real camera`, then open Run.
+  10. Confirm Run shows `Real Camera Run`, `Setup source = Real camera`, `Source ID = real_camera`, `Start frame = Live`, and `Start real camera run`.
+  11. Confirm Run has no manual Preview button and no preview frame figure; Setup-only preview state is not shown in Run.
+  12. Open Setup again while source is still Real camera and confirm Setup auto-refreshes `/api/camera/preview` and shows the structured unavailable preview state.
+  13. Switch back to `Offline dataset`, open Run, and confirm Run shows `Live Offline Run`, `Setup source = Offline dataset`, `Source ID = golden_a_20260522_dev_lab`, and `Start full offline run`.
+- Expected: Real camera source auto-starts preview; unavailable camera shows structured error; offline dataset flow remains usable.
+- Actual:
+  - `/api/camera/preview` was called automatically after selecting `Real camera`.
+  - Current browser backend returned `503` with `camera_status = unavailable` and message `Hik MVS SDK is not available; offline playback and live offline run remain available`.
+  - Setup displayed `camera_status = unavailable`, metadata fields, `Preview refresh = Camera unavailable`, structured JSON error, and preview placeholder.
+  - Run displayed formal `Real Camera Run` derived from Setup source, with `Start real camera run`; page text/button inspection found no Preview action and no preview frame figure.
+  - Returning from Real Camera Run to Setup kept Real camera source and auto-called preview again.
+  - Switching back to `Offline dataset` restored `golden_a_20260522_dev_lab` frame 1 and offline Frame / Probe controls.
+  - Offline Run displayed formal `Live Offline Run`, `Source ID = golden_a_20260522_dev_lab`, and `Start full offline run`.
+  - Direct `/api/camera/preview` check on port `8020` returned the same structured `503`; earlier port `8034` check also returned `503`. The current SDK/runtime is unavailable in this environment, so true hardware-frame display could not be verified here.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0045_setup_real_camera_source_unavailable.png`
+  - `output/playwright/p0045_setup_offline_source_after_realcamera.png`
+  - `output/playwright/p0045_run_real_camera_source_no_preview_button.png`
+  - `output/playwright/p0045_run_offline_source_formal_run.png`
+
+#### Browser retest log — Live / Freeze setup preview controls
+
+- Retest date: 2026-06-07
+- Browser: Playwright CLI Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Reload Setup and confirm Offline dataset still shows `golden_a_20260522_dev_lab` frame 1.
+  2. Click `Real camera`.
+  3. Confirm Live mode is selected, `Live refresh = 1 fps UI preview`, and `/api/camera/preview` is called.
+  4. With current hardware/SDK unavailable, confirm structured error is shown and Freeze is disabled because no current frame exists.
+  5. Confirm unavailable status stops automatic 1 fps retry spam; browser console showed one 503 for the real backend preview request after the fresh reload/click.
+  6. Install a Playwright route that returns mocked `/api/camera/preview` JSON frames and mocked preview image content, then click `Refresh frame`.
+  7. Confirm metadata/timestamp/frame shape update in Setup and ROI overlay remains on the current frame.
+  8. Click `Freeze` and confirm `Preview mode = Frozen frame`, `Frozen timestamp` equals the displayed frame timestamp, and `Live refresh = Paused`.
+  9. While frozen, click `Capture new setup frame` and confirm timestamp updates, mode remains Frozen, and existing ROI values are not cleared.
+  10. Click `Resume live` and confirm mode returns to Live, Frozen timestamp clears, and ROI remains.
+  11. In the mocked flow, return a changed frame shape and confirm Setup shows `Frame shape changed ... confirm ROI before formal run`; click `Confirm ROI` and confirm the warning clears.
+- Expected: Real camera Setup supports low-rate Live preview, Freeze, Resume live, frozen Refresh/Capture, metadata/timestamp display, and ROI shape-change confirmation without turning preview into a formal run.
+- Actual:
+  - Real backend no-hardware path displayed Live controls, structured unavailable error, disabled Freeze, enabled Refresh frame, and did not affect offline dataset flow.
+  - Browser-mocked frame flow displayed `camera_status = ok`, model/serial/ip/pixel_format, frame shape, timestamp, Live/Frozen state, frozen timestamp, paused live refresh, Capture new setup frame, Resume live, and shape-change ROI confirmation.
+  - Existing ROI numeric controls remained populated after frozen Capture new setup frame.
+  - The mocked preview-image route had one earlier image-route console error during setup of the mock, but the state/metadata/ROI flow was verified through DOM snapshots; this is not a real backend or app runtime error.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0045_setup_real_camera_live_unavailable_freeze_disabled.png`
+  - `output/playwright/p0045_setup_real_camera_live_freeze_mocked_frame_flow.png`
+
+#### Browser retest log — Real camera shared ROI editor
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5174/`
+- Backend URL: `http://127.0.0.1:8033/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps:
+  1. Start backend on `8033` and frontend on CORS-allowed `5174` with `VITE_G3_API_BASE=http://127.0.0.1:8033`.
+  2. Open Setup and click `Real camera`.
+  3. Confirm real backend no-hardware path shows structured unavailable state and keeps Offline dataset list available.
+  4. Install Playwright routes for `/api/camera/preview` and `/api/camera/preview.png` that return mocked real-camera frames with shape `1364 x 2048`.
+  5. Click `Refresh frame` and confirm Setup shows `camera_status = ok`, model, serial_number, ip, pixel_format, frame shape, timestamp and ROI overlay on the Real camera preview frame.
+  6. Resize browser viewport from `1280 x 900` to `960 x 700` and back; confirm ROI center/width/height/angle source-pixel values remain unchanged.
+  7. Drag shared ROI editor move handle, resize handle and rotate handle on the Real camera frame.
+  8. Confirm Live-mode ROI commit refreshes timestamp after pointer up, while drag does not require per-mousemove preview refresh.
+  9. Click `New / reset ROI` and confirm default source-pixel ROI returns to center `1024, 682`, size `1269.76 x 381.92`, angle `0`.
+  10. Click `Freeze`, drag ROI on the frozen frame and confirm ROI values change while `Timestamp` and `Frozen timestamp` stay fixed.
+  11. Click `Capture new setup frame` while Frozen and confirm timestamp updates while current ROI values remain.
+  12. Open Run from the current Real camera Setup state, intercept `/api/real-camera-runs`, and assert the request body uses the Setup measurement_definition with `source = real_camera`, `measurement_coordinates = source_pixel`, detector/object/width_mode/config and the current ROI.
+- Expected: Real camera Setup uses the same ROI editor as Offline dataset; ROI is source-pixel stable across display sizes; Live commit refreshes latest setup frame; Frozen editing does not refresh until Capture new setup frame; formal run consumes Setup measurement_definition and does not use a Run-page preview.
+- Actual:
+  - Real no-hardware path displayed `camera_status = unavailable`, metadata fields, `Preview refresh = Camera unavailable`, structured JSON error and an unavailable preview placeholder; Offline dataset rail remained usable.
+  - Mocked Real camera frame displayed with shared ROI overlay and editable move/resize/rotate handles.
+  - ROI values stayed unchanged across viewport resize: center `1024, 682`, size `1269.76 x 381.92`, angle `0`.
+  - Live move/resize/rotate updated ROI source-pixel values and Live move commit advanced timestamp from `1779445963000` to a later mocked timestamp.
+  - `New / reset ROI` restored the source-pixel default ROI.
+  - Frozen ROI move changed ROI to center `957.46, 726.36`, size `1269.76 x 381.92`, angle `0`; timestamp and frozen timestamp stayed `1779446036000`.
+  - Frozen `Capture new setup frame` advanced timestamp/frozen timestamp to `1779446037000` and preserved the ROI.
+  - Intercepted `/api/real-camera-runs` request contained `measurement_definition.source = real_camera`, `measurement_coordinates = source_pixel`, ROI `{center_x: 957.46, center_y: 726.36, width: 1269.76, height: 381.92, angle_deg: 0}`, `detector = BalloonEnvelopeDetector`, and `width_mode = max_width`.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0045_setup_real_camera_unavailable.png`
+  - `output/playwright/p0045_setup_real_camera_roi_editor_mocked_live.png`
+  - `output/playwright/p0045_setup_real_camera_roi_editor_mocked_frozen.png`
+
+#### Browser retest log — Real camera setup parameter refresh rules
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5174/`
+- Backend URL: `http://127.0.0.1:8033/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Start backend on `8033` and frontend on CORS-allowed `5174` with `VITE_G3_API_BASE=http://127.0.0.1:8033`.
+  2. Open Setup, select `Real camera`, then install Playwright routes for `/api/camera/preview` and `/api/camera/preview.png` with mocked frame shape `1364 x 2048`.
+  3. Click `Refresh frame` and confirm live real-camera setup frame, metadata and ROI overlay are displayed.
+  4. Wait for one normal 1 fps Live poll, then change `Min component` and commit with Enter.
+  5. Confirm timestamp advances from `1779448004000` to `1779448005000`, proving preview-affecting detector_config changes refresh the latest frame in Live mode.
+  6. Change `Envelope window`, `Envelope step`, and `Mask open` in quick succession; confirm the debounce collapses the burst to 1 extra preview request.
+  7. Change `Object class` to `C_BUNDLE_ENVELOPE`; confirm timestamp advances from `1779448008000` to `1779448009000` and detector defaults to `BundleEnvelopeDetector`.
+  8. Click `Freeze`; confirm page shows `Preview mode = Frozen frame`, `Live refresh = Paused`, and frozen-frame guidance.
+  9. While Frozen, change `Mask close`, `Target °C`, and `Power %`.
+  10. Confirm preview request count remains `9`, timestamp remains `1779448009000`, and Frozen frame is not replaced.
+- Expected: Live mode refreshes latest frame only for ROI/detector-preview-affecting changes, with debounce/apply timing; Freeze mode updates parameters on the frozen frame without auto-refresh; temperature settings do not trigger camera refresh.
+- Actual:
+  - `Min component` refresh: preview count `4 -> 5`, timestamp `1779448004000 -> 1779448005000`.
+  - Detector config burst refresh: `Envelope window`, `Envelope step`, and `Mask open` caused `burstPreviewRequests = 1`.
+  - `Object class` switch refreshed timestamp `1779448008000 -> 1779448009000` and set detector to `BundleEnvelopeDetector`.
+  - Frozen state displayed the guidance: `Frozen frame: ROI and detector parameters update on the frozen image. Use Capture new setup frame or Resume live to view the latest camera frame.`
+  - Frozen `Mask close` plus temperature target/power edits kept preview count `9 -> 9` and timestamp `1779448009000 -> 1779448009000`.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0045_setup_real_camera_param_refresh_frozen.png`
+
+#### Browser retest log — Real camera setup probe current frame
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5174/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Start backend on `8034` and frontend on `5174` with `VITE_G3_API_BASE=http://127.0.0.1:8034`.
+  2. Install Playwright routes for `/api/camera/preview` and `/api/camera/setup-probe` to provide deterministic mocked Real camera setup frames and DetectionResult payloads.
+  3. Open Setup, select `Real camera`, and confirm mocked preview metadata appears.
+  4. Click `Probe current frame` in Live mode.
+  5. Confirm the setup-probe request sends `measurement_definition.source = real_camera` and does not upload `frame_png_data_url`, so backend is responsible for grabbing the latest frame.
+  6. Confirm Setup displays backend `VALID`, `distance_px = 50.00 px`, A/B overlay data, and debug_artifacts.
+  7. Click `Freeze`, then click `Probe current frame`.
+  8. Confirm the setup-probe request sends `measurement_definition.source = real_camera` plus current setup frame `frame_png_data_url`.
+  9. Return mocked backend `INVALID` with `rejected_reason = fixture no target`.
+  10. Confirm Setup displays `INVALID` and `fixture no target` without fabricating A/B/distance.
+- Expected: Real camera Setup has a Probe current frame action; Live probe captures latest frame through backend; Freeze probe uses the frozen/setup frame; every probe sends measurement_definition; DetectionResult, rejected_reason and debug_artifacts are displayed only as Setup diagnostics and are not written to a run manifest.
+- Actual:
+  - Preview requests: `2`.
+  - Setup probe requests: `2`.
+  - Live probe request had `measurement_definition.source = real_camera` and `liveHasFrameUpload = false`.
+  - Frozen probe request had `measurement_definition.source = real_camera` and `frozenHasFrameUpload = true`.
+  - Live probe UI displayed `VALID` and `50.00 px`.
+  - Frozen probe UI displayed `INVALID` and `fixture no target`.
+  - The browser flow did not call `/api/real-camera-runs`; probe remained a Setup-only diagnostic action.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0045_setup_real_camera_probe_invalid.png`
+
+#### Browser retest log — Formal Run consumes Setup measurement definition
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5174/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: `golden_a_20260522_dev_lab` plus mocked `real_camera` run response
+- Page: Setup / Run
+- Steps:
+  1. Start backend on `8034` and frontend on `5174` with `VITE_G3_API_BASE=http://127.0.0.1:8034`.
+  2. Install Playwright routes for `/api/camera/preview`, `/api/real-camera-runs`, and `/api/runs/{run_id}/frames/3.png`.
+  3. Open Setup, select `Real camera`, and adjust/save setup values including ROI, `max_frames_per_run = 160`, `live_offline_fps = 8`, `target_temperature_celsius = 42.5`, and `temperature_power_percent = 55`.
+  4. Open Run and confirm Setup Summary shows Source, ROI center/size/angle, object_class, detector, width_mode, max_frames_per_run, target_fps, target_temperature_celsius, and temperature_power_percent from the saved Setup measurement.
+  5. Click `Start real camera run`.
+  6. Inspect intercepted `/api/real-camera-runs` request body.
+  7. Confirm the displayed frame title and image source use the backend run artifact, not the currently selected offline dataset frame.
+  8. Confirm Run canvas is read-only with no ROI editing handles, and offline source still shows the existing Live Offline Run flow when switching back to `Offline dataset`.
+- Expected: Run page is a formal execution page only; real-camera run posts exactly the Setup `measurement_definition`; right-side frame canvas displays `/api/runs/{run_id}/frames/{frame_index}.png` with backend overlay/status; Run does not expose ROI editing.
+- Actual:
+  - Setup Summary displayed `Source = Real camera`, `Source ID = real_camera`, ROI fields, `Object class`, `Detector`, `Width mode`, `max_frames_per_run = 160`, `target_fps = 8`, `target_temperature_celsius = 42.50 °C`, and `temperature_power_percent = 55 %`.
+  - Intercepted `/api/real-camera-runs` request body contained `measurement_definition.source = real_camera`, `measurement_definition.measurement_coordinates = source_pixel`, `target_temperature_celsius = 42.5`, `temperature_power_percent = 55`, `max_frames = 160`, and `target_fps = 8`.
+  - Run result displayed `Real camera run · run-real_camera-formal-fixture-2 · frame 3`.
+  - Browser requested `/api/runs/run-real_camera-formal-fixture-2/frames/3.png`; the page had one run-frame image element and no offline dataset frame fallback.
+  - Backend-provided result fields displayed `distance = 66.00 px`, `temperature = 23.40 °C`, and `sync = TEMP_SYNC_OK`.
+  - `FrameCanvas` on Run was read-only; ROI edit handles count was `0`.
+  - Switching back to `Offline dataset` showed `Source = Offline dataset`, `Source ID = golden_a_20260522_dev_lab`, `Live Offline Run`, and `Start full offline run`.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0045_run_real_camera_setup_summary_formal_result.png`
+
+#### Browser retest log — Setup temperature control does not refresh real-camera frame
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5174/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: `golden_a_20260522_dev_lab` plus mocked `real_camera` preview/run and mocked LU92XX unavailable response
+- Page: Setup / Run
+- Steps:
+  1. Install Playwright routes for successful `/api/camera/preview`, unavailable `/api/temperature/status`, empty `/api/temperature/serial-ports`, successful `/api/real-camera-runs`, and `/api/runs/{run_id}/frames/1.png`.
+  2. Select `Real camera` in Setup and confirm Temperature Control shows `/dev/cu.usbserial-1210 not found`.
+  3. Freeze the setup frame.
+  4. Click `Read temp`, click `Ports`, edit `target_temperature_celsius = 42.5`, and edit `temperature_power_percent = 55`.
+  5. Confirm camera preview request count does not increase after the temperature actions.
+  6. Open Run, start real-camera run, and inspect the request body/result display.
+- Expected: Temperature controls live in Setup; unavailable temperature controller is visible there; temperature actions do not refresh the real-camera frame; Run uses Setup target/power and has no Read temp / Ports controls.
+- Actual:
+  - Setup Temperature Control displayed `Status = unavailable`, `Current = None`, `Ports = None`, `Port count = 0`, and structured `/dev/cu.usbserial-1210 not found`.
+  - `previewRequests = 2`, `previewAfterFreeze = 2`, `previewAfterTempActions = 2`.
+  - Run request included `measurement_definition.detector_config.target_temperature_celsius = 42.5` and `temperature_power_percent = 55`.
+  - Run displayed `TEMP_SYNC_MISSING`; formal `analysis_result.temperature_distance` was empty; Run page text did not contain `Read temp`.
+  - Result frame used `/api/runs/run-real_camera-temp-setup-fixture/frames/1.png?max_width=1024`; ROI edit handle count was `0`.
+- Result: PASS for mocked Setup/Run flow; true LU92XX chain remains blocked under P-0020.
+- Evidence:
+  - `output/playwright/p0045_setup_temperature_control_unavailable.png`
+  - `output/playwright/p0045_setup_temperature_control_unavailable_run_formal.png`
+
+#### Browser retest log — Real hardware Setup→Run full flow
+
+- Retest date: 2026-06-08
+- Browser: Playwright MCP Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8032/`
+- Dataset: `real_camera`
+- Page: Setup / Run
+- Steps:
+  1. Open `http://127.0.0.1:5177/`, enter Setup, and select `Source = Real camera`.
+  2. Confirm Setup automatically displays a real Hik camera frame and metadata.
+  3. Click `Freeze`, confirm frozen mode and frozen timestamp, then create/reset and adjust ROI on the frozen frame.
+  4. Click `Capture new setup frame` while frozen and confirm the latest frame is fetched while ROI remains in source-pixel coordinates.
+  5. Change detector parameter `Min component`; confirm Frozen frame guidance and no automatic frame replacement.
+  6. Change `target_temperature_celsius` / `temperature_power_percent`, click `Read temp` and `Ports`, and confirm no camera preview refresh.
+  7. Open Run and confirm Setup Summary is populated from the saved Setup `measurement_definition`.
+  8. Click `Start real camera run`, wait for completion, inspect POST `/api/real-camera-runs`, inspect `GET /api/runs/run-real_camera-20260607T175434488916Z`, and verify the displayed run-frame URL.
+- Expected: Setup Real camera behaves as a formal source with Live/Frozen setup frames, source-pixel ROI, detector refresh rules, non-refreshing temperature controls, and formal Run consuming exactly the Setup `measurement_definition`.
+- Actual:
+  - Setup auto-preview displayed `camera_status = ok`, model `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`, `pixel_format = mono8`, frame shape `1364 × 2048`, timestamp, and preview refresh status.
+  - Freeze displayed `Preview mode = Frozen frame`, `Frozen timestamp = 1780854696122`, and `Live refresh = Paused`.
+  - ROI was adjusted through Setup controls to source-pixel `center_x = 960`, `center_y = 700`, `width = 900`, `height = 300`, `angle_deg = -4.5`.
+  - Frozen `Capture new setup frame` advanced timestamp to `1780854783058` and preserved the ROI unchanged.
+  - Frozen detector edit and all temperature actions produced `0` `/api/camera/preview` requests; the page displayed the Frozen frame guidance.
+  - Temperature Control displayed LU92XX unavailable and showed only `/dev/cu.Bluetooth-Incoming-Port` and `/dev/cu.debug-console`; `/dev/cu.usbserial-1210` was absent.
+  - Run Setup Summary showed Real camera source, ROI `960.00, 700.00 / 900.00 × 300.00 / -4.50°`, `A_BALLOON_ENVELOPE`, `BalloonEnvelopeDetector`, `max_width`, `max_frames_per_run = 160`, `target_fps = 8`, `target_temperature_celsius = 42.50 °C`, and `temperature_power_percent = 55 %`.
+  - Intercepted `/api/real-camera-runs` request body contained Setup `measurement_definition.source = real_camera`, `measurement_coordinates = source_pixel`, the same ROI, `min_component_area_px = 95`, `target_temperature_celsius = 42.5`, and `temperature_power_percent = 55`.
+  - Run result title displayed `Real camera run · run-real_camera-20260607T175434488916Z · frame 160`; run-frame image source was `/api/runs/run-real_camera-20260607T175434488916Z/frames/160.png?max_width=1024`, not an offline dataset frame.
+  - `run_manifest.measurement_definition.roi` matched Setup; 160 `FrameRecord`, 160 `TemperatureRecord`, and 160 `DetectionResult` were saved.
+  - `analysis_result.temperature_distance` had `0` points; no `TEMP_SYNC_MISSING` / `TEMP_SYNC_STALE` point entered the formal temperature-distance / Af curve.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0045_real_camera_setup_live_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_before_roi_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_roi_adjusted_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_refresh_roi_kept_20260608.png`
+  - `output/playwright/p0045_real_camera_setup_frozen_params_temperature_20260608.png`
+  - `output/playwright/p0045_real_camera_run_setup_summary_before_start_20260608.png`
+  - `output/playwright/p0045_real_camera_run_result_20260608.png`
+  - `output/hardware/p0045_real_camera_setup_run_summary_20260608.json`
+  - `output/runs/run-real_camera-20260607T175434488916Z/run_manifest.json`
+  - `output/runs/run-real_camera-20260607T175434488916Z/analysis_result.json`
+
+#### Remaining issues
+
+真实 Hik 相机 Setup→Run 已通过本次真实浏览器复测。P-0045 的 Setup source / preview / Freeze / ROI / 参数刷新 / Run formal measurement_definition 范围内无剩余阻塞；LU92XX 控制器未连接导致的完整温控闭环仍由 P-0020 以 `BLOCKED` 状态跟踪。
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0046 — Run Live Trend Y 轴按 latest window 局部 min/max 自动缩放，放大 1 px 检测抖动
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/curves.ts`, `frontend/src/main.tsx`, `frontend/tests/curveSpecs.test.mjs`
+- Found date: 2026-06-07
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户指出 Run 页 Live Trend 的 Y 轴使用当前 latest window 内 raw/reference 数据的局部最小值和最大值自动缩放。对于 G3 的 `source_pixel` max-width 距离数据，1-2 px 的视觉检测抖动是正常量级；如果 Y 轴贴着局部 min/max 缩放，微小抖动会被放大成整张图的剧烈波动，误导操作员判断样品曲线异常。
+
+#### Expected
+
+```text
+1. Run Live Trend Y 轴不得直接按 latest window 局部噪声贴边缩放。
+2. Y 轴应使用最小显示跨度，默认不低于 40 px。
+3. 运行中的 Latest window 应使用 sticky expand 策略：
+   - 初始化时以有效 formal/display 数据范围为中心，保证最小跨度。
+   - 数据接近 guard band 时扩展显示范围。
+   - 运行中不因窗口内数据范围缩小而频繁收缩。
+4. 若后端已有 smoothed/grouped formal curve，Y 轴以 formal curve 为主要缩放来源；raw/reference scatter 不应单独拉伸 formal 曲线比例尺。
+5. 前端不得重新计算正式 A/B、distance、temperature sync、temperature bin、平滑或 AFAS；只改变展示比例尺。
+```
+
+#### Actual
+
+修复前 Run trend Y 轴由当前可见点的 `paddedRange(min, max)` 直接生成。低温段 latest window 中距离只在约 `1018-1019 px` 或 `983-986 px` 附近抖动时，Y 轴会把 1-2 px 变化铺满图高，使 Live Trend 看起来像异常锯齿/大幅波动。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - 新增 `RunTrendYAxisRange`、`RunTrendYAxisOptions`、`RunTrendStickyYAxisOptions`。
+   - 新增 `buildRunTrendYAxisRange()`，对 Run trend Y 轴强制应用 `DEFAULT_RUN_TREND_Y_AXIS_MIN_SPAN_PX = 40`。
+   - 新增 `resolveRunTrendStickyYAxisRange()`，在运行中的 latest window 保持 sticky range，只有数据进入 guard band 或越界时才扩展，不随窗口噪声收缩。
+   - `buildRunTrendModel()` 输出 `dataYRange`，并在存在 backend smoothed/grouped formal curve 时用 formal 数据作为 Y 轴缩放来源，避免 raw/reference outlier 拉伸主曲线比例尺。
+
+2. `frontend/src/main.tsx`
+   - `RunTrendChart` 接收 `runId` 和 `isRunning`。
+   - 仅在 `isRunning && mode === "latest"` 时启用 sticky Y 轴。
+   - run id 切换时重置 sticky range；停止或切到 full run 时回到静态范围。
+   - 通过 `yAxis.rangeOverride` 将 sticky range 传入底层 SVG 模型，不改变后端 analysis payload。
+
+3. `frontend/tests/curveSpecs.test.mjs`
+   - 新增 regression：`run trend y axis keeps pixel jitter from filling the plot`。
+   - 新增 regression：`run trend sticky y axis expands near guards without shrinking during live updates`。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand --test-name-pattern "sticky y axis|run trend y axis"
+Result: PASS, 21 tests passed under the filtered command invocation.
+
+npm test -- --runInBand
+Result: PASS, 22 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run
+- Steps:
+  1. Open G3 frontend and select `golden_a_20260522_dev_lab`.
+  2. Open Run page and start Live Offline Run from frame 1.
+  3. During running Latest window, inspect `svg[aria-label="Run temperature-distance trend chart"]`.
+  4. Capture Y-axis tick labels, raw/reference point count, formal line point count, latest cursor label, SVG height, and font sizes.
+  5. Wait until backend smoothed formal line appears, then repeat SVG inspection and take screenshot.
+- Expected: Latest window still uses `Backend smoothed temperature-distance` when available; raw/reference points remain scatter; Y-axis tick span is at least 40 px and does not collapse to the 1-2 px local jitter range.
+- Actual:
+  - At frame `181`, latest raw distance was `986.00 px`; Y-axis tick labels were `970, 980, 990, 1000, 1010`, so visible tick span was `40 px`.
+  - Tick labels were `12px`; axis labels were `13px`; SVG chart height was `420px`.
+  - Latest window showed `80` raw/reference points and latest cursor label `frame 181 · 1.20°C · 986.0px`.
+  - At frame `444`, backend smoothed formal line was present with `6` line points; Y-axis tick labels remained `970, 980, 990, 1000, 1010`, span `40 px`.
+  - The chart caption remained `Backend smoothed temperature-distance`; active window was `Latest window`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0046_run_sticky_yaxis_live_latest.png`
+  - `output/playwright/p0046_run_sticky_yaxis_live_latest.json`
+  - `output/playwright/p0046_run_sticky_yaxis_live_latest_later.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0047 — Playwright 复测中点击 Stop 后 Run 页面仍显示 Running
+
+- Status: OPEN
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+在 P-0046 浏览器复测中，Live Offline Run 运行到约 frame `596` 后，Playwright 点击 Run 页 `Stop` 按钮，页面仍显示：
+
+```text
+Progress: 596 / 5,807
+Current frame: 596
+Running
+Stop
+```
+
+随后通过 DOM `button.click()` 再次触发 Stop，等待 6 秒后页面仍保持 `Running`，没有进入 `stopped` / partial run idle 状态。为避免继续占用 stream，最终关闭浏览器页断开连接。
+
+#### Expected
+
+```text
+点击 Stop 后，frontend AbortController 应立即中断 streaming fetch。
+页面应进入 stopped 状态，并等待或回填 partial run manifest / analysis result。
+Stop 后不应继续显示 Running。
+```
+
+#### Actual
+
+本次 Playwright MCP 复测中，Stop 点击未让页面状态退出 Running。该现象可能与自动化点击、stream abort 或 partial run 等待逻辑有关，尚未单独复现和定位。
+
+2026-06-08 P-0049 浏览器复测中再次观察到同类现象：`golden_a_20260522_dev_lab` full run 运行到约 frame `842` 后点击 `Stop`，等待 5 秒后页面仍继续增长到约 frame `919` 并显示 `Running / Stop`。本次未在 P-0049 中修复 Stop，后续仍需单独处理。
+
+#### Suspected cause
+
+待调查。可能相关路径包括：
+
+```text
+frontend/src/main.tsx::stopLiveOfflineRun()
+frontend/src/main.tsx::startLiveOfflineRun() abort catch 分支
+frontend/src/api/client.ts::streamLiveOfflineRun()
+backend/src/yyt1771_g3/services/live_offline_run_service.py::iter_live_offline_run_events()
+```
+
+#### Fix summary
+
+待实现。
+
+#### Tests run
+
+```bash
+尚未为 P-0047 单独运行测试。
+```
+
+#### Browser retest log
+
+- Retest date:
+- Browser:
+- OS:
+- Frontend URL:
+- Backend URL:
+- Dataset:
+- Page:
+- Steps:
+- Expected:
+- Actual:
+- Result: PASS / FAIL
+- Evidence:
+
+#### Final status
+
+OPEN
+
+
+---
+
+### P-0048 — Offline Probe 请求把前端 setup source 字段发给 backend，导致 422 extra_forbidden
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/api/client.ts`, `frontend/tests/apiClientUrls.test.mjs`, `frontend/tests/realCameraSetupRunRegression.test.mjs`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户在 Setup 页面点击 `Probe current frame` 后，页面顶部报错：
+
+```text
+422 Unprocessable Entity:
+{"detail":[{"type":"extra_forbidden","loc":["body","measurement_definition","source"],"msg":"Extra inputs are not permitted","input":"offline_dataset"}]}
+```
+
+此时页面使用 `golden_a_20260522_dev_lab` 离线模拟素材，前端内部 `MeasurementDefinition` 带有 `source: "offline_dataset"`，但当前 backend `/api/probe` 运行模型拒绝该额外字段。
+
+#### Expected
+
+```text
+1. Frontend 可在 UI 状态中保留 setup source，用于 Offline dataset / Real camera 页面分流。
+2. 发给 backend 的正式 measurement_definition 必须符合 backend 测量合同。
+3. UI-only 字段不得导致 /api/probe、/api/live-offline-runs、/api/live-offline-runs/stream、/api/camera/setup-probe 或 /api/real-camera-runs 422。
+4. 前端不得重新计算正式 A/B、distance、temperature sync 或 AFAS；只修正 API payload 序列化边界。
+```
+
+#### Actual
+
+修复前 `frontend/src/api/client.ts::probeFrame()`、`createLiveOfflineRun()`、`streamLiveOfflineRun()`、`probeRealCameraSetupFrame()` 和 `createRealCameraRun()` 都把前端 `MeasurementDefinition` 原样序列化为 `measurement_definition`。当 backend 模型不接受 `source` 时，Probe 直接返回 422，无法执行后端 detector。
+
+#### Suspected cause
+
+P-0045 引入 Setup Source 状态后，前端类型 `MeasurementDefinition` 增加了 `source` 字段；该字段用于 UI source 分流，但没有在 API client 边界清洗，导致 UI 状态泄漏到正式 backend measurement payload。
+
+#### Fix summary
+
+1. `frontend/src/api/client.ts`
+   - 新增 `backendMeasurementDefinition()`，从 outgoing measurement payload 中移除 UI-only `source` 字段。
+   - `probeFrame()`、`createLiveOfflineRun()`、`streamLiveOfflineRun()`、`probeRealCameraSetupFrame()`、`createRealCameraRun()` 统一使用清洗后的 backend measurement definition。
+   - 不改 ROI、detector、detector_config、temperature 参数，也不改后端正式计算逻辑。
+
+2. `frontend/tests/apiClientUrls.test.mjs`
+   - 新增红绿回归：`offline probe strips setup source before posting backend measurement definition`。
+   - 更新 real camera setup/run API 测试：确认 outgoing payload 不带 `source`，但 ROI 和 detector_config 保持不变。
+
+3. `frontend/tests/realCameraSetupRunRegression.test.mjs`
+   - 更新 real camera run request regression：source 不发给 backend，但保存的 ROI、detector、target temperature 和 power 参数不被覆盖。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand --test-name-pattern "offline probe strips"
+Initial RED result: FAIL, request body still had measurement_definition.source = "offline_dataset".
+
+npm test -- --runInBand --test-name-pattern "offline probe strips|real camera setup probe|real camera run posts|real camera run request"
+Result: PASS, 32 tests passed under filtered command invocation.
+
+npm test -- --runInBand
+Result: PASS, 32 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright, isolated headless profile
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Open G3 frontend.
+  2. Confirm `golden_a_20260522_dev_lab` is selected.
+  3. Click `Probe current frame`.
+  4. Capture `/api/probe` response and page state.
+- Expected: `/api/probe` returns 200; page does not show 422; Setup result shows backend detection status and distance.
+- Actual:
+  - `/api/probe` returned HTTP `200 OK`.
+  - Page did not contain `422 Unprocessable Entity`.
+  - Setup result showed `Status = VALID`, `Distance = 989.00 px`, `Temperature = 1.40 °C`, `Sync = TEMP_SYNC_STALE`.
+  - Response `measurement_definition` did not include `source`; ROI and detector_config were preserved.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0048_probe_current_frame_no_source_422.png`
+  - `output/playwright/p0048_probe_current_frame_no_source_422.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0049 — Run/Analysis temperature-distance X 轴不应使用 Latest window 或局部温度窗口
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/curves.ts`, `frontend/src/main.tsx`, `frontend/src/styles.css`, `frontend/tests/curveSpecs.test.mjs`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户确认 Run 页不需要 `Latest window / Full run` 交互切换。实际操作员在 run 正在进行时也要看本次 run 从开始到当前最新 frame / 最新温度为止的完整累计 temperature-distance 趋势。
+
+当前实现仍保留 `Latest window / Full run` segmented control，并在 `buildRunTrendModel()` 中按最近点窗口截取 reference points；同时 `filterRunTrendCurveWindow()` 会用 latest reference 温度范围裁剪 backend smoothed/grouped formal curve，导致 Run 页横轴看起来固定在局部温度窗口，例如 `6.50-6.70 °C`，无法看到完整升温过程中的 distance 趋势。
+
+#### Expected
+
+```text
+1. Run 页不再渲染 Latest window / Full run 交互按钮。
+2. Run 运行中始终显示 current run so far，即从本次 run 开始到当前最新点的全部有效 temperature-distance 数据。
+3. Run 停止后显示同一条完整 run 曲线，并以只读状态标签显示 Full run。
+4. Run X 轴来自当前全部 observed temperature range，不按最近 N 点或最近 0.2°C 裁剪。
+5. backend afas_preprocessing.smoothed / grouped formal curve 不因 latest window 温度范围被前端裁剪。
+6. Analysis 默认显示完整 analysis temperature-distance 范围；只有用户主动 brush zoom 后才显示局部范围，Reset zoom 回到完整范围。
+7. 前端不得重新计算正式 A/B、distance_px、temperature sync、temperature bin、smooth 或 AFAS。
+```
+
+#### Actual
+
+修复前：
+
+```text
+1. Run 页运行中默认 Latest window。
+2. buildRunTrendModel(mode="latest") 将 reference points 截到最近 80 点。
+3. filterRunTrendCurveWindow() 将 backend smoothed/grouped curve 裁剪到 latest reference temperature min/max。
+4. Run 页右上角是可交互 segmented control，而不是只读 scope label。
+```
+
+#### Suspected cause
+
+P-0039 / P-0046 为实时监护式 Run chart 增加 latest window 与 sticky Y-axis 时，将“最近窗口”作为运行中默认视野；随后用户确认实际实验中 Run 页也应看累计全量趋势，因此旧的 latest-window 假设需要移除。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - `buildRunTrendModel()` 不再根据 `mode === "latest"` 或 `latestWindowPoints` 截取 reference points。
+   - 删除 Run formal curve 的 latest temperature window 裁剪逻辑；backend smoothed/grouped 曲线完整进入模型。
+   - X range 改为来自当前全部 visible formal/reference/status temperature values。
+   - 保留 sticky Y-axis 最小跨度与扩展策略，不改后端正式计算逻辑。
+
+2. `frontend/src/main.tsx`
+   - 移除 Run 页 `Latest window / Full run` segmented control。
+   - 新增只读 `Run trend scope` 状态标签：运行中显示 `Current run so far`，停止后显示 `Full run`。
+   - `RunTrendChart` 始终用 full/current-run-so-far 模型，sticky Y-axis 在 `isRunning` 时启用。
+
+3. `frontend/src/styles.css`
+   - 用 `runTrendStatusLabel` 替代旧 `runTrendMode` segmented 样式，保持朴素浅色工业软件风格。
+
+4. `frontend/tests/curveSpecs.test.mjs`
+   - 新增/更新回归测试覆盖 Run 不截取最近 80 点、X range 覆盖完整 observed 温度范围、backend smoothed 不被 latest window 裁剪、Run 源码不再渲染 `Latest window` 控件、Analysis 默认 full range 且 zoom domain 只由显式 `xDomain` 控制。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand --test-name-pattern "current run so far|smoothed curve|current-run-so-far|analysis AFAS model separates"
+Initial RED result: FAIL, latest mode still returned 80 reference points, smoothed curve was cropped to 26-33.9 °C, and Run source still lacked Current run so far / kept Latest window controls.
+
+npm test -- --runInBand --test-name-pattern "current run so far|smoothed curve|current-run-so-far|analysis AFAS model separates"
+Result after fix: PASS, 34 tests passed under filtered command invocation.
+
+npm test -- --runInBand
+Result: PASS, 34 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run / Analysis / Export
+- Steps:
+  1. Open frontend and select `golden_a_20260522_dev_lab`.
+  2. Start Live Offline Run from frame 1.
+  3. Inspect Run chart while running.
+  4. Confirm Run has no `Latest window` text or segmented window control.
+  5. Confirm Run scope label shows `Current run so far`; later accumulated view shows X ticks extending beyond the former 0.2°C local window.
+  6. Set `target_temperature_celsius = 2.00 °C`, run again from frame 1, and let it naturally stop at target temperature.
+  7. Confirm stopped Run chart scope label shows `Full run`.
+  8. Open Analysis / Export for the completed run.
+  9. Confirm Analysis default caption is `Full analysis range`, raw/smoothed layers are visible, and Reset zoom is disabled before brush.
+  10. Brush zoom inside the AFAS chart; confirm caption changes to local temperature range and Reset zoom becomes enabled.
+  11. Click Reset zoom; confirm caption returns to `Full analysis range` and Reset zoom becomes disabled again.
+- Expected:
+  - Run uses current-run-so-far/full run data, not latest window.
+  - X axis expands with complete observed temperature range.
+  - Analysis starts at full range and only switches local after brush; reset restores full range.
+- Actual:
+  - During running Run, DOM state recorded `hasLatestWindowText=false`, `runStatusLabel=Current run so far`, `references=447`, current frame `448`, current temperature `1.90 °C`, and X tick labels `1.20, 1.40, 1.60, 1.80, 2.00`.
+  - A later live snapshot at frame `506` showed X axis spanning approximately `1.00-2.00 °C` and `Temp-distance points=505`, with no `Latest window` control.
+  - The target-temperature run naturally stopped at `470 / 470`; Run scope label showed `Full run`, and `Temp-distance points=469`.
+  - Analysis for `run-golden_a_20260522_dev_lab-20260608T020058125637Z` showed `Formal temp-distance points=469`, `AFAS status=ok`, `Raw points=469`, `Smoothed points=29`, caption `Full analysis range`, and X tick labels `1.50, 2.00`.
+  - Brush zoom changed the caption to `1.41-1.81 °C` and enabled Reset zoom.
+  - Reset zoom restored caption to `Full analysis range`, disabled Reset zoom, and kept `rawPoints=469` / `smoothedLineCount=1`.
+  - During an exploratory long run, clicking Stop again reproduced existing P-0047; this was not part of the P-0049 fix and remains tracked separately.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0049_run_current_run_so_far_full_xrange.png`
+  - `output/playwright/p0049_run_full_xrange_state.json`
+  - `output/playwright/p0049_analysis_full_xrange_reset_zoom.png`
+  - `output/playwright/p0049_analysis_full_xrange_reset_state.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0050 — Run/Analysis temperature-distance Y 轴需兼顾完整范围、最小细节跨度和 outlier 抑制
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/curves.ts`, `frontend/tests/curveSpecs.test.mjs`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户确认 Run / Analysis 页 temperature-distance 曲线的 Y 轴既不能按局部 raw 噪声贴边缩放，也不能被单个 raw/reference outlier、Analysis outlier、baseline/tangent 远端或 marker 值撑到不合理范围。否则会出现两类误导：
+
+```text
+1. 1-2 px 检测抖动被放大成整张图的剧烈波动。
+2. 全量 Y 范围被异常点或辅助拟合元素拉得过大，正式 smoothed/grouped 曲线被压成几乎不可见的一条线。
+```
+
+#### Expected
+
+```text
+1. Run 页继续使用 sticky auto-scale with minimum visible span。
+2. Run Y 轴缩放来源优先使用 backend afas_preprocessing.smoothed，其次 grouped，最后 valid raw/reference points。
+3. TEMP_SYNC_STALE、TEMP_SYNC_MISSING、INVALID 点不得作为正式曲线，也不应单独决定 Y 轴范围。
+4. 单个 raw/reference outlier 不应触发 Run Y 轴扩展。
+5. 运行中 Y 轴只按 guard band 扩展，不随局部数据范围变小频繁收缩。
+6. Run 保留不低于 40 px 的最小显示跨度。
+7. Analysis 默认显示完整 analysis temperature-distance 范围。
+8. Analysis 默认 Y 轴主要由 smoothed/grouped formal curve 和可见非 outlier raw points 决定。
+9. baseline、tangent、As/Af marker、max slope marker 和 outliers 不得把 Y 轴撑到不合理范围。
+10. Analysis brush zoom 后 Y 轴按 zoom 内 formal/smoothed 数据重新适配并保持最小显示跨度；Reset zoom 后回完整 analysis 范围。
+11. Raw layer 关闭时，raw points 不应继续影响 Analysis 当前 Y 轴范围。
+12. 前端不得重新计算正式 A/B、distance_px、temperature sync、temperature bin、smooth 或 AFAS。
+```
+
+#### Actual
+
+修复前风险：
+
+```text
+1. Run raw/reference fallback 场景下，单个 raw outlier 可能把 Y 轴拉到很大范围。
+2. Analysis yRange 会被 outlier、baseline/tangent 远端或 extreme marker 影响。
+3. Analysis brush zoom 后的局部范围缺少统一最小 Y 轴跨度保护。
+4. Raw layer 关闭后，raw points 仍可能参与当前 Analysis Y 轴计算。
+```
+
+#### Suspected cause
+
+P-0039、P-0040、P-0046、P-0049 已经把 Run / Analysis 曲线改成工业 trend chart 和 AFAS review chart，但 Y 轴范围计算仍需要进一步区分主信息层和辅助诊断层：formal smoothed/grouped curve 是主缩放来源，raw scatter、outliers、fit lines 和 markers 是显示层，不应默认主导比例尺。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - 新增/完善 Run 与 Analysis Y 轴范围 helper：`buildRunTrendYAxisRange()`、`resolveRunTrendStickyYAxisRange()`、`buildAnalysisAfasYAxisRange()`。
+   - Run `buildRunTrendModel()` 的 `dataYRange` 优先来自 backend smoothed/grouped formal curve；仅无 formal curve 时回退到 valid raw/reference，并用显示层 outlier 过滤避免单点撑大比例尺。
+   - Run 保留 `DEFAULT_RUN_TREND_Y_AXIS_MIN_SPAN_PX = 40` 与 sticky guard band 扩展策略。
+   - Analysis 默认 yRange 使用 visible smoothed/grouped + non-outlier raw；无 formal 数据时才回退 raw。
+   - Analysis outlier 点、raw scatter 和 marker 在显示时可 clamp 到图内，但不默认撑大 yRange；baseline/tangent 只显示对应拟合/判定层，不参与无限延长线范围。
+   - Raw layer 关闭时，raw points 不再影响 Analysis 当前 yRange。
+
+2. `frontend/tests/curveSpecs.test.mjs`
+   - 新增/更新回归测试覆盖 Run 1-2 px 抖动最小 Y 轴跨度、单个 raw outlier 抑制、formal curve 接近边界时 sticky 扩展、Analysis 默认不被 tangent/baseline/marker/outlier 撑大、brush zoom 后重适配、reset 恢复 full range、Raw layer 关闭后 raw 不参与 yRange。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand --test-name-pattern "y axis ignores|y axis refits|raw reference outlier"
+Initial RED result: FAIL, 4 targeted regressions failed as expected before the Y-axis implementation.
+
+npm test -- --runInBand --test-name-pattern "y axis ignores|y axis refits|raw reference outlier"
+Result after fix: PASS, 38 tests passed under filtered command invocation.
+
+npm test -- --runInBand
+Result: PASS, 38 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run / Analysis / Export
+- Steps:
+  1. Open G3 frontend and confirm `golden_a_20260522_dev_lab` is selected.
+  2. Set `target_temperature_celsius = 2.00 °C`.
+  3. Open Run and start Live Offline Run from frame 1.
+  4. During running, inspect `svg[aria-label="Run temperature-distance trend chart"]` and capture Y tick labels.
+  5. Let the run naturally stop at target temperature instead of using the known P-0047 Stop path.
+  6. Capture stopped Run chart state.
+  7. Open Analysis / Export for the completed run.
+  8. Confirm Analysis default chart is `Full analysis range`, raw/smoothed/fit/marker layers are visible, and Reset zoom is disabled.
+  9. Brush zoom inside the AFAS chart and capture Y tick labels.
+  10. Click Reset zoom and confirm full range returns.
+  11. Turn off Raw layer and confirm raw points no longer influence Analysis Y-axis range.
+- Expected:
+  - Run running/stopped Y axis uses formal-first sticky/min-span strategy and does not collapse to 1-2 px jitter.
+  - Analysis default Y axis is not stretched by tangent/baseline/markers/outliers.
+  - Analysis brush zoom refits Y axis locally with minimum span, Reset zoom restores full range, Raw hidden excludes raw from current yRange.
+- Actual:
+  - Run running at frame `126` showed `Temp-distance points = 125`; Y tick labels were `970, 980, 990, 1000, 1010`, span `40 px`.
+  - The target-temperature run naturally stopped at `470 / 470`; latest temperature was `2.00 °C`, latest distance was `984.00 px`, and `Temp-distance points = 469`.
+  - Analysis for `run-golden_a_20260522_dev_lab-20260608T023949930901Z` showed `Formal temp-distance points = 469`, `AFAS status = ok`, `Raw points = 469`, `Outliers = 0`, and caption `Full analysis range`.
+  - Analysis default Y tick labels were `975, 980, 985, 990, 995, 1000`, span `25 px`; tangent/baseline/As/Af/max slope were visible without stretching the axis.
+  - Brush zoom enabled Reset zoom and showed local Y tick labels `975, 980, 985, 990, 995`, span `20 px`.
+  - Reset zoom returned to `Full analysis range`, disabled Reset zoom, and restored Y tick labels `975, 980, 985, 990, 995, 1000`.
+  - With Raw layer turned off, checkboxes showed `Raw = false`, `Fit = true`, `Markers = true`; Y tick labels were `975, 980, 985, 990, 995`, span `20 px`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0050_run_yaxis_running.png`
+  - `output/playwright/p0050_run_yaxis_full_run.png`
+  - `output/playwright/p0050_run_yaxis_full_run_state.json`
+  - `output/playwright/p0050_analysis_yaxis_full_range.png`
+  - `output/playwright/p0050_analysis_yaxis_zoomed.png`
+  - `output/playwright/p0050_analysis_yaxis_zoomed_state.json`
+  - `output/playwright/p0050_analysis_yaxis_reset_full_range.png`
+  - `output/playwright/p0050_analysis_yaxis_reset_full_range_state.json`
+  - `output/playwright/p0050_analysis_yaxis_raw_hidden.png`
+  - `output/playwright/p0050_analysis_yaxis_raw_hidden_state.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0051 — A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络
+
+- Status: OPEN
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `BalloonEnvelopeDetector`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户反馈 `golden_a_20260522_dev_lab` 在 Playback 同一 ROI 下：
+
+```text
+ROI = center_x 1178.85, center_y 522.29, width 1260.1, height 307.04, angle_deg -8.06
+frame 1400: L≈996px
+frame 1460: L≈995px
+frame 1461: L≈1020px
+```
+
+截图显示右侧存在一个小黑点 / speck。frame 1461 中该 speck 被纳入正式 mesh_region / 外包络 row-window，导致正式 `distance_px` 从约 995px 增大到 1020px。
+
+#### Expected
+
+```text
+外部 speck / 小黑点 / 游离脏点不得成为 A 类待测物体目标。
+如果小黑点无法可靠排除，应 INVALID 或拒绝该候选，而不是输出看似正常但实际偏大的 A/B。
+```
+
+#### Actual
+
+使用当前后端正式 detector 重算：
+
+```text
+frame 1400: VALID, distance=996.0px, selected row v=189.0, left=97.0, right=1093.0
+frame 1460: VALID, distance=995.0px, selected row v=187.0, left=98.0, right=1093.0
+frame 1461: VALID, distance=1020.0px, selected row v=209.0, left=99.0, right=1119.0
+```
+
+连通域诊断显示当前代码只能过滤“独立小组件”，但 frame 1461 中小黑点已经被 `_dark_foreground_mask()` 的前处理 / closing 后并入主体连通域：
+
+```text
+frame 1460:
+  main component bbox right=1099
+  separate right speck component area=311, bbox x=1111-1127, y=193-221
+  target x>=1100 pixels = 0
+
+frame 1461:
+  main component bbox right=1127
+  target x>=1100 pixels = 368
+  x>=1100 bbox local = x 1100-1127, y 192-220
+  selected row v=209 uses right quantile 1119px
+```
+
+#### Current code handling
+
+当前已有处理：
+
+```text
+1. `_largest_mesh_region()` 会按连通域面积、宽高比例筛选主体；独立小 speck 通常会因面积/宽高不足被排除。
+2. `_mesh_envelope_rows()` 使用 `envelope_quantile=0.02`，少量离散像素通常不会决定 left/right 分位数。
+3. P-0024 曾修复 bbox + margin 回填导致游离 speck 重新进入 mesh_region 的问题。
+```
+
+当前缺口：
+
+```text
+如果 speck 在前处理阶段被 closing/dilation 或弱边缘连接成主体同一连通域，则上述连通域过滤不再生效。
+如果该 speck 在 selected row window 内占比足够高，2% right quantile 仍会被推到 speck 位置，正式 distance 被拉大。
+当前没有对 mesh_region 进行“细颈连接/外侧小突起/孤立右侧支撑”的二次剪枝，也没有对单帧 right boundary 突增做候选拒绝。
+```
+
+#### Suspected cause
+
+```text
+1461 帧右侧 speck 与主体边缘在 enhanced dark mask 中被连接，成为主连通域的一部分。
+随后 row-window max-width 选择 v≈209 的窗口，该窗口内 x>=1100 的 speck 像素足以把 right quantile 从约 1093 推到 1119。
+```
+
+#### Fix summary
+
+待实现。候选方向：
+
+```text
+1. A 类 mesh_region 增加外侧小突起 / 细颈连接剪枝。
+2. 对 selected row 的 right/left boundary 增加稳定支撑列检查，类似 C 类 support columns，但按 A 类 row-window 语义实现。
+3. 对单帧边界突增且只由小面积外侧区域支撑的候选输出 INVALID 或回退到稳定候选。
+```
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src python3 - <<'PY'
+# 重算 golden_a_20260522_dev_lab frame 1400/1460/1461 的 DetectionResult 和 mask 连通域诊断
+PY
+Result: reproduced frame 1461 VALID distance=1020px, target x>=1100 pixels=368.
+```
+
+#### Browser retest log
+
+- Retest date:
+- Browser:
+- OS:
+- Frontend URL:
+- Backend URL:
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Playback / Run
+- Steps:
+- Expected:
+- Actual:
+- Result: PASS / FAIL
+- Evidence:
+
+#### Final status
+
+OPEN
+
+
+---
+
+### P-0052 — Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/curves.ts`, `frontend/src/main.tsx`, `frontend/src/styles.css`, `frontend/tests/curveSpecs.test.mjs`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户指出 Analysis / Export 页 AFAS temperature-distance 图默认仍显示大量灰色 raw scatter，干扰工程复核；同时 As / Af-tan 只有垂直 rule + badge，缺少能帮助确认判定点位置的弱化切线 / 构造线。
+
+#### Expected
+
+```text
+1. Analysis 默认以 backend smoothed/formal curve 为主，绿色/深青色主曲线最醒目。
+2. Raw points 默认关闭，不渲染灰色散点；Raw toggle 仍可作为诊断层打开。
+3. As 和 Af-tan 均应有对应的 construction guide / tangent guide，用于工程判读确认。
+4. construction guide 使用 backend 已有 AFAS tangent / marker 数据生成显示坐标，不得重新拟合正式 AFAS。
+5. construction guide 视觉权重低于 smoothed/formal 主曲线和最终 As/Af marker；线宽约 1.5-2px，透明度弱化。
+6. Fit 关闭时 baseline、tangent 和 construction guide 隐藏，但 smoothed/formal 主曲线保留。
+7. Markers 关闭时 As/Af badge、vertical rule、max slope marker 隐藏，smoothed/formal 主曲线保留。
+8. Y 轴继续由 smoothed/formal curve 主导，不因 construction guide 扩大范围。
+```
+
+#### Actual
+
+修复前：
+
+```text
+1. Analysis `Raw` layer 默认 checked，图上默认显示 raw 灰点。
+2. 模型没有 As/Af-tan construction guide 层。
+3. UI 初始 state 为 `{ raw: true, fit: true, markers: true }`。
+4. 图例中 raw points 与 smoothed curve 同时出现，主次关系不够明确。
+```
+
+#### Suspected cause
+
+P-0040 / P-0043 / P-0050 已完成 Analysis AFAS 主图放大、层级和 Y 轴改进，但默认图层状态仍保留 raw scatter 开启；As/Af marker 只表达结果值，没有把后端已有 tangent 与 As/Af 点之间的判读几何关系单独弱化展示。
+
+#### Fix summary
+
+1. `frontend/src/curves.ts`
+   - `DEFAULT_ANALYSIS_AFAS_LAYERS.raw` 改为 `false`。
+   - 新增 `AnalysisAfasConstructionGuide` 模型层。
+   - `buildAnalysisAfasModel()` 在 Fit layer 开启时，基于 backend 已有 tangent line 与 As / Af-tan marker 生成短局部 `as_guide` / `af_tan_guide`。
+   - construction guide 裁剪到当前 plot / yRange，不参与 yRange 计算，不重新拟合 AFAS。
+
+2. `frontend/src/main.tsx`
+   - Analysis UI 初始 layer state 改为 `{ raw: false, fit: true, markers: true }`。
+   - 默认不渲染 raw points。
+   - 新增 As/Af construction guide SVG line 渲染，并为 hover 标注 `AFAS construction guide`。
+   - Fit off 隐藏 baseline/tangent/construction guide；Markers off 隐藏 As/Af badge/rule 和 max slope marker；smoothed curve 始终保留。
+   - 图例调整为主曲线优先，Raw 标注为 diagnostic。
+
+3. `frontend/src/styles.css`
+   - raw point 透明度进一步降低。
+   - construction guide 线宽 `1.8px`、短虚线、弱透明蓝/橙红。
+   - tangent 线宽降至 `2.35px`，避免盖过 `3.8px` smoothed curve。
+
+4. `frontend/tests/curveSpecs.test.mjs`
+   - 新增回归测试覆盖默认 raw off、As/Af construction guide 存在、Fit/Markers toggle 行为和 UI 初始状态。
+
+#### Tests run
+
+```bash
+npm test -- --runInBand --test-name-pattern "formal curve only|construction guides|independent from fit|raw diagnostics disabled"
+Initial RED result: FAIL, 4 targeted tests failed as expected because raw default was true and constructionGuides did not exist.
+
+npm test -- --runInBand --test-name-pattern "formal curve only|construction guides|independent from fit|raw diagnostics disabled"
+Result after fix: PASS, 42 tests passed under filtered command invocation.
+
+npm test -- --runInBand
+Result: PASS, 42 tests passed.
+
+npm run build
+Result: PASS, TypeScript + Vite production build completed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run / Analysis / Export
+- Steps:
+  1. Open G3 frontend and confirm `golden_a_20260522_dev_lab` is selected.
+  2. Set `target_temperature_celsius = 2.00 °C`.
+  3. Start Live Offline Run from frame 1 and let it naturally stop at target temperature.
+  4. Open Analysis / Export for the completed run.
+  5. Inspect default AFAS chart layer toggles and SVG layers.
+  6. Confirm Raw defaults off and raw points are not rendered.
+  7. Confirm smoothed curve, As/Af construction guides, As/Af markers, and Max slope marker are visible.
+  8. Turn Fit off; confirm fit lines and construction guides hide while smoothed curve remains.
+  9. Turn Fit on and Markers off; confirm As/Af markers and Max slope marker hide while smoothed curve and fit guides remain.
+  10. Turn Raw on; confirm raw diagnostic points render as low-opacity grey points.
+- Expected:
+  - Analysis default chart has no raw grey points.
+  - Smoothed/formal curve remains the dominant green line.
+  - As and Af-tan each have weak construction guide lines.
+  - Construction guides are visually weaker than smoothed curve and do not replace backend AFAS results.
+  - Layer toggles behave according to Raw / Fit / Markers semantics.
+- Actual:
+  - Completed run `run-golden_a_20260522_dev_lab-20260608T034733930099Z` stopped at `470 / 470`, `Temp-distance points = 469`.
+  - Analysis showed `AFAS status = ok`, `As = 1.34 °C`, `Af-tan = 1.48 °C`, `Raw points = 469`, `Outliers = 0`.
+  - Default toggles: `Raw = false`, `Fit = true`, `Markers = true`.
+  - Default SVG: `rawCircles = 0`, `smoothedLines = 1`, `constructionGuides = 2`, `referenceMarkers = 2`, `maxSlopeMarkers = 1`.
+  - Default guide labels: `As tangent guide; AFAS construction guide` and `Af-tan tangent guide; AFAS construction guide`.
+  - CSS inspection: smoothed stroke width `3.8px`; construction guide stroke width `1.8px`, dashed; tangent stroke width `2.35px`.
+  - Fit off: `fitLines = 0`, `constructionGuides = 0`, `smoothedLines = 1`.
+  - Markers off with Fit on: `referenceMarkers = 0`, `maxSlopeMarkers = 0`, `constructionGuides = 2`, `smoothedLines = 1`.
+  - Raw on: `rawCircles = 469`, raw fill `rgba(91, 103, 116, 0.16)`, raw stroke `rgba(91, 103, 116, 0.22)`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0051_analysis_default_no_raw_as_af_guides.png`
+  - `output/playwright/p0051_analysis_default_no_raw_as_af_guides_state.json`
+  - `output/playwright/p0051_analysis_fit_off_smoothed_retained.png`
+  - `output/playwright/p0051_analysis_fit_off_smoothed_retained_state.json`
+  - `output/playwright/p0051_analysis_markers_off_guides_fit_on.png`
+  - `output/playwright/p0051_analysis_markers_off_guides_fit_on_state.json`
+  - `output/playwright/p0051_analysis_raw_diagnostic_on.png`
+  - `output/playwright/p0051_analysis_raw_diagnostic_on_state.json`
 
 #### Final status
 

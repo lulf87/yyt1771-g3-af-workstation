@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from yyt1771_g3.core.models import DetectionResult, MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import OfflineDatasetRegistry
 from yyt1771_g3.temperature.sync import sync_temperature_for_frame
@@ -42,6 +44,38 @@ def probe_offline_frame(
     }
 
 
+def probe_setup_frame(
+    *,
+    dataset_id: str,
+    frame_array: np.ndarray,
+    measurement: MeasurementDefinition,
+    frame_index: int = 1,
+    frame_timestamp_ms: int | None = None,
+    camera_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    detection = detect_frame(frame_array, measurement, frame_index=frame_index)
+    detection = _attach_frame_timestamp(detection, frame_timestamp_ms)
+    return {
+        "dataset_id": dataset_id,
+        "frame": {
+            "frame_index": frame_index,
+            "shape": list(frame_array.shape),
+            "dtype": str(frame_array.dtype),
+            "timestamp_ms": frame_timestamp_ms,
+        },
+        "measurement_definition": measurement.model_dump(mode="json"),
+        "detection_result": detection.model_dump(mode="json"),
+        "overlay": {
+            "roi": measurement.roi.model_dump(mode="json"),
+            "ab_points": detection.ab_points.model_dump(mode="json")
+            if detection.ab_points is not None
+            else None,
+            "status": detection.detection_status.value,
+        },
+        "camera_meta": camera_meta or {},
+    }
+
+
 def _attach_temperature(detection: DetectionResult, frame_timestamp_ms: int | None, synced) -> DetectionResult:  # noqa: ANN001
     payload = detection.model_dump()
     payload.update(
@@ -55,6 +89,12 @@ def _attach_temperature(detection: DetectionResult, frame_timestamp_ms: int | No
             "temperature_sync_status": synced.status,
         }
     )
+    return DetectionResult.model_validate(payload)
+
+
+def _attach_frame_timestamp(detection: DetectionResult, frame_timestamp_ms: int | None) -> DetectionResult:
+    payload = detection.model_dump()
+    payload.update({"frame_timestamp_ms": frame_timestamp_ms})
     return DetectionResult.model_validate(payload)
 
 

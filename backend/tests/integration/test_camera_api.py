@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 from types import SimpleNamespace
 
 import numpy as np
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from yyt1771_g3.camera.base import CameraFrame
 from yyt1771_g3.temperature.base import TemperatureReading
@@ -131,6 +133,38 @@ class FakeApiCameraSource:
         self.closed = True
 
 
+def test_camera_preview_endpoint_returns_setup_metadata(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    class MetadataCameraSource(FakeApiCameraSource):
+        def preview_frame(self) -> CameraFrame:
+            return CameraFrame(
+                array=np.full((32, 48), 80, dtype=np.uint8),
+                timestamp_ms=1779445920110,
+                camera_meta={
+                    "model": "MV-CU060-10GM",
+                    "serial_number": "DEV-001",
+                    "ip": "192.168.1.10",
+                    "pixel_format": "mono8",
+                },
+            )
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", MetadataCameraSource)
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/camera/preview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["camera_status"] == "ok"
+    assert payload["model"] == "MV-CU060-10GM"
+    assert payload["serial_number"] == "DEV-001"
+    assert payload["ip"] == "192.168.1.10"
+    assert payload["pixel_format"] == "mono8"
+    assert payload["shape"] == [32, 48]
+    assert payload["timestamp_ms"] == 1779445920110
+
+
 class FakeApiTemperatureController:
     def __init__(self) -> None:
         self.target_values: list[float] = []
@@ -220,6 +254,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
             "camera_profile": {"pixel_format": "mono8", "exposure_us": 50000},
             "measurement_definition": {
                 "measurement_id": "real-api-temp",
+                "source": "real_camera",
                 "object_class": "A_BALLOON_ENVELOPE",
                 "detector": "BalloonEnvelopeDetector",
                 "width_mode": "max_width",
@@ -244,9 +279,16 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["run_manifest"]["measurement_definition"]["source"] == "real_camera"
     assert payload["run_manifest"]["temperature_records"][0]["celsius"] == 25.3
     assert payload["run_manifest"]["detection_results"][0]["temperature_sync_status"] == "TEMP_SYNC_OK"
     assert camera_profiles[0]["exposure_us"] == 50000
     assert controllers[0].target_values == [55.0]
     assert controllers[0].power_values == [68.0]
     assert controllers[0].stopped is True
+
+    frame_png = client.get(f"/api/runs/{payload['run_manifest']['run_id']}/frames/1.png")
+    assert frame_png.status_code == 200
+    assert frame_png.headers["content-type"] == "image/png"
+    image = Image.open(io.BytesIO(frame_png.content))
+    assert image.size == (120, 80)

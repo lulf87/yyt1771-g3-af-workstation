@@ -6,11 +6,24 @@ import os
 from pathlib import Path
 import sys
 import time
+import types
 from typing import Any
 
 import numpy as np
 
 from yyt1771_g3.camera.base import CameraFrame, CameraUnavailableError
+
+
+HIK_MVS_PYTHON_MODULE = "MvCameraControl_class"
+HIK_MVS_PYTHON_PATH_ENV = "HIK_MVS_PYTHON_PATH"
+HIK_MVS_LIBRARY_PATH_ENV = "HIK_MVS_LIBRARY_PATH"
+_HIK_MVS_SOURCE_CACHE: dict[tuple[str, str], Any] = {}
+_HIK_MVS_SIDE_CAR_STAGING_DIR = Path("/tmp/mvs")
+_HIK_MVS_SIDE_CAR_LIBRARIES = (
+    "libMVGigEVisionSDK.dylib",
+    "libMVU3VisionSDK.dylib",
+    "libMediaProcess.dylib",
+)
 
 
 class HikMvsCameraSource:
@@ -56,16 +69,36 @@ class HikMvsCameraSource:
 
     @staticmethod
     def _load_sdk(profile: dict[str, Any] | None = None) -> Any:
-        _prepend_sdk_python_paths(profile or {})
+        profile = profile or {}
+        _prepend_sdk_python_paths(profile)
         try:
-            return importlib.import_module("MvCameraControl_class")
+            return importlib.import_module(HIK_MVS_PYTHON_MODULE)
         except (ModuleNotFoundError, ImportError, OSError) as exc:
+            try:
+                source_loaded = _import_sdk_with_library_override(profile)
+            except OSError as override_exc:
+                raise CameraUnavailableError(
+                    "Hik MVS SDK is not available; offline playback and live offline run remain available",
+                    details={
+                        "missing_module": HIK_MVS_PYTHON_MODULE,
+                        "sdk_python_path_env": os.environ.get(HIK_MVS_PYTHON_PATH_ENV, ""),
+                        "sdk_library_path_env": os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, ""),
+                        "sdk_python_paths": _profile_path_strings(profile, "sdk_python_paths"),
+                        "sdk_library_path": str(_configured_sdk_library_path(profile) or ""),
+                        "error": str(override_exc),
+                        "direct_import_error": str(exc),
+                    },
+                ) from override_exc
+            if source_loaded is not None:
+                return source_loaded
             raise CameraUnavailableError(
                 "Hik MVS SDK is not available; offline playback and live offline run remain available",
                 details={
-                    "missing_module": "MvCameraControl_class",
-                    "sdk_python_path_env": os.environ.get("HIK_MVS_PYTHON_PATH", ""),
-                    "sdk_library_path_env": os.environ.get("HIK_MVS_LIBRARY_PATH", ""),
+                    "missing_module": HIK_MVS_PYTHON_MODULE,
+                    "sdk_python_path_env": os.environ.get(HIK_MVS_PYTHON_PATH_ENV, ""),
+                    "sdk_library_path_env": os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, ""),
+                    "sdk_python_paths": _profile_path_strings(profile, "sdk_python_paths"),
+                    "sdk_library_path": str(_configured_sdk_library_path(profile) or ""),
                     "error": str(exc),
                 },
             ) from exc
@@ -321,7 +354,7 @@ class _DeviceDescriptor:
 
 
 def _prepend_sdk_python_paths(profile: dict[str, Any]) -> None:
-    raw_paths = os.environ.get("HIK_MVS_PYTHON_PATH", "")
+    raw_paths = os.environ.get(HIK_MVS_PYTHON_PATH_ENV, "")
     paths = [Path(part).expanduser() for part in raw_paths.split(os.pathsep) if part.strip()]
     profile_paths = profile.get("sdk_python_paths")
     if isinstance(profile_paths, list):
@@ -331,6 +364,122 @@ def _prepend_sdk_python_paths(profile: dict[str, Any]) -> None:
             sys.path.insert(0, str(path))
     if paths:
         importlib.invalidate_caches()
+
+
+def _import_sdk_with_library_override(profile: dict[str, Any]) -> Any | None:
+    library_path = _configured_sdk_library_path(profile)
+    if library_path is None:
+        return None
+    module_source = _find_sdk_module_source(profile)
+    if module_source is None:
+        return None
+    _ensure_hik_runtime_sidecar_symlinks(library_path.parent)
+    sys.modules.pop(HIK_MVS_PYTHON_MODULE, None)
+    return _load_sdk_module_from_source(module_source, library_path)
+
+
+def _configured_sdk_library_path(profile: dict[str, Any]) -> Path | None:
+    profile_path = str(profile.get("sdk_library_path", "") or "").strip()
+    if profile_path:
+        candidate = Path(profile_path).expanduser()
+        if candidate.is_file():
+            return candidate
+    env_path = os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "").strip()
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _find_sdk_module_source(profile: dict[str, Any]) -> Path | None:
+    for directory in _configured_sdk_python_paths(profile):
+        candidate = directory / f"{HIK_MVS_PYTHON_MODULE}.py"
+        if candidate.is_file():
+            return candidate
+    for raw_path in sys.path:
+        if not raw_path:
+            continue
+        candidate = Path(raw_path) / f"{HIK_MVS_PYTHON_MODULE}.py"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _configured_sdk_python_paths(profile: dict[str, Any]) -> list[Path]:
+    paths: list[Path] = []
+    raw_paths = os.environ.get(HIK_MVS_PYTHON_PATH_ENV, "")
+    paths.extend(Path(part).expanduser() for part in raw_paths.split(os.pathsep) if part.strip())
+    profile_paths = profile.get("sdk_python_paths")
+    if isinstance(profile_paths, list):
+        paths.extend(Path(str(part)).expanduser() for part in profile_paths if str(part).strip())
+    seen: set[Path] = set()
+    existing: list[Path] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        existing.append(path)
+    return existing
+
+
+def _load_sdk_module_from_source(module_source: Path, library_path: Path) -> Any:
+    cache_key = (str(module_source.resolve()), str(library_path.resolve()))
+    cached = _HIK_MVS_SOURCE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    source_text = module_source.read_text(encoding="utf-8")
+    patched_source = source_text.replace(
+        'ctypes.cdll.LoadLibrary("/usr/local/lib/libMvCameraControl.dylib")',
+        f'ctypes.cdll.LoadLibrary(r"{library_path}")',
+    )
+    module = types.ModuleType(f"{HIK_MVS_PYTHON_MODULE}__g3_override")
+    module.__file__ = str(module_source)
+    module.__package__ = ""
+    module_dir = str(module_source.parent)
+    should_remove = False
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+        should_remove = True
+    try:
+        exec(compile(patched_source, str(module_source), "exec"), module.__dict__)
+    finally:
+        if should_remove:
+            sys.path.pop(0)
+    _HIK_MVS_SOURCE_CACHE[cache_key] = module
+    return module
+
+
+def _ensure_hik_runtime_sidecar_symlinks(runtime_lib_dir: Path) -> None:
+    if not runtime_lib_dir.is_dir():
+        return
+    _HIK_MVS_SIDE_CAR_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    for library_name in _HIK_MVS_SIDE_CAR_LIBRARIES:
+        source = runtime_lib_dir / library_name
+        if not source.is_file():
+            continue
+        target = _HIK_MVS_SIDE_CAR_STAGING_DIR / library_name
+        source_resolved = source.resolve()
+        if target.is_symlink():
+            try:
+                if target.resolve() == source_resolved:
+                    continue
+            except OSError:
+                pass
+            target.unlink()
+        elif target.exists():
+            target.unlink()
+        target.symlink_to(source_resolved)
+
+
+def _profile_path_strings(profile: dict[str, Any], key: str) -> list[str]:
+    raw_paths = profile.get(key)
+    if not isinstance(raw_paths, list):
+        return []
+    return [str(path) for path in raw_paths if str(path).strip()]
 
 
 def _decode_sdk_char_buffer(value: Any) -> str:
