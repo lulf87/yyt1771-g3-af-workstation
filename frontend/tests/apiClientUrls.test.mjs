@@ -50,6 +50,30 @@ test("run frame image URL targets run raw frame endpoint", async () => {
   );
 });
 
+test("diagnostic image metadata exposes mask and contour display sources", async () => {
+  const { readDiagnosticImages } = await loadApiClientModule();
+
+  const images = readDiagnosticImages({
+    diagnostic_images: {
+      mask: {
+        label: "Detected mask",
+        coordinates: "roi_local_pixel",
+        data_url: "data:image/png;base64,mask"
+      },
+      contour: {
+        label: "Envelope contour",
+        coordinates: "roi_local_pixel",
+        url: "/api/debug/contour.png"
+      }
+    }
+  });
+
+  assert.equal(images.mask.label, "Detected mask");
+  assert.equal(images.mask.src, "data:image/png;base64,mask");
+  assert.equal(images.contour.label, "Envelope contour");
+  assert.match(images.contour.src, /\/api\/debug\/contour\.png$/);
+});
+
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
   const { probeRealCameraSetupFrame } = await loadApiClientModule();
   const measurement = {

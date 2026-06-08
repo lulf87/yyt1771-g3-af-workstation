@@ -115,6 +115,13 @@ def test_probe_endpoint_detects_current_frame_with_measurement_roi(
     assert result["debug_artifacts"]["mesh_envelope_row_count"] > 0
     assert len(result["debug_artifacts"]["contour_projection_box"]) == 4
     assert len(result["debug_artifacts"]["contour_direction_arrow"]) == 2
+    diagnostic_images = result["debug_artifacts"]["diagnostic_images"]
+    assert diagnostic_images["mask"]["label"] == "Detected mask"
+    assert diagnostic_images["mask"]["coordinates"] == "roi_local_pixel"
+    assert diagnostic_images["mask"]["data_url"].startswith("data:image/png;base64,")
+    assert diagnostic_images["contour"]["label"] == "Envelope contour"
+    assert diagnostic_images["contour"]["coordinates"] == "roi_local_pixel"
+    assert diagnostic_images["contour"]["data_url"].startswith("data:image/png;base64,")
     assert payload["overlay"]["ab_points"] == result["ab_points"]
     assert payload["frame"]["frame_index"] == 1
 

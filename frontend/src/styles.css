@@ -248,6 +248,12 @@ input {
   gap: 18px;
 }
 
+.setupPreviewStack {
+  min-width: 0;
+  display: grid;
+  gap: 18px;
+}
+
 .toolPanel,
 .frameCanvasFigure {
   border: 1px solid #cfd6dd;
@@ -437,6 +443,81 @@ input {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.diagnosticImagePanel {
+  min-width: 0;
+  border: 1px solid #cfd6dd;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.diagnosticImageHeader {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e1e6eb;
+}
+
+.diagnosticImageHeader h3 {
+  margin: 0;
+  color: #485665;
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.diagnosticImageHeader span {
+  color: #64717f;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.diagnosticImageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: #d8e0e7;
+}
+
+.diagnosticImageFigure {
+  min-width: 0;
+  margin: 0;
+  background: #111827;
+}
+
+.diagnosticImageFigure figcaption {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px;
+  color: #e5ebf1;
+  background: #263241;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 760;
+}
+
+.diagnosticImageFigure figcaption span:last-child {
+  color: #b8c4cf;
+  font-weight: 700;
+}
+
+.diagnosticImageFigure img {
+  display: block;
+  width: 100%;
+  height: 240px;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .frameCanvasStatus {
@@ -1703,6 +1784,7 @@ input {
   .twoColumnControls,
   .metricGrid,
   .buttonPair,
+  .diagnosticImageGrid,
   .analysisParameterMetrics,
   .runValueStrip,
   .analysisExportPanel .metricGrid.compact {

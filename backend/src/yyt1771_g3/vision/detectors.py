@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
+import io
 import math
 from typing import Any
 
 import numpy as np
+from PIL import Image
 from scipy import ndimage
 
 from yyt1771_g3.core.coordinates import roi_local_to_measurement_point
@@ -199,6 +202,7 @@ def _finish_candidate_detection(
         "contour_direction_arrow": selected.metadata.get("contour_direction_arrow", []),
         "target_mask_pixels": int(np.count_nonzero(target)),
         "candidate_count": len(candidates),
+        "diagnostic_images": _diagnostic_images(target, config),
         "selection_state": {
             "pending_candidate_id": selection.state.pending_candidate_id,
             "pending_count": selection.state.pending_count,
@@ -738,6 +742,48 @@ def _kernel(size: int) -> np.ndarray:
     if size % 2 == 0:
         size += 1
     return np.ones((size, size), dtype=bool)
+
+
+def _diagnostic_images(target: np.ndarray, config: DetectorConfig) -> dict[str, dict[str, Any]]:
+    mask = np.asarray(target, dtype=bool)
+    contour = _outer_envelope_contour(mask, config)
+    height, width = mask.shape
+    return {
+        "mask": {
+            "label": "Detected mask",
+            "coordinates": "roi_local_pixel",
+            "width": int(width),
+            "height": int(height),
+            "data_url": _binary_mask_png_data_url(mask),
+        },
+        "contour": {
+            "label": "Envelope contour",
+            "coordinates": "roi_local_pixel",
+            "width": int(width),
+            "height": int(height),
+            "data_url": _binary_mask_png_data_url(contour),
+        },
+    }
+
+
+def _outer_envelope_contour(mask: np.ndarray, config: DetectorConfig) -> np.ndarray:
+    if mask.size == 0 or not np.any(mask):
+        return np.zeros_like(mask, dtype=bool)
+    closed = ndimage.binary_closing(mask, structure=_kernel(config.contour_close_kernel_px))
+    filled = ndimage.binary_fill_holes(closed)
+    main = _main_component(filled, min_area=1)
+    envelope = np.asarray(main if main is not None else filled, dtype=bool)
+    eroded = ndimage.binary_erosion(envelope, structure=np.ones((3, 3), dtype=bool), border_value=0)
+    return envelope & ~eroded
+
+
+def _binary_mask_png_data_url(mask: np.ndarray) -> str:
+    image_array = np.where(np.asarray(mask, dtype=bool), 255, 0).astype(np.uint8)
+    image = Image.fromarray(np.ascontiguousarray(image_array), mode="L")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def _otsu_threshold(gray: np.ndarray) -> float:

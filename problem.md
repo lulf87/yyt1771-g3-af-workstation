@@ -71,6 +71,7 @@
 | P-0050 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis y-axis | Run/Analysis temperature-distance Y 轴需兼顾完整范围、最小细节跨度和 outlier 抑制 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis Y 轴浏览器复测已通过 |
 | P-0051 | OPEN | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | 待修复后用 Playback 1400/1460/1461 + Run 浏览器复测 |
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
+| P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
 
 ---
 
@@ -5850,6 +5851,122 @@ Result: PASS.
   - `output/playwright/p0051_analysis_markers_off_guides_fit_on_state.json`
   - `output/playwright/p0051_analysis_raw_diagnostic_on.png`
   - `output/playwright/p0051_analysis_raw_diagnostic_on_state.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0053 — Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`, `frontend/src/styles.css`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户希望在 Setup 和 Run 页面新增两张实时诊断图，类似示例图：
+
+```text
+1. 当前检测器最终保留的目标 mask / mesh region。
+2. 基于该目标 mask 进一步闭合、填洞并抽取出的整体外包络 / contour。
+```
+
+修复前，Setup 和 Run 页面只显示原始帧、ROI、A/B overlay 和投影框，无法直接看到检测器当前认为的二值主体和外轮廓。
+
+#### Expected
+
+```text
+1. Setup probe 后实时显示当前帧的 Detected mask 与 Envelope contour。
+2. Run 最新帧实时显示对应 Detected mask 与 Envelope contour。
+3. 诊断图来自 backend / vision 结果，前端只显示，不参与正式 A/B、distance 或 temperature-distance 计算。
+4. 诊断图使用 ROI-local measurement coordinates，避免浏览器缩放影响正式测量。
+5. A/C detector 输出仍遵守整体外包络和 INVALID 优先原则。
+```
+
+#### Actual
+
+修复前：
+
+```text
+1. `debug_artifacts` 只有 contour_projection_box、contour_direction_arrow 和数值型诊断字段。
+2. Setup / Run 没有 mask 或外轮廓图像区域。
+3. 用户无法直观看到当前检测到的主体区域和外轮廓。
+```
+
+#### Fix summary
+
+1. `backend/src/yyt1771_g3/vision/detectors.py`
+   - 在 VALID detection 的 `debug_artifacts.diagnostic_images` 中新增 `mask` 和 `contour` 两项。
+   - `mask` 为 detector 最终保留的 ROI-local target mask。
+   - `contour` 为 target mask 经过 closing、fill holes、main component、边界提取后的 ROI-local envelope contour。
+   - 两项均输出 PNG data URL、label、coordinates、width、height。
+   - 不改变正式 A/B、distance、candidate selection、temperature sync 或 AFAS 计算。
+
+2. `frontend/src/api/client.ts`
+   - 新增 `DiagnosticImageInfo` / `DiagnosticImages` 类型。
+   - 新增 `readDiagnosticImages()`，统一解析 data URL 或后续可扩展的 URL/path。
+
+3. `frontend/src/main.tsx`
+   - Setup 主画布下方新增实时 `Detection Diagnostics` 两图面板。
+   - Run 最新帧主画布下方复用同一诊断图面板。
+
+4. `frontend/src/styles.css`
+   - 诊断图固定黑底、并排布局，移动端自动单列。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Initial RED result: FAIL, 2 tests failed because `debug_artifacts.diagnostic_images` did not exist.
+
+npm test -- tests/apiClientUrls.test.mjs
+Initial RED result: FAIL, `readDiagnosticImages is not a function`.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Result after fix: PASS, 2 passed.
+
+npm test -- tests/apiClientUrls.test.mjs
+Result after fix: PASS, 43 tests passed under repository npm test invocation.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright CLI, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5178/`
+- Backend URL: `http://127.0.0.1:8023/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps:
+  1. Start dedicated backend/frontend dev servers with current code on `8023/5178`.
+  2. Open G3 frontend and confirm `golden_a_20260522_dev_lab` is selected.
+  3. On Setup, click `Probe current frame`.
+  4. Confirm the Setup frame shows `Detection Diagnostics` with `Detected mask` and `Envelope contour`.
+  5. Set `target_temperature_celsius = 1.45 °C`.
+  6. Open Run page and start Live Offline Run.
+  7. Wait for a live frame to render and confirm the Run page shows the same two diagnostic images for the latest detection.
+- Expected:
+  - Setup after probe displays two loaded PNG diagnostic images, both in ROI-local coordinates.
+  - Run latest frame displays two loaded PNG diagnostic images while the live run updates.
+  - Main frame overlay, A/B, distance, and temperature display remain available.
+- Actual:
+  - Setup probe returned `VALID`, `distance = 989.00 px`, and displayed `Detected mask` / `Envelope contour`.
+  - Setup diagnostic images loaded from `data:image/png;base64,` with natural size `1270 × 382`.
+  - Run page displayed `golden_a_20260522_dev_lab · live frame 95`, `progress = 95 / 5,807`, `distance = 987.00 px`, `temperature = 1.27 °C`.
+  - Run diagnostic images loaded from `data:image/png;base64,` with natural size `1270 × 382`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0053_setup_diagnostic_images.png`
+  - `output/playwright/p0053_setup_diagnostic_images_state.json`
+  - `output/playwright/p0053_run_diagnostic_images.png`
+  - `output/playwright/p0053_run_diagnostic_images_state.json`
 
 #### Final status
 

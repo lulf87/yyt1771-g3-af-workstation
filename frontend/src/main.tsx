@@ -34,6 +34,7 @@ import {
   previewRealCamera,
   probeFrame,
   probeRealCameraSetupFrame,
+  readDiagnosticImages,
   realCameraPreviewImageUrl,
   recomputeRunAnalysis,
   runFrameImageUrl,
@@ -46,6 +47,7 @@ import {
   type CameraPreviewResponse,
   type CurvePoint,
   type DetectionResult,
+  type DiagnosticImages,
   type MeasurementDefinition,
   type ExportArtifact,
   type LiveOfflineFrameEvent,
@@ -963,24 +965,27 @@ function PageContent({
           <DetectorStatus dataset={dataset} summary={summary} probe={displayedProbe} />
         )}
       </section>
-      {isRealCameraSetup && !activeFrameUrl ? (
-        <PreviewPlaceholder
-          title={activeFrameTitle}
-          refreshStatus={cameraPreviewRefreshStatus}
-          previewError={cameraPreviewError}
-        />
-      ) : (
-        <FrameCanvas
-          title={activeFrameTitle}
-          imageUrl={activeFrameUrl}
-          sourceShape={activeSourceShape}
-          roi={measurement.roi}
-          abPoints={displayedProbe?.detection_result.ab_points ?? null}
-          debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null}
-          onRoiChange={updateRoi}
-          onRoiCommit={isRealCameraSetup ? commitRoi : undefined}
-        />
-      )}
+      <div className="setupPreviewStack">
+        {isRealCameraSetup && !activeFrameUrl ? (
+          <PreviewPlaceholder
+            title={activeFrameTitle}
+            refreshStatus={cameraPreviewRefreshStatus}
+            previewError={cameraPreviewError}
+          />
+        ) : (
+          <FrameCanvas
+            title={activeFrameTitle}
+            imageUrl={activeFrameUrl}
+            sourceShape={activeSourceShape}
+            roi={measurement.roi}
+            abPoints={displayedProbe?.detection_result.ab_points ?? null}
+            debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null}
+            onRoiChange={updateRoi}
+            onRoiCommit={isRealCameraSetup ? commitRoi : undefined}
+          />
+        )}
+        <DetectionDiagnosticImages debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null} />
+      </div>
     </div>
   );
 }
@@ -1564,6 +1569,40 @@ function SetupProbeStatus({
   );
 }
 
+function DetectionDiagnosticImages({
+  debugArtifacts
+}: {
+  debugArtifacts?: Record<string, unknown> | null;
+}) {
+  const images = readDiagnosticImages(debugArtifacts);
+  if (!images) return null;
+  return (
+    <section className="diagnosticImagePanel" aria-label="Detection diagnostic images">
+      <div className="diagnosticImageHeader">
+        <h3>Detection Diagnostics</h3>
+        <span>{images.mask.coordinates}</span>
+      </div>
+      <div className="diagnosticImageGrid">
+        <DiagnosticImageFigure image={images.mask} />
+        <DiagnosticImageFigure image={images.contour} />
+      </div>
+    </section>
+  );
+}
+
+function DiagnosticImageFigure({ image }: { image: DiagnosticImages[keyof DiagnosticImages] }) {
+  const sizeLabel = image.width && image.height ? `${image.width} × ${image.height}` : "";
+  return (
+    <figure className="diagnosticImageFigure">
+      <figcaption>
+        <span>{image.label}</span>
+        {sizeLabel ? <span>{sizeLabel}</span> : null}
+      </figcaption>
+      <img src={image.src} alt={image.label} />
+    </figure>
+  );
+}
+
 function FrameCanvas({
   title,
   imageUrl,
@@ -2096,15 +2135,18 @@ function RunPage({
         </section>
         ) : null}
         {latestFrameUrl && latestDetection ? (
-          <FrameCanvas
-            title={latestFrameTitle}
-            imageUrl={latestFrameUrl}
-            sourceShape={latestSourceShape}
-            roi={measurement.roi}
-            abPoints={latestDetection.ab_points}
-            debugArtifacts={latestDetection.debug_artifacts}
-            readOnly
-          />
+          <>
+            <FrameCanvas
+              title={latestFrameTitle}
+              imageUrl={latestFrameUrl}
+              sourceShape={latestSourceShape}
+              roi={measurement.roi}
+              abPoints={latestDetection.ab_points}
+              debugArtifacts={latestDetection.debug_artifacts}
+              readOnly
+            />
+            <DetectionDiagnosticImages debugArtifacts={latestDetection.debug_artifacts} />
+          </>
         ) : null}
       </div>
     </div>

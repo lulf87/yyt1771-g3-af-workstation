@@ -117,6 +117,19 @@ export type DetectionResult = {
   temperature_sampled_this_frame: boolean;
 };
 
+export type DiagnosticImageInfo = {
+  label: string;
+  src: string;
+  coordinates: string;
+  width: number | null;
+  height: number | null;
+};
+
+export type DiagnosticImages = {
+  mask: DiagnosticImageInfo;
+  contour: DiagnosticImageInfo;
+};
+
 export type ProbeResponse = {
   dataset_id: string;
   frame: FrameSummary & { timestamp_ms: number | null };
@@ -434,6 +447,40 @@ export function isRunFrameImageUrl(url: string, runId: string, frameIndex: numbe
 export function apiUrlFromPath(path: string, options?: FrameImageUrlOptions): string {
   const url = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   return withFrameImageUrlOptions(url, options);
+}
+
+export function readDiagnosticImages(debugArtifacts: Record<string, unknown> | null | undefined): DiagnosticImages | null {
+  if (!debugArtifacts || typeof debugArtifacts !== "object") return null;
+  const diagnosticImages = debugArtifacts.diagnostic_images;
+  if (!diagnosticImages || typeof diagnosticImages !== "object") return null;
+  const source = diagnosticImages as Record<string, unknown>;
+  const mask = readDiagnosticImage(source.mask, "Detected mask");
+  const contour = readDiagnosticImage(source.contour, "Envelope contour");
+  if (!mask || !contour) return null;
+  return { mask, contour };
+}
+
+function readDiagnosticImage(value: unknown, fallbackLabel: string): DiagnosticImageInfo | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+  const rawSource = stringFromUnknown(item.data_url) ?? stringFromUnknown(item.url) ?? stringFromUnknown(item.src);
+  if (!rawSource) return null;
+  const src = rawSource.startsWith("data:") ? rawSource : apiUrlFromPath(rawSource);
+  return {
+    label: stringFromUnknown(item.label) ?? fallbackLabel,
+    src,
+    coordinates: stringFromUnknown(item.coordinates) ?? "roi_local_pixel",
+    width: numberFromUnknown(item.width),
+    height: numberFromUnknown(item.height)
+  };
+}
+
+function stringFromUnknown(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberFromUnknown(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function withFrameImageUrlOptions(url: string, options?: FrameImageUrlOptions): string {
