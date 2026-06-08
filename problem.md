@@ -72,6 +72,7 @@
 | P-0051 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | Playback 1400/1460/1461 + Run 浏览器复测已通过 |
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
+| P-0056 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / frontend diagnostics | A 类 frame 680 左下浅色气泡连入 Detected mask | 2026-06-08 | 2026-06-08 | Codex | golden A frame 680/800 Setup probe + 1400/1460/1461 回归浏览器复测已通过 |
 
 ---
 
@@ -6009,6 +6010,122 @@ Result after fix: PASS, 43 tests passed under repository npm test invocation.
   - `output/playwright/p0053_setup_diagnostic_images_state.json`
   - `output/playwright/p0053_run_diagnostic_images.png`
   - `output/playwright/p0053_run_diagnostic_images_state.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0056 — A 类 frame 680 左下浅色气泡连入 Detected mask
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `backend/src/yyt1771_g3/core/models.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户反馈 `golden_a_20260522_dev_lab` 约 frame 680 附近，ROI 左下浅色气泡进入 `A_BALLOON_ENVELOPE` 的 Detected mask，并且气泡暗边已经和主体 mask 连通。既有 `mask_open_kernel_px=5`、`mask_close_kernel_px=3`、`hysteresis_low_ratio=0.55` 调参仍不能把它从诊断 mask / contour 中剔除。
+
+#### Expected
+
+```text
+1. 气泡、高光、短 crescent 暗边不得成为 A 类整体外包络的一部分。
+2. 即使气泡暗边已经连到主体上，也应通过亮中心 suppress zone、dark-line/ridge evidence、短 artifact spur pruning 和 endpoint guard 排除。
+3. contour_full_box 和 measurement_band 默认基于 bubble-suppressed / artifact-cleaned target mask。
+4. Setup / Run 诊断图应能显示 raw dark mask、bubble_suppress_zone 和 clean measurement mask，便于调参。
+5. frame 800 附近气泡漂走后不得误删真实网格；P-0051 frame 1400/1460/1461 speck 回归不得退化。
+```
+
+#### Actual
+
+当前正式 distance 在既有 P-0016 ROI 下较稳定，但 frame 680 诊断图仍可看到左下气泡/暗边连入 Detected mask 和 envelope contour，容易误导调参，也可能在不同 ROI 下拉大 full contour box 或 endpoint。
+
+#### Suspected cause
+
+当前 A 类检测先用 dark foreground mask 和连通域获取 target，气泡的暗边在 polarity 上与网状暗线相似，且已经连入主体；只按连通域或 pre-close 小组件过滤无法区分该类伪影。
+
+#### Fix summary
+
+1. `backend/src/yyt1771_g3/core/models.py`
+   - 新增 bubble suppression、dark-line/ridge、endpoint guard、spur pruning 相关 `DetectorConfig` 参数，默认值按用户要求启用。
+
+2. `backend/src/yyt1771_g3/vision/detectors.py`
+   - A 类检测保留 `raw_dark_mask`，新增 compact bright bubble suppress zone，并只在 raw target 的外侧/端点区域应用，避免把内部网眼当成气泡。
+   - 新增 dark-line/ridge response、短 terminal spur pruning、endpoint guard row rejection 诊断。
+   - 正式候选优先使用 clean measurement mask；当 suppress zone 呈大面积/大量候选并明显缩小正式宽度时，回退 raw robust candidate，避免误删真实网格。
+   - 诊断图从 2 张扩展为 `Detected mask`、`Envelope contour`、`Raw dark mask`、`Bubble suppress zone`、`Clean measurement mask`。
+
+3. `frontend/src/api/client.ts`, `frontend/src/main.tsx`
+   - 前端 `DetectorConfig` 类型和默认值补齐新增参数。
+   - Setup 参数面板新增 `Artifact / Bubble suppression`、`Line / Ridge`、`Spur pruning` 分组。
+   - 诊断图面板改为渲染 backend 返回的全部 diagnostic images，同时保留旧 `mask`/`contour` 解析兼容。
+
+4. `backend/tests/unit/test_envelope_detectors.py`, `backend/tests/integration/test_golden_detector_smoke.py`
+   - 新增 connected bubble spur endpoint guard synthetic regression。
+   - 新增 `golden_a_20260522_dev_lab` frame 680/800 bubble suppression regression。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py::test_connected_bubble_spur_rows_are_rejected_before_mesh_endpoint_selection -q
+Result before fix: FAIL
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_golden_detector_smoke.py::test_golden_a_frame_680_bright_bubble_is_removed_from_clean_diagnostic_mask -q
+Result before fix: FAIL
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py backend/tests/integration/test_golden_detector_smoke.py -q
+Result after fix: PASS, 20 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Result after fix: PASS, 2 passed.
+
+npm test
+Result after fix: PASS, 43 passed.
+
+npm run build
+Result after fix: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5173/`
+- Backend URL: `http://127.0.0.1:8000/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Restart `g3-backend` and `g3-frontend` tmux sessions with current code.
+  2. Open Setup page and confirm `golden_a_20260522_dev_lab` is selected.
+  3. Confirm new parameter groups are visible: `Artifact / Bubble suppression`, `Line / Ridge`, `Spur pruning`.
+  4. Set P-0016 ROI: `center_x=1179.71`, `center_y=680.43`, `width=1236.76`, `height=820.9`, `angle_deg=-16.27`.
+  5. Set tuned parameters: `mask_open_kernel_px=5`, `mask_close_kernel_px=3`, `hysteresis_low_ratio=0.55`.
+  6. Probe frame 680 and inspect overlay / result / diagnostic images.
+  7. Probe frame 800 with same ROI and parameters.
+  8. Set P-0051 ROI: `center_x=1178.85`, `center_y=522.29`, `width=1260.1`, `height=307.04`, `angle_deg=-8.06`, default mask parameters.
+  9. Probe frame 1400, 1460, 1461 and inspect final frame 1461.
+- Expected:
+  - Frame 680 and frame 800 both return VALID and stable distance.
+  - Setup displays all five diagnostic images from backend.
+  - Bubble / ridge / spur parameter groups are visible.
+  - P-0051 frame 1461 remains stable and does not regress the right-side speck fix.
+- Actual:
+  - Frame 680 returned `VALID`, `distance = 1003.00 px`, temperature `2.90 °C`, sync `TEMP_SYNC_INTERPOLATED`.
+  - Frame 800 returned `VALID`, `distance = 1001.00 px`, temperature `3.50 °C`, sync `TEMP_SYNC_INTERPOLATED`.
+  - Both frame 680 and frame 800 loaded five ROI-local diagnostic images: `Detected mask`, `Envelope contour`, `Raw dark mask`, `Bubble suppress zone`, `Clean measurement mask`, all with natural size `1237 × 821`.
+  - P-0051 frame 1461 returned `VALID`, `distance = 999.00 px`, with five diagnostic images loaded.
+  - Backend regression for P-0051 1400/1460/1461 passed in pytest, including right edge guard.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0056_setup_frame680_bubble_diagnostics.png`
+  - `output/playwright/p0056_setup_frame800_clean_diagnostics.png`
+  - `output/playwright/p0056_p0051_frame1461_regression.png`
 
 #### Final status
 

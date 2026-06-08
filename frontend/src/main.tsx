@@ -175,6 +175,26 @@ const DEFAULT_CONFIG = {
   show_measurement_band_box: true,
   roi_edge_guard_px: 5,
   detection_roi_padding_px: 0,
+  bubble_suppress_enabled: true,
+  bubble_local_radius_px: 31,
+  bubble_bright_z_threshold: 1.2,
+  bubble_min_area_px: 20,
+  bubble_max_area_px: 800,
+  bubble_max_bbox_px: 60,
+  bubble_max_aspect_ratio: 2.5,
+  bubble_min_compactness: 0.12,
+  bubble_suppress_radius_px: 10,
+  bubble_suppress_measurement_only: false,
+  dark_line_filter_enabled: true,
+  dark_line_filter_length_px: 17,
+  dark_line_filter_width_px: 3,
+  dark_line_min_response: 0,
+  endpoint_min_dark_line_response: 0,
+  spur_prune_enabled: true,
+  spur_prune_max_length_px: 35,
+  spur_prune_dilate_px: 3,
+  spur_prune_min_ridge_response: 0,
+  spur_prune_require_bubble_overlap_or_low_ridge: true,
   max_frames_per_run: 160,
   live_offline_fps: 8,
   target_temperature_celsius: null,
@@ -225,6 +245,9 @@ type DetectorParameterGroup =
   | "Envelope"
   | "Robust max width"
   | "Boundary support"
+  | "Artifact / Bubble suppression"
+  | "Line / Ridge"
+  | "Spur pruning"
   | "Contour diagnostics"
   | "Temporal stability"
   | "Run";
@@ -262,6 +285,26 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   { key: "boundary_support_window_px", label: "Boundary support window px", type: "int", min: 1, max: 51, step: 2, group: "Boundary support", title: "Horizontal strip around each candidate boundary for support counting." },
   { key: "boundary_support_min_pixels", label: "Boundary support min pixels", type: "int", min: 1, max: 100, step: 1, group: "Boundary support", title: "Minimum pixels required near each candidate boundary." },
   { key: "boundary_support_min_ratio", label: "Boundary support min ratio", type: "float", min: 0, max: 0.5, step: 0.01, group: "Boundary support", title: "Minimum boundary support relative to row-window foreground pixels." },
+  { key: "bubble_suppress_enabled", label: "Bubble suppression", type: "bool", group: "Artifact / Bubble suppression", title: "Suppresses compact bright bubble centers and their nearby dark rims before A/B selection." },
+  { key: "bubble_bright_z_threshold", label: "Bubble bright z", type: "float", min: 0.2, max: 5, step: 0.1, group: "Artifact / Bubble suppression", title: "Local brightness threshold for compact bubble-center candidates." },
+  { key: "bubble_suppress_radius_px", label: "Bubble suppress radius px", type: "int", min: 1, max: 80, step: 1, group: "Artifact / Bubble suppression", title: "Radius used to expand a bright bubble center over its dark rim." },
+  { key: "bubble_min_area_px", label: "Bubble min area", type: "int", min: 1, max: 5000, step: 1, group: "Artifact / Bubble suppression", title: "Minimum bright blob area for bubble suppression." },
+  { key: "bubble_max_area_px", label: "Bubble max area", type: "int", min: 1, max: 10000, step: 10, group: "Artifact / Bubble suppression", title: "Maximum bright blob area for bubble suppression." },
+  { key: "bubble_max_aspect_ratio", label: "Bubble max aspect", type: "float", min: 1, max: 10, step: 0.1, group: "Artifact / Bubble suppression", title: "Rejects elongated highlights from bubble suppression." },
+  { key: "bubble_local_radius_px", label: "Bubble local radius", type: "int", min: 3, max: 101, step: 2, group: "Artifact / Bubble suppression", advanced: true, title: "Local background radius for bright bubble detection." },
+  { key: "bubble_max_bbox_px", label: "Bubble max bbox", type: "int", min: 1, max: 200, step: 1, group: "Artifact / Bubble suppression", advanced: true, title: "Maximum width or height for a compact bubble-center candidate." },
+  { key: "bubble_min_compactness", label: "Bubble compactness", type: "float", min: 0, max: 1, step: 0.01, group: "Artifact / Bubble suppression", advanced: true, title: "Minimum bbox fill ratio for a compact bubble-center candidate." },
+  { key: "bubble_suppress_measurement_only", label: "Measurement-only bubble suppress", type: "bool", group: "Artifact / Bubble suppression", advanced: true, title: "Reserved switch for keeping diagnostic contour boxes closer to raw target masks." },
+  { key: "dark_line_filter_enabled", label: "Dark line filter", type: "bool", group: "Line / Ridge", title: "Computes dark line/ridge evidence for measurement filtering and endpoint guard diagnostics." },
+  { key: "dark_line_filter_length_px", label: "Line filter length", type: "int", min: 3, max: 101, step: 2, group: "Line / Ridge", title: "Length of the line-response filter." },
+  { key: "dark_line_filter_width_px", label: "Line filter width", type: "int", min: 1, max: 31, step: 2, group: "Line / Ridge", title: "Width of the line-response filter." },
+  { key: "endpoint_min_dark_line_response", label: "Endpoint min ridge", type: "float", min: 0, max: 255, step: 1, group: "Line / Ridge", title: "Minimum dark-line response required near each endpoint; 0 disables the threshold." },
+  { key: "dark_line_min_response", label: "Mask min ridge", type: "float", min: 0, max: 255, step: 1, group: "Line / Ridge", advanced: true, title: "Minimum dark-line response required for measurement-mask pixels; 0 disables the threshold." },
+  { key: "spur_prune_enabled", label: "Spur pruning", type: "bool", group: "Spur pruning", title: "Prunes short terminal artifact branches when they overlap bubble zones or weak ridge evidence." },
+  { key: "spur_prune_max_length_px", label: "Spur max length px", type: "int", min: 1, max: 200, step: 1, group: "Spur pruning", title: "Maximum terminal branch length eligible for pruning." },
+  { key: "spur_prune_dilate_px", label: "Spur dilate px", type: "int", min: 1, max: 30, step: 1, group: "Spur pruning", title: "Local dilation used when removing a rejected terminal spur." },
+  { key: "spur_prune_min_ridge_response", label: "Spur min ridge", type: "float", min: 0, max: 255, step: 1, group: "Spur pruning", advanced: true, title: "Minimum mean ridge response for terminal branches; 0 uses bubble overlap only." },
+  { key: "spur_prune_require_bubble_overlap_or_low_ridge", label: "Require spur evidence", type: "bool", group: "Spur pruning", advanced: true, title: "Requires bubble overlap or low ridge evidence before pruning short branches." },
   { key: "contour_box_mode", label: "Contour box mode", type: "select", group: "Contour diagnostics", options: [
     { value: "component_bbox", label: "Component bbox" },
     { value: "robust_component_bbox", label: "Robust component bbox" },
@@ -1760,18 +1803,19 @@ function DetectionDiagnosticImages({
     <section className="diagnosticImagePanel" aria-label="Detection diagnostic images">
       <div className="diagnosticImageHeader">
         <h3>Detection Diagnostics</h3>
-        <span>{images.mask.coordinates}</span>
+        <span>{images[0]?.coordinates ?? "roi_local_pixel"}</span>
       </div>
       {roiWarning ? <div className="diagnosticWarning">{roiWarning}</div> : null}
       <div className="diagnosticImageGrid">
-        <DiagnosticImageFigure image={images.mask} />
-        <DiagnosticImageFigure image={images.contour} />
+        {images.map((image) => (
+          <DiagnosticImageFigure image={image} key={image.label} />
+        ))}
       </div>
     </section>
   );
 }
 
-function DiagnosticImageFigure({ image }: { image: DiagnosticImages[keyof DiagnosticImages] }) {
+function DiagnosticImageFigure({ image }: { image: DiagnosticImages[number] }) {
   const sizeLabel = image.width && image.height ? `${image.width} × ${image.height}` : "";
   return (
     <figure className="diagnosticImageFigure">

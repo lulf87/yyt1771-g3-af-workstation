@@ -81,6 +81,26 @@ export type DetectorConfig = {
   show_measurement_band_box?: boolean;
   roi_edge_guard_px?: number;
   detection_roi_padding_px?: number;
+  bubble_suppress_enabled?: boolean;
+  bubble_local_radius_px?: number;
+  bubble_bright_z_threshold?: number;
+  bubble_min_area_px?: number;
+  bubble_max_area_px?: number;
+  bubble_max_bbox_px?: number;
+  bubble_max_aspect_ratio?: number;
+  bubble_min_compactness?: number;
+  bubble_suppress_radius_px?: number;
+  bubble_suppress_measurement_only?: boolean;
+  dark_line_filter_enabled?: boolean;
+  dark_line_filter_length_px?: number;
+  dark_line_filter_width_px?: number;
+  dark_line_min_response?: number;
+  endpoint_min_dark_line_response?: number;
+  spur_prune_enabled?: boolean;
+  spur_prune_max_length_px?: number;
+  spur_prune_dilate_px?: number;
+  spur_prune_min_ridge_response?: number;
+  spur_prune_require_bubble_overlap_or_low_ridge?: boolean;
   max_frames_per_run?: number;
   live_offline_fps?: number;
   target_temperature_celsius?: number | null;
@@ -147,9 +167,9 @@ export type DiagnosticImageInfo = {
   height: number | null;
 };
 
-export type DiagnosticImages = {
-  mask: DiagnosticImageInfo;
-  contour: DiagnosticImageInfo;
+export type DiagnosticImages = DiagnosticImageInfo[] & {
+  mask?: DiagnosticImageInfo;
+  contour?: DiagnosticImageInfo;
 };
 
 export type ProbeResponse = {
@@ -476,10 +496,14 @@ export function readDiagnosticImages(debugArtifacts: Record<string, unknown> | n
   const diagnosticImages = debugArtifacts.diagnostic_images;
   if (!diagnosticImages || typeof diagnosticImages !== "object") return null;
   const source = diagnosticImages as Record<string, unknown>;
-  const mask = readDiagnosticImage(source.mask, "Detected mask");
-  const contour = readDiagnosticImage(source.contour, "Envelope contour");
-  if (!mask || !contour) return null;
-  return { mask, contour };
+  const images = Object.entries(source)
+    .map(([key, value]) => readDiagnosticImage(value, key))
+    .filter((image): image is DiagnosticImageInfo => image !== null);
+  if (images.length === 0) return null;
+  const result = images as DiagnosticImages;
+  result.mask = readDiagnosticImage(source.mask, "Detected mask") ?? undefined;
+  result.contour = readDiagnosticImage(source.contour, "Envelope contour") ?? undefined;
+  return result;
 }
 
 function readDiagnosticImage(value: unknown, fallbackLabel: string): DiagnosticImageInfo | null {

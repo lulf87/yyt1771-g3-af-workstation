@@ -105,6 +105,42 @@ def test_external_speck_does_not_expand_formal_width() -> None:
     assert result.ab_points.a.y > 20.0
 
 
+def test_connected_bubble_spur_rows_are_rejected_before_mesh_endpoint_selection() -> None:
+    mask = np.zeros((160, 220), dtype=bool)
+    mask[45:126, 70:171] = True
+    yy, xx = np.ogrid[:160, :220]
+    bubble_center = (48, 96)
+    radius = np.sqrt((xx - bubble_center[0]) ** 2 + (yy - bubble_center[1]) ** 2)
+    mask[(radius >= 18) & (radius <= 25)] = True
+    mask[90:103, 55:73] = True
+    bubble_suppress_zone = radius <= 36
+
+    candidate = _mesh_envelope_candidate(
+        mask,
+        RotatedROI(center_x=110.0, center_y=80.0, width=220.0, height=160.0, angle_deg=0.0),
+        DetectorConfig(
+            min_window_pixels=6,
+            envelope_quantile=0.0,
+            envelope_window_px=9,
+            envelope_step_px=1,
+            mesh_row_width_keep_ratio=0.1,
+            mesh_row_count_keep_ratio=0.1,
+            bubble_suppress_radius_px=10,
+            endpoint_min_dark_line_response=0.0,
+        ),
+        endpoint_guard_zone=bubble_suppress_zone,
+        ridge_response=np.zeros_like(mask, dtype=float),
+    )
+
+    assert candidate is not None
+    debug = candidate.metadata["debug_artifacts"]
+    assert candidate.width_px == pytest.approx(100.0, abs=1.0)
+    assert debug["raw_width_px"] > candidate.width_px + 40.0
+    assert debug["endpoint_guard_rejected_rows_count"] > 0
+    assert debug["endpoint_guard_reject_reason"] == "ENDPOINT_OVERLAPS_BUBBLE_SUPPRESS_ZONE"
+    assert debug["mesh_left_local_px"] == pytest.approx(70.0, abs=1.0)
+
+
 def test_mesh_envelope_rejects_side_speck_row_window() -> None:
     mask = np.zeros((120, 150), dtype=bool)
     mask[30:91, 30:91] = True

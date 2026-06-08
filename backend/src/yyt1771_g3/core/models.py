@@ -86,6 +86,26 @@ class DetectorConfig(G3Model):
     show_measurement_band_box: bool = True
     roi_edge_guard_px: float = 5.0
     detection_roi_padding_px: float = 0.0
+    bubble_suppress_enabled: bool = True
+    bubble_local_radius_px: int = 31
+    bubble_bright_z_threshold: float = 1.2
+    bubble_min_area_px: int = 20
+    bubble_max_area_px: int = 800
+    bubble_max_bbox_px: int = 60
+    bubble_max_aspect_ratio: float = 2.5
+    bubble_min_compactness: float = 0.12
+    bubble_suppress_radius_px: int = 10
+    bubble_suppress_measurement_only: bool = False
+    dark_line_filter_enabled: bool = True
+    dark_line_filter_length_px: int = 17
+    dark_line_filter_width_px: int = 3
+    dark_line_min_response: float = 0.0
+    endpoint_min_dark_line_response: float = 0.0
+    spur_prune_enabled: bool = True
+    spur_prune_max_length_px: int = 35
+    spur_prune_dilate_px: int = 3
+    spur_prune_min_ridge_response: float = 0.0
+    spur_prune_require_bubble_overlap_or_low_ridge: bool = True
     wire_threshold_scale: float = 0.9
     wire_min_response: float = 8.0
     wire_bridge_kernel_px: int = 3
@@ -107,6 +127,15 @@ class DetectorConfig(G3Model):
         "boundary_support_window_px",
         "boundary_support_min_pixels",
         "distance_jump_hold_frames",
+        "bubble_local_radius_px",
+        "bubble_min_area_px",
+        "bubble_max_area_px",
+        "bubble_max_bbox_px",
+        "bubble_suppress_radius_px",
+        "dark_line_filter_length_px",
+        "dark_line_filter_width_px",
+        "spur_prune_max_length_px",
+        "spur_prune_dilate_px",
         "wire_min_component_area_px",
         "max_frames_per_run",
     )

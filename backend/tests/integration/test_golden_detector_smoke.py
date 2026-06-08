@@ -4,7 +4,7 @@ import pytest
 
 from yyt1771_g3.core.enums import DetectionStatus
 from yyt1771_g3.core.enums import DetectorType, ObjectClass, WidthMode
-from yyt1771_g3.core.models import MeasurementDefinition, RotatedROI
+from yyt1771_g3.core.models import DetectorConfig, MeasurementDefinition, RotatedROI
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, load_dataset_registry
 from yyt1771_g3.vision.detectors import detect_frame, detect_frame_with_state
 from yyt1771_g3.vision.stability import CandidateSelectionState
@@ -100,6 +100,61 @@ def test_golden_a_bubble_frames_do_not_use_cross_row_mesh_span() -> None:
         distances.append(result.distance_px)
 
     assert max(distances) - min(distances) <= 2.0
+
+
+def test_golden_a_frame_680_bright_bubble_is_removed_from_clean_diagnostic_mask() -> None:
+    try:
+        registry = load_dataset_registry()
+        registry.resolve_dataset("golden_a_20260522_dev_lab")
+    except OfflineDatasetError as exc:
+        pytest.skip(f"local golden dataset is not accessible: {exc}")
+
+    measurement = MeasurementDefinition(
+        measurement_id="p0056-frame-680-bubble-suppression",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(
+            center_x=1179.71,
+            center_y=680.43,
+            width=1236.76,
+            height=820.9,
+            angle_deg=-16.27,
+        ),
+        detector_config=DetectorConfig(
+            mask_open_kernel_px=5,
+            mask_close_kernel_px=3,
+            hysteresis_low_ratio=0.55,
+            bubble_suppress_enabled=True,
+            bubble_bright_z_threshold=1.2,
+            bubble_suppress_radius_px=10,
+            bubble_min_area_px=20,
+            bubble_max_area_px=800,
+            bubble_max_aspect_ratio=2.5,
+            dark_line_filter_enabled=True,
+            endpoint_min_dark_line_response=0.0,
+            spur_prune_enabled=True,
+        ),
+    )
+
+    results = {}
+    for frame_index in [680, 800]:
+        frame = registry.load_frame("golden_a_20260522_dev_lab", frame_index)
+        result = detect_frame(frame.array, measurement, frame_index=frame_index)
+
+        assert result.detection_status == DetectionStatus.VALID
+        assert result.distance_px is not None
+        diagnostic_images = result.debug_artifacts["diagnostic_images"]
+        assert diagnostic_images["raw_dark_mask"]["data_url"].startswith("data:image/png;base64,")
+        assert diagnostic_images["bubble_suppress_zone"]["data_url"].startswith("data:image/png;base64,")
+        assert diagnostic_images["clean_measurement_mask"]["data_url"].startswith("data:image/png;base64,")
+        results[frame_index] = result
+
+    frame_680_debug = results[680].debug_artifacts
+    assert frame_680_debug["bubble_suppress_triggered"] or frame_680_debug["endpoint_guard_rejected_rows_count"] > 0
+    assert frame_680_debug["bubble_candidate_count"] > 0
+    assert results[680].distance_px == pytest.approx(results[800].distance_px, abs=8.0)
+    assert results[800].debug_artifacts["target_mask_pixels"] > 1000
 
 
 def test_golden_a_split_mesh_components_are_measured_as_one_body() -> None:
