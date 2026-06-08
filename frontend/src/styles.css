@@ -554,12 +554,69 @@ input {
   font-weight: 700;
 }
 
-.diagnosticImageFigure img {
+.diagnosticImageCanvas {
+  position: relative;
+  height: 240px;
+  background: #111827;
+}
+
+.diagnosticImageCanvas img {
   display: block;
   width: 100%;
   height: 240px;
   object-fit: contain;
   image-rendering: pixelated;
+}
+
+.diagnosticImageOverlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 240px;
+  pointer-events: none;
+}
+
+.diagnosticImageOverlay polygon {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagnosticFullBox {
+  stroke: #ef4444;
+  stroke-width: 3;
+}
+
+.diagnosticBandBox {
+  fill: rgba(245, 158, 11, 0.12);
+  stroke: #f59e0b;
+  stroke-dasharray: 8 6;
+  stroke-width: 2.5;
+}
+
+.diagnosticMeasurementLine {
+  stroke: #f59e0b;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagnosticABPoint {
+  fill: #fef3c7;
+  stroke: #d97706;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagnosticImageOverlay text {
+  fill: #ffffff;
+  stroke: #111827;
+  stroke-width: 3;
+  paint-order: stroke;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.diagnosticImageOverlay .diagnosticBandLabel {
+  fill: #fbbf24;
 }
 
 .frameCanvasStatus {

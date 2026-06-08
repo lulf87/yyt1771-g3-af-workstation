@@ -134,6 +134,7 @@ def test_golden_a_frame_680_bright_bubble_is_removed_from_clean_diagnostic_mask(
             dark_line_filter_enabled=True,
             endpoint_min_dark_line_response=0.0,
             spur_prune_enabled=True,
+            show_advanced_diagnostics=True,
         ),
     )
 

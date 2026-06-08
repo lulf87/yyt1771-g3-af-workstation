@@ -370,6 +370,8 @@ def test_streamed_live_offline_run_fast_mode_omits_diagnostic_images_until_reque
             mask_open_kernel_px=1,
             mask_close_kernel_px=1,
             mask_dilate_kernel_px=1,
+            contour_box_padding_px=0.0,
+            roi_edge_guard_px=0.0,
             run_detector_mode="fast",
             run_diagnostics_mode="suspicious_only",
         ),
@@ -416,8 +418,46 @@ def test_streamed_live_offline_run_fast_mode_omits_diagnostic_images_until_reque
 
     assert fast_frame_debug["diagnostics_generated"] is False
     assert "diagnostic_images" not in fast_frame_debug
+    assert fast_frame_debug["detector_execution_mode"] == "fast"
     assert diagnostic_frame_debug["diagnostics_generated"] is True
-    assert diagnostic_frame_debug["diagnostic_images"]["mask"]["data_url"].startswith("data:image/png;base64,")
+    assert diagnostic_frame_debug["detector_execution_mode"] == "diagnostics"
+    assert set(diagnostic_frame_debug["diagnostic_images"]) == {"detected_mask", "envelope_contour"}
+    assert diagnostic_frame_debug["diagnostic_images"]["detected_mask"]["data_url"].startswith("data:image/png;base64,")
+
+    suspicious_measurement = MeasurementDefinition.model_validate(
+        {
+            **base_measurement.model_dump(mode="json"),
+            "measurement_id": "run-suspicious-only-enhanced-measurement",
+            "detector_config": {
+                **base_measurement.detector_config.model_dump(mode="json"),
+                "run_detector_mode": "fast",
+                "run_diagnostics_mode": "suspicious_only",
+                "run_enhanced_detector_on_suspicious": True,
+                "suspicious_boundary_reject_ratio": 0.0,
+                "contour_box_padding_px": 8.0,
+                "roi_edge_guard_px": 20.0,
+            },
+        }
+    )
+    suspicious_events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=suspicious_measurement,
+            start_frame=1,
+            max_frames=2,
+            target_fps=8.0,
+        )
+    )
+    suspicious_frame_debug = [
+        event for event in suspicious_events if event["event"] == "frame"
+    ][0]["detection_result"]["debug_artifacts"]
+    assert suspicious_frame_debug["suspicious"] is True
+    assert suspicious_frame_debug["enhanced_rerun_used"] is True
+    assert suspicious_frame_debug["diagnostics_generated"] is True
+    assert suspicious_frame_debug["detector_execution_mode"] == "enhanced"
+    assert set(suspicious_frame_debug["diagnostic_images"]) == {"detected_mask", "envelope_contour"}
 
 
 def test_streamed_live_offline_run_short_frame_events_defer_afas_preview(tmp_path: Path) -> None:

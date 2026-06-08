@@ -157,6 +157,43 @@ def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Pat
     assert restored == result.manifest
 
 
+def test_real_camera_run_suspicious_only_uses_enhanced_core_diagnostics(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-suspicious-diagnostics-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=1,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+            run_detector_mode="fast",
+            run_diagnostics_mode="suspicious_only",
+            run_enhanced_detector_on_suspicious=True,
+            suspicious_boundary_reject_ratio=0.0,
+        ),
+    )
+
+    result = run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        measurement=measurement,
+        max_frames=1,
+        target_fps=8.0,
+    )
+
+    debug = result.manifest.detection_results[0].debug_artifacts
+    assert debug["suspicious"] is True
+    assert debug["enhanced_rerun_used"] is True
+    assert debug["diagnostics_generated"] is True
+    assert debug["detector_execution_mode"] == "enhanced"
+    assert set(debug["diagnostic_images"]) == {"detected_mask", "envelope_contour"}
+
+
 def test_real_camera_run_samples_lu92xx_temperature_each_frame(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     measurement = MeasurementDefinition(

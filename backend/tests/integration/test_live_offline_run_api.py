@@ -228,7 +228,12 @@ def test_live_offline_run_stream_api_emits_frame_events_and_final_run(tmp_path: 
                 "height": 40.0,
                 "angle_deg": 0.0,
             },
-            "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 1},
+            "detector_config": {
+                "min_component_area_px": 20,
+                "max_frames_per_run": 1,
+                "contour_box_padding_px": 0.0,
+                "roi_edge_guard_px": 0.0,
+            },
         },
     }
 

@@ -200,6 +200,8 @@ const DEFAULT_CONFIG = {
   processing_scale_mode: "area_downsample" as const,
   refine_endpoint_on_full_res: true,
   full_res_refine_band_px: 12,
+  detector_execution_mode: "diagnostics" as const,
+  show_advanced_diagnostics: false,
   run_detector_mode: "fast" as const,
   run_diagnostics_mode: "suspicious_only" as const,
   run_preview_fps: 5,
@@ -289,6 +291,12 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   ], title: "Downsampling method used before detector preprocessing." },
   { key: "refine_endpoint_on_full_res", label: "Full-res endpoint refine", type: "bool", group: "Image processing / Scale", title: "Refines restored endpoints in a narrow full-resolution band when scale is below 1.0." },
   { key: "full_res_refine_band_px", label: "Full-res refine band", type: "int", min: 1, max: 80, step: 1, group: "Image processing / Scale", advanced: true, title: "Local source-pixel band used for endpoint refinement." },
+  { key: "detector_execution_mode", label: "Probe detector mode", type: "select", group: "Run performance", options: [
+    { value: "fast", label: "Fast" },
+    { value: "enhanced", label: "Enhanced" },
+    { value: "diagnostics", label: "Diagnostics" }
+  ], title: "Detector path used by Probe and single-frame playback." },
+  { key: "show_advanced_diagnostics", label: "Advanced diagnostics", type: "bool", group: "Contour diagnostics", title: "Shows additional process masks beyond Detected mask and Envelope contour." },
   { key: "mask_open_kernel_px", label: "Mask open kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", title: "Larger values remove more isolated dark pixels." },
   { key: "mask_close_kernel_px", label: "Mask close kernel", type: "int", min: 1, max: 51, step: 2, group: "Mask", title: "Larger values bridge short gaps in the mesh mask." },
   { key: "mask_dilate_kernel_px", label: "Mask dilate kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", advanced: true, title: "Expands the detected mask after closing." },
@@ -1191,7 +1199,10 @@ function PageContent({
             onRoiCommit={isRealCameraSetup ? commitRoi : undefined}
           />
         )}
-        <DetectionDiagnosticImages debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null} />
+        <DetectionDiagnosticImages
+          debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null}
+          roi={measurement?.roi ?? null}
+        />
       </div>
     </div>
   );
@@ -1866,9 +1877,11 @@ function SetupProbeStatus({
 }
 
 function DetectionDiagnosticImages({
-  debugArtifacts
+  debugArtifacts,
+  roi
 }: {
   debugArtifacts?: Record<string, unknown> | null;
+  roi?: RotatedROI | null;
 }) {
   const images = readDiagnosticImages(debugArtifacts);
   if (!images) return null;
@@ -1886,24 +1899,119 @@ function DetectionDiagnosticImages({
       {roiWarning ? <div className="diagnosticWarning">{roiWarning}</div> : null}
       <div className="diagnosticImageGrid">
         {images.map((image) => (
-          <DiagnosticImageFigure image={image} key={image.label} />
+          <DiagnosticImageFigure debugArtifacts={debugArtifacts ?? null} image={image} key={image.label} roi={roi ?? null} />
         ))}
       </div>
     </section>
   );
 }
 
-function DiagnosticImageFigure({ image }: { image: DiagnosticImages[number] }) {
+function DiagnosticImageFigure({
+  debugArtifacts,
+  image,
+  roi
+}: {
+  debugArtifacts: Record<string, unknown> | null;
+  image: DiagnosticImages[number];
+  roi: RotatedROI | null;
+}) {
   const sizeLabel = image.width && image.height ? `${image.width} × ${image.height}` : "";
+  const overlay = diagnosticOverlayModel(debugArtifacts, roi, image);
   return (
     <figure className="diagnosticImageFigure">
       <figcaption>
         <span>{image.label}</span>
         {sizeLabel ? <span>{sizeLabel}</span> : null}
       </figcaption>
-      <img src={image.src} alt={image.label} />
+      <div className="diagnosticImageCanvas">
+        <img src={image.src} alt={image.label} />
+        {overlay ? (
+          <svg className="diagnosticImageOverlay" preserveAspectRatio="xMidYMid meet" viewBox={`0 0 ${overlay.width} ${overlay.height}`}>
+            {overlay.fullBox.length === 4 ? (
+              <polygon className="diagnosticFullBox" points={overlay.fullBox.map((point) => `${point.x},${point.y}`).join(" ")} />
+            ) : null}
+            {overlay.bandBox.length === 4 ? (
+              <>
+                <polygon className="diagnosticBandBox" points={overlay.bandBox.map((point) => `${point.x},${point.y}`).join(" ")} />
+                <text className="diagnosticBandLabel" x={overlay.bandBox[0].x + 8} y={overlay.bandBox[0].y + 18}>
+                  Measurement band
+                </text>
+              </>
+            ) : null}
+            {overlay.measurementLine.length === 2 ? (
+              <line
+                className="diagnosticMeasurementLine"
+                x1={overlay.measurementLine[0].x}
+                x2={overlay.measurementLine[1].x}
+                y1={overlay.measurementLine[0].y}
+                y2={overlay.measurementLine[1].y}
+              />
+            ) : null}
+            {overlay.pointA ? (
+              <>
+                <circle className="diagnosticABPoint" cx={overlay.pointA.x} cy={overlay.pointA.y} r={5} />
+                <text className="diagnosticABLabel" x={overlay.pointA.x + 7} y={overlay.pointA.y - 7}>
+                  A
+                </text>
+              </>
+            ) : null}
+            {overlay.pointB ? (
+              <>
+                <circle className="diagnosticABPoint" cx={overlay.pointB.x} cy={overlay.pointB.y} r={5} />
+                <text className="diagnosticABLabel" x={overlay.pointB.x + 7} y={overlay.pointB.y + 15}>
+                  B
+                </text>
+              </>
+            ) : null}
+          </svg>
+        ) : null}
+      </div>
     </figure>
   );
+}
+
+function diagnosticOverlayModel(
+  debugArtifacts: Record<string, unknown> | null,
+  roi: RotatedROI | null,
+  image: DiagnosticImages[number]
+): {
+  width: number;
+  height: number;
+  fullBox: ABPoint[];
+  bandBox: ABPoint[];
+  measurementLine: ABPoint[];
+  pointA: ABPoint | null;
+  pointB: ABPoint | null;
+} | null {
+  if (!debugArtifacts || !roi || !image.width || !image.height) return null;
+  if (image.coordinates !== "roi_local_full_res") return null;
+  const fullBox = readPointArray(debugArtifacts.contour_full_box).map((point) => measurementPointToRoiLocal(point, roi));
+  const projectionBox = readPointArray(debugArtifacts.contour_projection_box).map((point) => measurementPointToRoiLocal(point, roi));
+  const bandBox = readPointArray(debugArtifacts.contour_measurement_band_box).map((point) => measurementPointToRoiLocal(point, roi));
+  const measurementLine = readPointArray(debugArtifacts.measurement_line).map((point) => measurementPointToRoiLocal(point, roi));
+  const pointA = readPoint(debugArtifacts.point_a);
+  const pointB = readPoint(debugArtifacts.point_b);
+  return {
+    width: image.width,
+    height: image.height,
+    fullBox: fullBox.length === 4 ? fullBox : projectionBox,
+    bandBox,
+    measurementLine,
+    pointA: pointA ? measurementPointToRoiLocal(pointA, roi) : null,
+    pointB: pointB ? measurementPointToRoiLocal(pointB, roi) : null
+  };
+}
+
+function measurementPointToRoiLocal(point: ABPoint, roi: RotatedROI): ABPoint {
+  const theta = (roi.angle_deg * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const dx = point.x - roi.center_x;
+  const dy = point.y - roi.center_y;
+  return {
+    x: dx * cos + dy * sin + roi.width / 2,
+    y: -dx * sin + dy * cos + roi.height / 2
+  };
 }
 
 function FrameCanvas({
@@ -2207,16 +2315,21 @@ function normalizeVector(vector: ABPoint): ABPoint {
 function readPointArray(value: unknown): ABPoint[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
-    if (
-      typeof item === "object" &&
-      item !== null &&
-      typeof (item as { x?: unknown }).x === "number" &&
-      typeof (item as { y?: unknown }).y === "number"
-    ) {
-      return [{ x: (item as { x: number }).x, y: (item as { y: number }).y }];
-    }
-    return [];
+    const point = readPoint(item);
+    return point ? [point] : [];
   });
+}
+
+function readPoint(value: unknown): ABPoint | null {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { x?: unknown }).x === "number" &&
+    typeof (value as { y?: unknown }).y === "number"
+  ) {
+    return { x: (value as { x: number }).x, y: (value as { y: number }).y };
+  }
+  return null;
 }
 
 function numberFromUnknown(value: unknown): number | null {
@@ -2467,7 +2580,7 @@ function RunPage({
               debugArtifacts={latestDetection.debug_artifacts}
               readOnly
             />
-            <DetectionDiagnosticImages debugArtifacts={latestDetection.debug_artifacts} />
+            <DetectionDiagnosticImages debugArtifacts={latestDetection.debug_artifacts} roi={measurement.roi} />
           </>
         ) : null}
       </div>

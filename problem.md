@@ -74,6 +74,7 @@
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
 | P-0056 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / frontend diagnostics | A 类 frame 680 左下浅色气泡连入 Detected mask | 2026-06-08 | 2026-06-08 | Codex | golden A frame 680/800 Setup probe + 1400/1460/1461 回归浏览器复测已通过 |
 | P-0057 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend parameters | Detector processing scale 与 Run 快速诊断路径需支持原图坐标还原并降低 UI 卡顿 | 2026-06-08 | 2026-06-08 | Codex | golden A scale 0.5/1.0 Probe + Run 浏览器复测已通过；C 类 detector 回归已通过 |
+| P-0058 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend diagnostics | A 类 fast/enhanced/diagnostics 未真正拆分且默认 diagnostics 图过重 | 2026-06-08 | 2026-06-08 | Codex | golden A/C Setup diagnostics + golden A Run suspicious_only 浏览器复测已通过 |
 
 ---
 
@@ -173,6 +174,60 @@ Run fast 默认不每帧生成大尺寸 diagnostic_images；suspicious_only 只�
 - Actual: Exact browser probe distances: frame 680 scale 1.0 = 1003.00 px, scale 0.5 = 1002.00 px; frame 800 scale 1.0 = 1001.00 px, scale 0.5 = 1001.48 px; frame 1400 scale 1.0 = 995.00 px, scale 0.5 = 992.00 px; frame 1460 scale 1.0 = 994.00 px, scale 0.5 = 992.00 px; frame 1461 scale 1.0 = 994.00 px, scale 0.5 = 992.00 px. Scale 0.5 rows reported `coordinates_rescaled_to_full_res=true`. Browser stream frames 1460-1464 produced no `diagnostic_images`, all `diagnostics_generated=false`, average detector runtime 96.17 ms, distances stable at approximately 992 px. UI Run completed a partial run with trend and live frame visible.
 - Result: PASS
 - Evidence: `output/playwright/p0057_setup_probe_frame680.png`, `output/playwright/p0057_browser_retest.json`, `output/playwright/p0057_run_completed.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0058 — A 类 fast/enhanced/diagnostics 未真正拆分且默认 diagnostics 图过重
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, Run services, `frontend/src`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+
+#### Problem
+
+当前 A 类 `BalloonEnvelopeDetector` 的 Run fast 路径主要只关闭 `diagnostic_images`，但 detector 仍会执行 bubble suppress、dark-line/ridge response、spur pruning 等重型处理，导致 A 类明显慢于 C 类。A 类 diagnostics 默认还返回多张过程图，Run/Probe 诊断传输和前端渲染负担偏重。
+
+#### Expected
+
+```text
+fast / enhanced / diagnostics 三种 detector_execution_mode 必须真正拆分。
+Run 默认 fast 不生成大图、不跑 bubble/ridge/spur/full-res refine 重流程。
+enhanced 只在 suspicious 帧触发，并可运行较重 artifact rejection。
+diagnostics 默认只生成 detected_mask 和 envelope_contour 两张核心图。
+show_advanced_diagnostics=true 时才生成 bubble/ridge/spur 等高级过程图。
+diagnostics 图和主预览使用一致、可追溯的 overlay 坐标。
+_restore_candidate_to_full_res 不得在缺少 ROI-local geometry 时使用 candidate.a.x / scale 作为不安全 fallback。
+```
+
+#### Resolution log
+
+- 2026-06-08: 初始登记；按 TDD 先补 detector mode、diagnostics 图数量、safe restore、Run suspicious_only 和 real/offline run 一致性测试。
+- 2026-06-08: 实现 `detector_execution_mode=fast/enhanced/diagnostics` 与 `show_advanced_diagnostics`。A 类 fast 路径跳过 bubble suppress、dark-line/ridge response、spur pruning、full-res endpoint refine 和大图 diagnostics；enhanced/diagnostics 保留重流程。Run 通过共享 `run_detector_policy.py` 统一 offline/real camera 行为，默认 fast，suspicious 帧 rerun enhanced，`suspicious_only` 仅对可疑帧生成核心 diagnostics。
+- 2026-06-08: A/C detector 均新增 runtime summary 字段：`total_detector_runtime_ms`、`preprocessing_runtime_ms`、`resize_runtime_ms`、`mask_runtime_ms`、`envelope_runtime_ms`、`bubble_runtime_ms`、`ridge_runtime_ms`、`spur_prune_runtime_ms`、`endpoint_refine_runtime_ms`、`diagnostics_runtime_ms`、`diagnostics_image_count`、`detector_execution_mode`。默认 diagnostics 图压缩为 `detected_mask` 和 `envelope_contour` 两张，坐标统一为 `roi_local_full_res`；高级图仅 `show_advanced_diagnostics=true` 时生成。
+- 2026-06-08: 前端 Detection Diagnostics 默认只展示 Detected mask / Envelope contour，并在两张图上叠加 `contour_full_box`、`contour_measurement_band_box`、A/B 点和 measurement line。`_restore_candidate_to_full_res` 缺少 ROI-local 几何时返回 `RESTORE_MISSING_LOCAL_GEOMETRY`，不再使用 `candidate.a.x / scale` 不安全 fallback；面积字段拆分为 processed 与 full-res estimated。
+- 2026-06-08: 自动化验证通过：`PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q`（99 passed），`npm test -- --run`（43 passed），`npm run build`（passed）。
+- 2026-06-08: golden runtime benchmark：A fast scale 0.5 平均 49.74 ms，A diagnostics scale 0.5 平均 328.76 ms，C fast scale 0.5 平均 32.60 ms，A fast scale 1.0 平均 114.87 ms。A fast scale 0.5 的 bubble/ridge/spur/refine/diagnostics runtime 均为 0；A diagnostics 的平均 diagnostics runtime 162.93 ms，bubble 49.60 ms，spur 26.50 ms，endpoint refine 17.68 ms。回归 L 值：frame 680 = 1002.00 px，800 = 1001.48 px，1400 = 992.00 px，1460 = 992.00 px，1461 = 992.00 px。
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5178/`
+- Backend URL: `http://127.0.0.1:8033/`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Page: Setup / Run
+- Steps: Open Setup with golden A; verify Probe detector mode / Run detector mode / Run diagnostics / Advanced diagnostics controls; Probe A frame 1 with default diagnostics; inspect cards and SVG overlays; start Run page live offline flow with default fast + suspicious_only; save live trend/frame/diagnostics screenshot; run short API confirmation for A non-suspicious fast frames 1460-1464 and A suspicious frame 1; switch to golden C and Probe frame 1 as C browser smoke.
+- Expected: A diagnostics defaults to exactly two images (`detected_mask`, `envelope_contour`) in `roi_local_full_res`; both cards display full contour box, measurement band, A/B points, and measurement line; Run normal fast frames do not include diagnostic images; Run suspicious_only reruns enhanced and returns only the two core images; C Setup still probes through dataset id with the shared diagnostic display.
+- Actual: A Setup showed exactly two cards, `Detected mask` and `Envelope contour`, both `1270 x 382`, `roi_local_full_res`, each with `diagnosticFullBox`, `diagnosticBandBox`, `diagnosticMeasurementLine`, and two `diagnosticABPoint` markers. A Run live page reached frame 114+ with Live Trend and live frame visible; because the default ROI touched the ROI edge, `suspicious_only` displayed exactly the two core diagnostic cards with overlays. API confirmation: non-suspicious frames 1460-1464 used `detector_execution_mode=fast`, `enhanced_rerun_used=false`, `diagnostics_generated=false`, `diagnostics_image_count=0`, and heavy-stage runtimes 0; suspicious frame 1 used `detector_execution_mode=enhanced`, `enhanced_rerun_used=true`, `diagnostics_generated=true`, `diagnostics_image_count=2`, keys `detected_mask` / `envelope_contour`. C Setup probe selected `golden_c_20260529_dev_lab` / `BundleEnvelopeDetector`, returned distance `151.02 px`, and showed two diagnostic cards in `roi_local_full_res`.
+- Result: PASS
+- Evidence: `output/playwright/p0058_setup_diagnostics_overlay.png`, `output/playwright/p0058_run_fast_suspicious_only.png`, `output/playwright/p0058_c_setup_probe.png`, `output/playwright/p0058_run_api_summary.json`, `output/playwright/p0058_benchmark_summary.json`
 
 #### Final status
 

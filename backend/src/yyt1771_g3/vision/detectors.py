@@ -53,6 +53,8 @@ def detect_frame(
     frame_index: int,
     previous_candidate: DetectionCandidate | None = None,
     generate_diagnostics: bool = True,
+    detector_execution_mode: str | None = None,
+    show_advanced_diagnostics: bool | None = None,
 ) -> DetectionResult:
     result, _ = detect_frame_with_state(
         frame,
@@ -60,6 +62,8 @@ def detect_frame(
         frame_index=frame_index,
         stability_state=CandidateSelectionState(selected_candidate=previous_candidate),
         generate_diagnostics=generate_diagnostics,
+        detector_execution_mode=detector_execution_mode,
+        show_advanced_diagnostics=show_advanced_diagnostics,
     )
     return result
 
@@ -71,7 +75,14 @@ def detect_frame_with_state(
     frame_index: int,
     stability_state: CandidateSelectionState | None = None,
     generate_diagnostics: bool = True,
+    detector_execution_mode: str | None = None,
+    show_advanced_diagnostics: bool | None = None,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
+    measurement = _measurement_with_call_config(
+        measurement,
+        detector_execution_mode=detector_execution_mode,
+        show_advanced_diagnostics=show_advanced_diagnostics,
+    )
     detector = measurement.detector
     state = stability_state or CandidateSelectionState()
     if detector == DetectorType.RESERVED_OBJECT:
@@ -99,6 +110,26 @@ def detect_frame_with_state(
     return _invalid(frame_index, "UNKNOWN_DETECTOR"), state
 
 
+def _measurement_with_call_config(
+    measurement: MeasurementDefinition,
+    *,
+    detector_execution_mode: str | None,
+    show_advanced_diagnostics: bool | None,
+) -> MeasurementDefinition:
+    updates: dict[str, Any] = {}
+    if detector_execution_mode is not None:
+        updates["detector_execution_mode"] = detector_execution_mode
+    if show_advanced_diagnostics is not None:
+        updates["show_advanced_diagnostics"] = show_advanced_diagnostics
+    if not updates:
+        return measurement
+    return measurement.model_copy(
+        update={
+            "detector_config": measurement.detector_config.model_copy(update=updates),
+        }
+    )
+
+
 def _detect_mesh_envelope_max_width(
     frame: np.ndarray,
     roi: RotatedROI,
@@ -110,6 +141,9 @@ def _detect_mesh_envelope_max_width(
     generate_diagnostics: bool,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     detector_start = time.perf_counter()
+    execution_mode = _detector_execution_mode(config)
+    enhanced_path = _uses_enhanced_artifact_path(config)
+    diagnostic_images_enabled = _generates_diagnostic_images(config, generate_diagnostics)
     if frame.size == 0:
         return _invalid(frame_index, "EMPTY_FRAME"), stability_state
 
@@ -119,7 +153,9 @@ def _detect_mesh_envelope_max_width(
         return _invalid(frame_index, "EMPTY_ROI"), stability_state
     full_gray = _to_gray(local)
     scale = _effective_processing_scale(config)
+    resize_start = time.perf_counter()
     proc_gray = _resize_roi(full_gray, scale=scale, mode=config.processing_scale_mode)
+    resize_runtime_ms = _elapsed_ms(resize_start)
     proc_config = _scaled_detector_config(config, scale) if scale < 1.0 else config
     proc_roi = _processed_local_roi(proc_gray)
     preprocessing_runtime_ms = _elapsed_ms(preprocessing_start)
@@ -133,50 +169,76 @@ def _detect_mesh_envelope_max_width(
 
     envelope_start = time.perf_counter()
     raw_candidate = _mesh_envelope_candidate(raw_target, proc_roi, proc_config)
-    bubble_result = _bright_bubble_suppress_zone(proc_gray, proc_config)
-    bubble_result = _peripheral_bubble_suppress_zone(bubble_result, raw_target, proc_config)
-    dark_line_response = (
-        _dark_line_response(proc_gray, proc_config)
-        if proc_config.dark_line_filter_enabled
-        else np.zeros_like(proc_gray, dtype=float)
-    )
     measurement_mask = np.asarray(raw_dark_mask, dtype=bool).copy()
-    if proc_config.bubble_suppress_enabled:
-        measurement_mask &= ~bubble_result.zone
-    if proc_config.dark_line_filter_enabled and proc_config.dark_line_min_response > 0.0:
-        measurement_mask &= dark_line_response >= float(proc_config.dark_line_min_response)
-    spur_result = _prune_short_artifact_spurs(measurement_mask, dark_line_response, bubble_result.zone, proc_config)
-    measurement_mask = spur_result.mask
-    clean_target = _largest_mesh_region(measurement_mask, proc_config)
-    if clean_target is None and raw_candidate is None:
-        return _invalid(frame_index, "NO_TARGET"), stability_state
+    bubble_runtime_ms = 0.0
+    ridge_runtime_ms = 0.0
+    spur_prune_runtime_ms = 0.0
+    dark_line_response = np.zeros_like(proc_gray, dtype=float)
+    bubble_result = _empty_bubble_result(proc_gray.shape)
+    spur_result = _empty_spur_prune_result(measurement_mask)
+    if enhanced_path:
+        bubble_start = time.perf_counter()
+        bubble_result = _bright_bubble_suppress_zone(proc_gray, proc_config)
+        bubble_result = _peripheral_bubble_suppress_zone(bubble_result, raw_target, proc_config)
+        bubble_runtime_ms = _elapsed_ms(bubble_start)
 
-    clean_candidate = _mesh_envelope_candidate(
-        clean_target,
-        proc_roi,
-        proc_config,
-        endpoint_guard_zone=bubble_result.zone,
-        ridge_response=dark_line_response,
-    ) if clean_target is not None else None
-    candidate, target, bubble_candidate_source = _select_mesh_candidate_with_bubble_guard(
-        raw_candidate=raw_candidate,
-        clean_candidate=clean_candidate,
-        raw_target=raw_target,
-        clean_target=clean_target,
-        bubble_result=bubble_result,
-        roi_shape=raw_dark_mask.shape,
-    )
+        ridge_start = time.perf_counter()
+        if _should_compute_ridge_response(proc_config):
+            dark_line_response = _dark_line_response(proc_gray, proc_config)
+        ridge_runtime_ms = _elapsed_ms(ridge_start) if _should_compute_ridge_response(proc_config) else 0.0
+
+        if proc_config.bubble_suppress_enabled:
+            measurement_mask &= ~bubble_result.zone
+        if proc_config.dark_line_filter_enabled and proc_config.dark_line_min_response > 0.0:
+            measurement_mask &= dark_line_response >= float(proc_config.dark_line_min_response)
+        spur_start = time.perf_counter()
+        spur_result = _prune_short_artifact_spurs(measurement_mask, dark_line_response, bubble_result.zone, proc_config)
+        spur_prune_runtime_ms = _elapsed_ms(spur_start) if proc_config.spur_prune_enabled else 0.0
+        measurement_mask = spur_result.mask
+        clean_target = _largest_mesh_region(measurement_mask, proc_config)
+        if clean_target is None and raw_candidate is None:
+            return _invalid(frame_index, "NO_TARGET"), stability_state
+
+        clean_candidate = (
+            _mesh_envelope_candidate(
+                clean_target,
+                proc_roi,
+                proc_config,
+                endpoint_guard_zone=bubble_result.zone,
+                ridge_response=dark_line_response,
+            )
+            if clean_target is not None
+            else None
+        )
+        candidate, target, bubble_candidate_source = _select_mesh_candidate_with_bubble_guard(
+            raw_candidate=raw_candidate,
+            clean_candidate=clean_candidate,
+            raw_target=raw_target,
+            clean_target=clean_target,
+            bubble_result=bubble_result,
+            roi_shape=raw_dark_mask.shape,
+        )
+    else:
+        candidate, target, bubble_candidate_source = (
+            raw_candidate,
+            raw_target if raw_candidate is not None else None,
+            "fast_raw_target",
+        )
     if candidate is None or target is None:
         return _invalid(frame_index, "NO_VALID_ARCHIVED_CONTOUR"), stability_state
     coordinates_rescaled = scale < 1.0
     if coordinates_rescaled:
         candidate = _restore_candidate_to_full_res(candidate, roi, scale=scale)
+        if candidate is None:
+            return _invalid(frame_index, "RESTORE_MISSING_LOCAL_GEOMETRY"), stability_state
     refine_debug: dict[str, Any] = {
         "full_res_refine_used": False,
         "full_res_refine_runtime_ms": 0.0,
+        "endpoint_refine_runtime_ms": 0.0,
     }
-    if coordinates_rescaled and config.refine_endpoint_on_full_res:
+    if enhanced_path and coordinates_rescaled and config.refine_endpoint_on_full_res:
         candidate, refine_debug = _refine_candidate_on_full_res(candidate, full_gray, roi, config)
+        refine_debug["endpoint_refine_runtime_ms"] = float(refine_debug.get("full_res_refine_runtime_ms", 0.0))
     envelope_runtime_ms = _elapsed_ms(envelope_start)
 
     candidates = [candidate] if candidate is not None else []
@@ -189,6 +251,21 @@ def _detect_mesh_envelope_max_width(
     }
     if coordinates_rescaled:
         extra_debug = _restore_debug_artifacts_to_full_res(extra_debug, scale)
+    diagnostic_target = _mask_to_full_res_shape(target, full_gray.shape) if coordinates_rescaled else target
+    diagnostic_extra_masks = {
+        "raw_dark_mask": {
+            "label": "Raw dark mask",
+            "mask": _mask_to_full_res_shape(raw_dark_mask, full_gray.shape) if coordinates_rescaled else raw_dark_mask,
+        },
+        "bubble_suppress_zone": {
+            "label": "Bubble suppress zone",
+            "mask": _mask_to_full_res_shape(bubble_result.zone, full_gray.shape) if coordinates_rescaled else bubble_result.zone,
+        },
+        "clean_measurement_mask": {
+            "label": "Clean measurement mask",
+            "mask": _mask_to_full_res_shape(measurement_mask, full_gray.shape) if coordinates_rescaled else measurement_mask,
+        },
+    }
     result, next_state = _finish_candidate_detection(
         frame_index=frame_index,
         roi=roi,
@@ -196,6 +273,7 @@ def _detect_mesh_envelope_max_width(
         detector_name=detector_name,
         stability_state=stability_state,
         target=target,
+        diagnostic_target=diagnostic_target,
         candidates=candidates,
         measurement_mode="archived_mesh_envelope_rows",
         extra_debug={
@@ -209,27 +287,22 @@ def _detect_mesh_envelope_max_width(
                 coordinates_rescaled=coordinates_rescaled,
             ),
             **refine_debug,
+            "detector_execution_mode": execution_mode,
             "preprocessing_runtime_ms": preprocessing_runtime_ms,
+            "resize_runtime_ms": resize_runtime_ms,
             "mask_runtime_ms": mask_runtime_ms,
             "envelope_runtime_ms": envelope_runtime_ms,
+            "bubble_runtime_ms": bubble_runtime_ms,
+            "ridge_runtime_ms": ridge_runtime_ms,
+            "spur_prune_runtime_ms": spur_prune_runtime_ms,
+            "diagnostics_coordinate_space": "roi_local_full_res",
         },
-        diagnostic_masks={
-            "raw_dark_mask": {
-                "label": "Raw dark mask",
-                "mask": raw_dark_mask,
-            },
-            "bubble_suppress_zone": {
-                "label": "Bubble suppress zone",
-                "mask": bubble_result.zone,
-            },
-            "clean_measurement_mask": {
-                "label": "Clean measurement mask",
-                "mask": measurement_mask,
-            },
-        },
-        generate_diagnostics=generate_diagnostics,
+        diagnostic_masks=diagnostic_extra_masks,
+        generate_diagnostics=diagnostic_images_enabled,
     )
-    result.debug_artifacts["detector_runtime_ms"] = _elapsed_ms(detector_start)
+    total_runtime_ms = _elapsed_ms(detector_start)
+    result.debug_artifacts["detector_runtime_ms"] = total_runtime_ms
+    result.debug_artifacts["total_detector_runtime_ms"] = total_runtime_ms
     return result, next_state
 
 
@@ -244,6 +317,8 @@ def _detect_wire_bundle_max_width(
     generate_diagnostics: bool,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     detector_start = time.perf_counter()
+    execution_mode = _detector_execution_mode(config)
+    diagnostic_images_enabled = _generates_diagnostic_images(config, generate_diagnostics)
     if frame.size == 0:
         return _invalid(frame_index, "EMPTY_FRAME"), stability_state
 
@@ -253,7 +328,9 @@ def _detect_wire_bundle_max_width(
         return _invalid(frame_index, "EMPTY_ROI"), stability_state
     full_gray = _to_gray(local)
     scale = _effective_processing_scale(config)
+    resize_start = time.perf_counter()
     proc_gray = _resize_roi(full_gray, scale=scale, mode=config.processing_scale_mode)
+    resize_runtime_ms = _elapsed_ms(resize_start)
     proc_config = _scaled_detector_config(config, scale) if scale < 1.0 else config
     proc_roi = _processed_local_roi(proc_gray)
     preprocessing_runtime_ms = _elapsed_ms(preprocessing_start)
@@ -269,8 +346,11 @@ def _detect_wire_bundle_max_width(
     coordinates_rescaled = scale < 1.0
     if candidate is not None and coordinates_rescaled:
         candidate = _restore_candidate_to_full_res(candidate, roi, scale=scale)
+        if candidate is None:
+            return _invalid(frame_index, "RESTORE_MISSING_LOCAL_GEOMETRY"), stability_state
     envelope_runtime_ms = _elapsed_ms(envelope_start)
     candidates = [candidate] if candidate is not None else []
+    diagnostic_target = _mask_to_full_res_shape(target, full_gray.shape) if coordinates_rescaled else target
     result, next_state = _finish_candidate_detection(
         frame_index=frame_index,
         roi=roi,
@@ -278,6 +358,7 @@ def _detect_wire_bundle_max_width(
         detector_name=detector_name,
         stability_state=stability_state,
         target=target,
+        diagnostic_target=diagnostic_target,
         candidates=candidates,
         measurement_mode="archived_wire_bundle_projection",
         extra_debug={
@@ -292,13 +373,22 @@ def _detect_wire_bundle_max_width(
             ),
             "full_res_refine_used": False,
             "full_res_refine_runtime_ms": 0.0,
+            "endpoint_refine_runtime_ms": 0.0,
+            "detector_execution_mode": execution_mode,
             "preprocessing_runtime_ms": preprocessing_runtime_ms,
+            "resize_runtime_ms": resize_runtime_ms,
             "mask_runtime_ms": mask_runtime_ms,
             "envelope_runtime_ms": envelope_runtime_ms,
+            "bubble_runtime_ms": 0.0,
+            "ridge_runtime_ms": 0.0,
+            "spur_prune_runtime_ms": 0.0,
+            "diagnostics_coordinate_space": "roi_local_full_res",
         },
-        generate_diagnostics=generate_diagnostics,
+        generate_diagnostics=diagnostic_images_enabled,
     )
-    result.debug_artifacts["detector_runtime_ms"] = _elapsed_ms(detector_start)
+    total_runtime_ms = _elapsed_ms(detector_start)
+    result.debug_artifacts["detector_runtime_ms"] = total_runtime_ms
+    result.debug_artifacts["total_detector_runtime_ms"] = total_runtime_ms
     return result, next_state
 
 
@@ -312,11 +402,13 @@ def _finish_candidate_detection(
     target: np.ndarray,
     candidates: list[DetectionCandidate],
     measurement_mode: str,
+    diagnostic_target: np.ndarray | None = None,
     extra_debug: dict[str, Any] | None = None,
     diagnostic_masks: dict[str, dict[str, Any]] | None = None,
     generate_diagnostics: bool = True,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
-    coverage = float(np.count_nonzero(target)) / float(target.size)
+    processed_target_pixels = int(np.count_nonzero(target))
+    coverage = float(processed_target_pixels) / float(target.size)
     if not candidates:
         return _invalid(
             frame_index,
@@ -352,8 +444,23 @@ def _finish_candidate_detection(
         ), selection.state
 
     diagnostics_start = time.perf_counter()
-    diagnostic_images = _diagnostic_images(target, config, diagnostic_masks) if generate_diagnostics else None
+    image_target = diagnostic_target if diagnostic_target is not None else target
+    diagnostic_images = (
+        _diagnostic_images(
+            image_target,
+            config,
+            diagnostic_masks,
+            coordinate_space="roi_local_full_res",
+            include_advanced=bool(config.show_advanced_diagnostics),
+        )
+        if generate_diagnostics
+        else None
+    )
     diagnostics_runtime_ms = _elapsed_ms(diagnostics_start)
+    scale = 1.0
+    if extra_debug and isinstance(extra_debug.get("processing_scale_effective"), (int, float)):
+        scale = max(1e-6, float(extra_debug["processing_scale_effective"]))
+    target_pixels_full_res_estimated = int(round(float(processed_target_pixels) / (scale * scale)))
     debug_artifacts: dict[str, Any] = {
         "selected_detector": detector_name,
         "contour_measurement_mode": measurement_mode,
@@ -361,10 +468,20 @@ def _finish_candidate_detection(
         "contour_length_px": float(selected.width_px),
         "contour_projection_box": selected.metadata.get("contour_projection_box", []),
         "contour_direction_arrow": selected.metadata.get("contour_direction_arrow", []),
-        "target_mask_pixels": int(np.count_nonzero(target)),
+        "point_a": selected.a.model_dump(mode="json"),
+        "point_b": selected.b.model_dump(mode="json"),
+        "measurement_line": [selected.a.model_dump(mode="json"), selected.b.model_dump(mode="json")],
+        "target_mask_pixels": target_pixels_full_res_estimated,
+        "target_mask_pixels_processed": processed_target_pixels,
+        "target_mask_pixels_full_res_estimated": target_pixels_full_res_estimated,
+        "contour_area_processed_px": float(processed_target_pixels),
+        "contour_area_full_res_estimated_px": float(target_pixels_full_res_estimated),
+        "roi_coverage_processed": coverage,
         "candidate_count": len(candidates),
         "diagnostics_generated": bool(generate_diagnostics),
         "diagnostics_runtime_ms": diagnostics_runtime_ms,
+        "diagnostics_image_count": len(diagnostic_images) if diagnostic_images is not None else 0,
+        "diagnostics_coordinate_space": "roi_local_full_res",
         "selection_state": {
             "pending_candidate_id": selection.state.pending_candidate_id,
             "pending_count": selection.state.pending_count,
@@ -403,6 +520,55 @@ def _elapsed_ms(start: float) -> float:
     return (time.perf_counter() - start) * 1000.0
 
 
+def _detector_execution_mode(config: DetectorConfig) -> str:
+    mode = str(config.detector_execution_mode)
+    return mode if mode in {"fast", "enhanced", "diagnostics"} else "diagnostics"
+
+
+def _uses_enhanced_artifact_path(config: DetectorConfig) -> bool:
+    return _detector_execution_mode(config) in {"enhanced", "diagnostics"}
+
+
+def _generates_diagnostic_images(config: DetectorConfig, generate_diagnostics: bool) -> bool:
+    return bool(generate_diagnostics and _detector_execution_mode(config) != "fast")
+
+
+def _empty_bubble_result(shape: tuple[int, ...]) -> BubbleSuppressResult:
+    empty = np.zeros(shape, dtype=bool)
+    return BubbleSuppressResult(
+        zone=empty,
+        mask=empty,
+        diagnostics={
+            "bubble_suppress_zone_area_px": 0,
+            "bubble_suppress_zone_area_raw_px": 0,
+            "bubble_candidate_count": 0,
+            "bubble_rejected_boxes": [],
+            "bubble_suppress_triggered": False,
+        },
+    )
+
+
+def _empty_spur_prune_result(mask: np.ndarray) -> SpurPruneResult:
+    return SpurPruneResult(
+        mask=np.asarray(mask, dtype=bool).copy(),
+        diagnostics={
+            "spur_prune_removed_count": 0,
+            "spur_prune_removed_area_px": 0,
+        },
+    )
+
+
+def _should_compute_ridge_response(config: DetectorConfig) -> bool:
+    if not _uses_enhanced_artifact_path(config) or not config.dark_line_filter_enabled:
+        return False
+    return bool(
+        float(config.dark_line_min_response) > 0.0
+        or float(config.endpoint_min_dark_line_response) > 0.0
+        or float(config.spur_prune_min_ridge_response) > 0.0
+        or config.show_advanced_diagnostics
+    )
+
+
 def _effective_processing_scale(config: DetectorConfig) -> float:
     if not config.processing_scale_enabled:
         return 1.0
@@ -426,6 +592,17 @@ def _resize_roi(gray: np.ndarray, *, scale: float, mode: str) -> np.ndarray:
     image = Image.fromarray(np.ascontiguousarray(source))
     resized = image.resize((resized_width, resized_height), resample=resample)
     return np.asarray(resized, dtype=np.uint8)
+
+
+def _mask_to_full_res_shape(mask: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    target_height = int(shape[0])
+    target_width = int(shape[1])
+    source = np.asarray(mask, dtype=bool)
+    if source.shape[:2] == (target_height, target_width):
+        return source.copy()
+    image = Image.fromarray(np.where(source, 255, 0).astype(np.uint8))
+    resized = image.resize((target_width, target_height), resample=Image.Resampling.NEAREST)
+    return np.asarray(resized, dtype=np.uint8) > 0
 
 
 def _processed_local_roi(gray: np.ndarray) -> RotatedROI:
@@ -550,7 +727,7 @@ def _restore_candidate_to_full_res(
     full_res_roi: RotatedROI,
     *,
     scale: float,
-) -> DetectionCandidate:
+) -> DetectionCandidate | None:
     if scale >= 1.0:
         return candidate
     metadata = _scale_candidate_metadata(candidate.metadata, full_res_roi, scale)
@@ -559,12 +736,15 @@ def _restore_candidate_to_full_res(
     center_v = candidate.axis_position_px / scale
     debug = metadata.get("debug_artifacts")
     if isinstance(debug, dict):
-        left = _number_from_path(debug, "mesh_left_local_px") or left
-        right = _number_from_path(debug, "mesh_right_local_px") or right
-        center_v = _number_from_path(debug, "selected_measurement_row_v_px") or _number_from_path(debug, "mesh_best_row_v_px") or center_v
+        left = _first_number(_number_from_path(debug, "mesh_left_local_px"), left)
+        right = _first_number(_number_from_path(debug, "mesh_right_local_px"), right)
+        center_v = _first_number(
+            _number_from_path(debug, "selected_measurement_row_v_px"),
+            _number_from_path(debug, "mesh_best_row_v_px"),
+            center_v,
+        )
     if left is None or right is None:
-        left = candidate.a.x / scale
-        right = candidate.b.x / scale
+        return None
     a = roi_local_to_measurement_point(full_res_roi, left, center_v)
     b = roi_local_to_measurement_point(full_res_roi, right, center_v)
     metadata["contour_direction_arrow"] = [point.model_dump(mode="json") for point in [a, b]]
@@ -721,6 +901,13 @@ def _number_from_path(container: dict[str, Any], key: str) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _first_number(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _refine_candidate_on_full_res(
     candidate: DetectionCandidate,
     full_gray: np.ndarray,
@@ -736,9 +923,9 @@ def _refine_candidate_on_full_res(
             "full_res_refine_runtime_ms": _elapsed_ms(start),
             "full_res_refine_rejected_reason": "MISSING_DEBUG_GEOMETRY",
         }
-    left = _number_from_path(debug, "mesh_left_local_px") or _number_from_path(candidate.metadata, "local_min_along_px")
-    right = _number_from_path(debug, "mesh_right_local_px") or _number_from_path(candidate.metadata, "local_max_along_px")
-    center_v = _number_from_path(debug, "selected_measurement_row_v_px") or candidate.axis_position_px
+    left = _first_number(_number_from_path(debug, "mesh_left_local_px"), _number_from_path(candidate.metadata, "local_min_along_px"))
+    right = _first_number(_number_from_path(debug, "mesh_right_local_px"), _number_from_path(candidate.metadata, "local_max_along_px"))
+    center_v = _first_number(_number_from_path(debug, "selected_measurement_row_v_px"), candidate.axis_position_px)
     if left is None or right is None:
         return candidate, {
             "full_res_refine_used": False,
@@ -2027,32 +2214,37 @@ def _diagnostic_images(
     target: np.ndarray,
     config: DetectorConfig,
     extra_masks: dict[str, dict[str, Any]] | None = None,
+    *,
+    coordinate_space: str = "roi_local_full_res",
+    include_advanced: bool = False,
 ) -> dict[str, dict[str, Any]]:
     mask = np.asarray(target, dtype=bool)
     contour = _outer_envelope_contour(mask, config)
     height, width = mask.shape
     images: dict[str, dict[str, Any]] = {
-        "mask": {
+        "detected_mask": {
             "label": "Detected mask",
-            "coordinates": "roi_local_pixel",
+            "coordinates": coordinate_space,
             "width": int(width),
             "height": int(height),
             "data_url": _binary_mask_png_data_url(mask),
         },
-        "contour": {
+        "envelope_contour": {
             "label": "Envelope contour",
-            "coordinates": "roi_local_pixel",
+            "coordinates": coordinate_space,
             "width": int(width),
             "height": int(height),
             "data_url": _binary_mask_png_data_url(contour),
         },
     }
+    if not include_advanced:
+        return images
     for key, item in (extra_masks or {}).items():
         extra_mask = np.asarray(item.get("mask"), dtype=bool)
         extra_height, extra_width = extra_mask.shape
         images[key] = {
             "label": str(item.get("label", key)),
-            "coordinates": "roi_local_pixel",
+            "coordinates": coordinate_space,
             "width": int(extra_width),
             "height": int(extra_height),
             "data_url": _binary_mask_png_data_url(extra_mask),

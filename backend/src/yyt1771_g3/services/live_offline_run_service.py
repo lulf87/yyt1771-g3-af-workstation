@@ -18,6 +18,15 @@ from yyt1771_g3.core.models import (
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, OfflineDatasetRegistry
+from yyt1771_g3.services.run_detector_policy import (
+    annotate_run_detection,
+    detection_suspicious_reasons,
+    enhanced_rerun_diagnostics_enabled,
+    initial_run_diagnostics_enabled,
+    is_detection_suspicious,
+    measurement_for_detector_mode,
+    should_rerun_with_enhanced,
+)
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.sync import SyncedTemperature, sync_temperature_for_frame
 from yyt1771_g3.vision.detectors import detect_frame_with_state
@@ -270,20 +279,34 @@ def _process_frame(
     frame_meta = _frame_meta(manifest_payload, frame_index)
     frame_timestamp_ms = _int_or_none(frame_meta.get("timestamp_ms"))
     synced = sync_temperature_for_frame(frame_index, frame_timestamp_ms, temperature_rows)
+    run_measurement = measurement_for_detector_mode(measurement, measurement.detector_config.run_detector_mode)
     detection, next_state = detect_frame_with_state(
         frame.array,
-        measurement,
+        run_measurement,
         frame_index=frame_index,
         stability_state=state,
-        generate_diagnostics=_initial_run_diagnostics_enabled(measurement),
+        generate_diagnostics=initial_run_diagnostics_enabled(measurement),
     )
-    if _should_rerun_run_diagnostics(detection, measurement):
+    suspicious_reasons = detection_suspicious_reasons(detection, measurement)
+    if should_rerun_with_enhanced(detection, measurement):
+        enhanced_measurement = measurement_for_detector_mode(measurement, "enhanced")
         detection, next_state = detect_frame_with_state(
             frame.array,
-            measurement,
+            enhanced_measurement,
             frame_index=frame_index,
             stability_state=state,
-            generate_diagnostics=True,
+            generate_diagnostics=enhanced_rerun_diagnostics_enabled(measurement),
+        )
+        detection = annotate_run_detection(
+            detection,
+            suspicious_reasons=suspicious_reasons or detection_suspicious_reasons(detection, measurement),
+            enhanced_rerun_used=True,
+        )
+    else:
+        detection = annotate_run_detection(
+            detection,
+            suspicious_reasons=suspicious_reasons,
+            enhanced_rerun_used=False,
         )
     detection = _attach_temperature(detection, frame_timestamp_ms, synced)
     frame_record = FrameRecord(
@@ -304,63 +327,11 @@ def _process_frame(
     return frame_record, temperature_record, detection, next_state
 
 
-def _initial_run_diagnostics_enabled(measurement: MeasurementDefinition) -> bool:
-    config = measurement.detector_config
-    if config.run_detector_mode == "diagnostics":
-        return True
-    return config.run_diagnostics_mode == "every_frame"
-
-
-def _should_rerun_run_diagnostics(
-    detection: DetectionResult,
-    measurement: MeasurementDefinition,
-) -> bool:
-    config = measurement.detector_config
-    if config.run_diagnostics_mode != "suspicious_only":
-        return False
-    if detection.debug_artifacts.get("diagnostics_generated") is True:
-        return False
-    return bool(config.run_enhanced_detector_on_suspicious and _is_detection_suspicious(detection, measurement))
-
-
 def _is_detection_suspicious(
     detection: DetectionResult,
     measurement: MeasurementDefinition,
 ) -> bool:
-    config = measurement.detector_config
-    if detection.detection_status.value != "VALID":
-        return True
-    debug = detection.debug_artifacts
-    if bool(debug.get("distance_jump_guard_triggered")) or bool(debug.get("fallback_used")):
-        return True
-    jump = detection.quality.jump_from_previous_px
-    if jump is not None and float(jump) > float(config.endpoint_jump_limit_px):
-        return True
-    if int(debug.get("rejected_outlier_rows_count", 0) or 0) >= int(config.suspicious_outlier_reject_count):
-        return True
-    measurement_rows = max(1, int(debug.get("mesh_measurement_row_count", 0) or 0))
-    boundary_rejects = int(debug.get("boundary_support_rejected_count", 0) or 0)
-    boundary_reject_ratio = boundary_rejects / float(measurement_rows + boundary_rejects)
-    enough_supported_rows = measurement_rows >= max(5, int(config.envelope_min_consensus_rows) * 2)
-    if (
-        boundary_reject_ratio >= float(config.suspicious_boundary_reject_ratio)
-        and (not enough_supported_rows or detection.quality.confidence < 0.75)
-    ):
-        return True
-    if bool(debug.get("contour_touches_roi_edge")) and detection.quality.confidence < max(0.5, float(config.min_confidence)):
-        return True
-    if detection.quality.confidence < float(config.min_confidence):
-        return True
-    candidate = detection.selected_candidate
-    if candidate is not None:
-        guard = max(0.0, float(config.roi_edge_guard_px))
-        local_min = candidate.metadata.get("local_min_along_px")
-        local_max = candidate.metadata.get("local_max_along_px")
-        if isinstance(local_min, (int, float)) and float(local_min) <= guard:
-            return True
-        if isinstance(local_max, (int, float)) and float(local_max) >= float(measurement.roi.width) - guard:
-            return True
-    return False
+    return is_detection_suspicious(detection, measurement)
 
 
 def _frame_event(

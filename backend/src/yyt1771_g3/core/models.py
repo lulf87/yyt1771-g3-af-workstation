@@ -119,6 +119,8 @@ class DetectorConfig(G3Model):
     processing_scale_mode: Literal["area_downsample", "gaussian_pyramid"] = "area_downsample"
     refine_endpoint_on_full_res: bool = True
     full_res_refine_band_px: int = 12
+    detector_execution_mode: Literal["fast", "enhanced", "diagnostics"] = "diagnostics"
+    show_advanced_diagnostics: bool = False
     run_detector_mode: Literal["fast", "enhanced", "diagnostics"] = "fast"
     run_diagnostics_mode: Literal["off", "suspicious_only", "every_frame"] = "suspicious_only"
     run_preview_fps: int = 5

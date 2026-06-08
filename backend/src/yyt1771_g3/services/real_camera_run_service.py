@@ -19,6 +19,14 @@ from yyt1771_g3.core.models import (
     TemperatureRecord,
 )
 from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.run_detector_policy import (
+    annotate_run_detection,
+    detection_suspicious_reasons,
+    enhanced_rerun_diagnostics_enabled,
+    initial_run_diagnostics_enabled,
+    measurement_for_detector_mode,
+    should_rerun_with_enhanced,
+)
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureController, TemperatureReading
 from yyt1771_g3.vision.detectors import detect_frame_with_state
@@ -62,13 +70,37 @@ def run_real_camera(
             temperature = _read_temperature(temperature_controller, startup_error=temperature_start_error)
             frame_path = raw_dir / f"frame_{frame_index:06d}.npy"
             np.save(frame_path, frame.array, allow_pickle=False)
-            detection, state = detect_frame_with_state(
+            run_measurement = measurement_for_detector_mode(measurement, measurement.detector_config.run_detector_mode)
+            previous_state = state
+            detection, next_state = detect_frame_with_state(
                 frame.array,
-                measurement,
+                run_measurement,
                 frame_index=frame_index,
-                stability_state=state,
-                generate_diagnostics=_initial_run_diagnostics_enabled(measurement),
+                stability_state=previous_state,
+                generate_diagnostics=initial_run_diagnostics_enabled(measurement),
             )
+            suspicious_reasons = detection_suspicious_reasons(detection, measurement)
+            if should_rerun_with_enhanced(detection, measurement):
+                enhanced_measurement = measurement_for_detector_mode(measurement, "enhanced")
+                detection, next_state = detect_frame_with_state(
+                    frame.array,
+                    enhanced_measurement,
+                    frame_index=frame_index,
+                    stability_state=previous_state,
+                    generate_diagnostics=enhanced_rerun_diagnostics_enabled(measurement),
+                )
+                detection = annotate_run_detection(
+                    detection,
+                    suspicious_reasons=suspicious_reasons or detection_suspicious_reasons(detection, measurement),
+                    enhanced_rerun_used=True,
+                )
+            else:
+                detection = annotate_run_detection(
+                    detection,
+                    suspicious_reasons=suspicious_reasons,
+                    enhanced_rerun_used=False,
+                )
+            state = next_state
             detection = _attach_temperature(detection, frame.timestamp_ms, temperature, temp_sync_target_ms)
             frame_records.append(
                 FrameRecord(
@@ -112,13 +144,6 @@ def run_real_camera(
     run_store.write_run_manifest(manifest)
     run_store.write_analysis_result(analysis)
     return RealCameraRunResult(manifest=manifest, analysis=analysis)
-
-
-def _initial_run_diagnostics_enabled(measurement: MeasurementDefinition) -> bool:
-    config = measurement.detector_config
-    if config.run_detector_mode == "diagnostics":
-        return True
-    return config.run_diagnostics_mode == "every_frame"
 
 
 def _prepare_temperature_controller(

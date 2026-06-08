@@ -106,6 +106,8 @@ export type DetectorConfig = {
   processing_scale_mode?: "area_downsample" | "gaussian_pyramid";
   refine_endpoint_on_full_res?: boolean;
   full_res_refine_band_px?: number;
+  detector_execution_mode?: "fast" | "enhanced" | "diagnostics";
+  show_advanced_diagnostics?: boolean;
   run_detector_mode?: "fast" | "enhanced" | "diagnostics";
   run_diagnostics_mode?: "off" | "suspicious_only" | "every_frame";
   run_preview_fps?: number;
@@ -514,8 +516,14 @@ export function readDiagnosticImages(debugArtifacts: Record<string, unknown> | n
     .filter((image): image is DiagnosticImageInfo => image !== null);
   if (images.length === 0) return null;
   const result = images as DiagnosticImages;
-  result.mask = readDiagnosticImage(source.mask, "Detected mask") ?? undefined;
-  result.contour = readDiagnosticImage(source.contour, "Envelope contour") ?? undefined;
+  result.mask =
+    readDiagnosticImage(source.detected_mask, "Detected mask") ??
+    readDiagnosticImage(source.mask, "Detected mask") ??
+    undefined;
+  result.contour =
+    readDiagnosticImage(source.envelope_contour, "Envelope contour") ??
+    readDiagnosticImage(source.contour, "Envelope contour") ??
+    undefined;
   return result;
 }
 

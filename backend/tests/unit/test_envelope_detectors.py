@@ -64,6 +64,8 @@ def test_detector_config_processing_scale_defaults_and_clamp() -> None:
     assert default_config.processing_scale_mode == "area_downsample"
     assert default_config.refine_endpoint_on_full_res is True
     assert default_config.full_res_refine_band_px == 12
+    assert default_config.detector_execution_mode == "diagnostics"
+    assert default_config.show_advanced_diagnostics is False
     assert default_config.run_detector_mode == "fast"
     assert default_config.run_diagnostics_mode == "suspicious_only"
     assert default_config.run_preview_fps == 5
@@ -183,6 +185,7 @@ def test_restore_candidate_to_full_res_rescales_local_points_distance_and_boxes(
 
     restored = detectors._restore_candidate_to_full_res(candidate, full_res_roi, scale=0.5)
 
+    assert restored is not None
     assert restored.axis_position_px == pytest.approx(100.0)
     assert restored.width_px == pytest.approx(160.0)
     assert restored.a.x == pytest.approx(200.0)
@@ -200,6 +203,23 @@ def test_restore_candidate_to_full_res_rescales_local_points_distance_and_boxes(
     assert box[1] == {"x": pytest.approx(360.0), "y": pytest.approx(90.0)}
 
 
+def test_restore_candidate_to_full_res_rejects_missing_local_geometry() -> None:
+    full_res_roi = RotatedROI(center_x=200.0, center_y=100.0, width=400.0, height=200.0, angle_deg=-17.0)
+    candidate = DetectionCandidate(
+        candidate_id="unsafe-fallback-candidate",
+        axis_position_px=50.0,
+        width_px=80.0,
+        a=ABPoint(x=100.0, y=50.0),
+        b=ABPoint(x=180.0, y=50.0),
+        confidence=0.8,
+        metadata={"debug_artifacts": {}},
+    )
+
+    restored = detectors._restore_candidate_to_full_res(candidate, full_res_roi, scale=0.5)
+
+    assert restored is None
+
+
 def test_detector_diagnostics_generation_can_be_disabled_for_fast_run() -> None:
     frame = np.full((80, 120), 245, dtype=np.uint8)
     frame[20:61, 25:96] = 35
@@ -213,7 +233,104 @@ def test_detector_diagnostics_generation_can_be_disabled_for_fast_run() -> None:
     assert fast_result.debug_artifacts["diagnostics_generated"] is False
     assert diagnostic_result.detection_status == DetectionStatus.VALID
     assert diagnostic_result.debug_artifacts["diagnostics_generated"] is True
-    assert diagnostic_result.debug_artifacts["diagnostic_images"]["mask"]["data_url"].startswith("data:image/png;base64,")
+    diagnostic_images = diagnostic_result.debug_artifacts["diagnostic_images"]
+    assert set(diagnostic_images) == {"detected_mask", "envelope_contour"}
+    assert diagnostic_images["detected_mask"]["label"] == "Detected mask"
+    assert diagnostic_images["detected_mask"]["coordinates"] == "roi_local_full_res"
+    assert diagnostic_images["detected_mask"]["data_url"].startswith("data:image/png;base64,")
+    assert diagnostic_result.debug_artifacts["diagnostics_image_count"] == 2
+
+
+def test_balloon_detector_execution_modes_skip_heavy_steps_in_fast_and_gate_advanced_diagnostics() -> None:
+    frame = np.full((80, 120), 245, dtype=np.uint8)
+    frame[20:61, 25:96] = 35
+    base = _measurement().model_dump(mode="json")
+    detector_config = {
+        **base["detector_config"],
+        "bubble_suppress_enabled": True,
+        "dark_line_filter_enabled": True,
+        "spur_prune_enabled": True,
+    }
+    fast_measurement = MeasurementDefinition.model_validate(
+        {
+            **base,
+            "detector_config": {
+                **detector_config,
+                "detector_execution_mode": "fast",
+                "show_advanced_diagnostics": False,
+            },
+        }
+    )
+    diagnostics_measurement = MeasurementDefinition.model_validate(
+        {
+            **base,
+            "detector_config": {
+                **detector_config,
+                "detector_execution_mode": "diagnostics",
+                "show_advanced_diagnostics": False,
+            },
+        }
+    )
+    advanced_measurement = MeasurementDefinition.model_validate(
+        {
+            **base,
+            "detector_config": {
+                **detector_config,
+                "detector_execution_mode": "diagnostics",
+                "show_advanced_diagnostics": True,
+            },
+        }
+    )
+
+    fast = detect_frame(frame, fast_measurement, frame_index=1, generate_diagnostics=False)
+    diagnostics = detect_frame(frame, diagnostics_measurement, frame_index=1, generate_diagnostics=True)
+    advanced = detect_frame(frame, advanced_measurement, frame_index=1, generate_diagnostics=True)
+
+    assert fast.detection_status == DetectionStatus.VALID
+    assert fast.debug_artifacts["detector_execution_mode"] == "fast"
+    assert fast.debug_artifacts["bubble_runtime_ms"] == 0.0
+    assert fast.debug_artifacts["ridge_runtime_ms"] == 0.0
+    assert fast.debug_artifacts["spur_prune_runtime_ms"] == 0.0
+    assert fast.debug_artifacts["endpoint_refine_runtime_ms"] == 0.0
+    assert "diagnostic_images" not in fast.debug_artifacts
+
+    assert diagnostics.debug_artifacts["detector_execution_mode"] == "diagnostics"
+    assert set(diagnostics.debug_artifacts["diagnostic_images"]) == {"detected_mask", "envelope_contour"}
+    assert diagnostics.debug_artifacts["diagnostics_image_count"] == 2
+
+    advanced_images = advanced.debug_artifacts["diagnostic_images"]
+    assert {"detected_mask", "envelope_contour", "raw_dark_mask", "bubble_suppress_zone", "clean_measurement_mask"}.issubset(
+        set(advanced_images)
+    )
+    assert advanced.debug_artifacts["diagnostics_image_count"] > 2
+
+
+def test_processed_and_full_res_area_fields_are_split_when_scaled() -> None:
+    frame = np.full((80, 120), 245, dtype=np.uint8)
+    frame[20:61, 25:96] = 35
+    measurement = MeasurementDefinition.model_validate(
+        {
+            **_measurement().model_dump(mode="json"),
+            "detector_config": {
+                **_measurement().detector_config.model_dump(mode="json"),
+                "processing_scale_enabled": True,
+                "processing_scale": 0.5,
+                "detector_execution_mode": "fast",
+            },
+        }
+    )
+
+    result = detect_frame(frame, measurement, frame_index=1, generate_diagnostics=False)
+
+    assert result.detection_status == DetectionStatus.VALID
+    assert result.debug_artifacts["target_mask_pixels_processed"] > 0
+    assert result.debug_artifacts["target_mask_pixels_full_res_estimated"] > result.debug_artifacts["target_mask_pixels_processed"]
+    assert result.debug_artifacts["contour_area_processed_px"] == pytest.approx(result.debug_artifacts["target_mask_pixels_processed"])
+    assert result.debug_artifacts["contour_area_full_res_estimated_px"] == pytest.approx(
+        result.debug_artifacts["target_mask_pixels_full_res_estimated"]
+    )
+    assert 0.0 < result.debug_artifacts["roi_coverage_processed"] < 1.0
+
 
 
 def test_bundle_detector_measures_multi_strand_group_not_single_strand_width() -> None:

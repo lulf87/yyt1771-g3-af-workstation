@@ -55,14 +55,14 @@ test("diagnostic image metadata exposes mask and contour display sources", async
 
   const images = readDiagnosticImages({
     diagnostic_images: {
-      mask: {
+      detected_mask: {
         label: "Detected mask",
-        coordinates: "roi_local_pixel",
+        coordinates: "roi_local_full_res",
         data_url: "data:image/png;base64,mask"
       },
-      contour: {
+      envelope_contour: {
         label: "Envelope contour",
-        coordinates: "roi_local_pixel",
+        coordinates: "roi_local_full_res",
         url: "/api/debug/contour.png"
       }
     }
@@ -70,8 +70,10 @@ test("diagnostic image metadata exposes mask and contour display sources", async
 
   assert.equal(images.mask.label, "Detected mask");
   assert.equal(images.mask.src, "data:image/png;base64,mask");
+  assert.equal(images.mask.coordinates, "roi_local_full_res");
   assert.equal(images.contour.label, "Envelope contour");
   assert.match(images.contour.src, /\/api\/debug\/contour\.png$/);
+  assert.equal(images.length, 2);
 });
 
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
