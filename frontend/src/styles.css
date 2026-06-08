@@ -336,6 +336,38 @@ input {
   gap: 10px;
 }
 
+.detectorParameterGroup {
+  display: grid;
+  gap: 8px;
+}
+
+.detectorParameterGroup h4 {
+  margin: 4px 0 0;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 820;
+  letter-spacing: 0;
+}
+
+.advancedDetectorParameters {
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+  background: #f8fafb;
+}
+
+.advancedDetectorParameters summary {
+  cursor: pointer;
+  color: #485665;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.advancedDetectorParameters[open] {
+  display: grid;
+  gap: 12px;
+}
+
 .metricGrid {
   margin: 0;
   display: grid;
@@ -480,6 +512,16 @@ input {
   white-space: nowrap;
 }
 
+.diagnosticWarning {
+  border-bottom: 1px solid #f7d58a;
+  background: #fff7df;
+  color: #7c4a08;
+  padding: 9px 14px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 760;
+}
+
 .diagnosticImageGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -592,9 +634,20 @@ input {
 
 .contourProjectionOverlay polygon {
   fill: none;
-  stroke: #ffff00;
+  stroke: #ef4444;
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
+}
+
+.contourProjectionOverlay .contourFullBox {
+  stroke: #ef4444;
+}
+
+.contourProjectionOverlay .contourMeasurementBandBox {
+  fill: rgba(245, 158, 11, 0.12);
+  stroke: #f59e0b;
+  stroke-dasharray: 8 6;
+  stroke-width: 2.5;
 }
 
 .contourProjectionOverlay line {
@@ -610,12 +663,17 @@ input {
 }
 
 .contourProjectionOverlay text {
-  fill: #ffff00;
+  fill: #ffffff;
   stroke: #000000;
   stroke-width: 4;
   paint-order: stroke;
   font-size: 18px;
   font-weight: 800;
+}
+
+.contourProjectionOverlay .contourMeasurementBandLabel {
+  fill: #fbbf24;
+  font-size: 13px;
 }
 
 .abOverlay line {

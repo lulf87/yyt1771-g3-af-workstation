@@ -171,6 +171,47 @@ def test_golden_a_roi_speck_does_not_expand_3804_envelope() -> None:
     assert max(distances) - min(distances) <= 12.0
 
 
+def test_golden_a_frame_1461_side_speck_does_not_expand_envelope() -> None:
+    try:
+        registry = load_dataset_registry()
+        registry.resolve_dataset("golden_a_20260522_dev_lab")
+    except OfflineDatasetError as exc:
+        pytest.skip(f"local golden dataset is not accessible: {exc}")
+
+    measurement = MeasurementDefinition(
+        measurement_id="p0051-speck-regression",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(
+            center_x=1178.85,
+            center_y=522.29,
+            width=1260.1,
+            height=307.04,
+            angle_deg=-8.06,
+        ),
+    )
+
+    distances: dict[int, float] = {}
+    right_edges: dict[int, float] = {}
+    for frame_index in [1400, 1460, 1461]:
+        frame = registry.load_frame("golden_a_20260522_dev_lab", frame_index)
+        result = detect_frame(frame.array, measurement, frame_index=frame_index)
+
+        assert result.detection_status == DetectionStatus.VALID
+        assert result.distance_px is not None
+        assert result.debug_artifacts["mesh_selected_row_width_px"] == pytest.approx(result.distance_px)
+        assert result.debug_artifacts["boundary_support_rejected_count"] >= 0
+        assert result.debug_artifacts["contour_full_box"]
+        assert result.debug_artifacts["contour_measurement_band_box"]
+        distances[frame_index] = result.distance_px
+        right_edges[frame_index] = result.debug_artifacts["mesh_right_local_px"]
+
+    assert distances[1461] == pytest.approx(distances[1460], abs=8.0)
+    assert max(distances.values()) - min(distances.values()) <= 10.0
+    assert right_edges[1461] < 1105.0
+
+
 def test_golden_c_user_roi_adjacent_frames_keep_stable_bundle_envelope() -> None:
     try:
         registry = load_dataset_registry()

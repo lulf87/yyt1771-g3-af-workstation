@@ -175,7 +175,8 @@ def main() -> int:
         g3_target = _largest_mesh_region(g3_mask, config)
         if g3_target is None:
             raise RuntimeError(f"G3 target missing for {spec['name']}")
-        g3_rows = _mesh_envelope_rows(g3_target, config)
+        g3_rows_result = _mesh_envelope_rows(g3_target, config)
+        g3_rows = g3_rows_result.measurement_rows
 
         h, w = gray.shape
         archive_left, archive_right, archive_width, archive_obj, archive_rows = measure_mesh_width(

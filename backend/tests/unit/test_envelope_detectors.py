@@ -105,6 +105,65 @@ def test_external_speck_does_not_expand_formal_width() -> None:
     assert result.ab_points.a.y > 20.0
 
 
+def test_mesh_envelope_rejects_side_speck_row_window() -> None:
+    mask = np.zeros((120, 150), dtype=bool)
+    mask[30:91, 30:91] = True
+    mask[54:61, 91:116] = True
+    roi = RotatedROI(center_x=75.0, center_y=60.0, width=150.0, height=120.0, angle_deg=0.0)
+
+    candidate = _mesh_envelope_candidate(
+        mask,
+        roi,
+        DetectorConfig(
+            envelope_quantile=0.0,
+            envelope_window_px=9,
+            envelope_step_px=1,
+            min_window_pixels=1,
+            mesh_row_width_keep_ratio=0.1,
+            mesh_row_count_keep_ratio=0.1,
+        ),
+    )
+
+    assert candidate is not None
+    assert candidate.width_px == pytest.approx(60.0, abs=1.0)
+    debug = candidate.metadata["debug_artifacts"]
+    assert debug["raw_width_px"] > candidate.width_px + 20.0
+    assert debug["boundary_support_rejected_count"] > 0
+    assert debug["rejected_outlier_rows_count"] >= 0
+
+
+def test_mesh_envelope_reports_full_contour_box_separate_from_measurement_band() -> None:
+    mask = np.zeros((120, 150), dtype=bool)
+    mask[20:71, 35:96] = True
+    mask[82:111, 58:65] = True
+    roi = RotatedROI(center_x=75.0, center_y=60.0, width=150.0, height=120.0, angle_deg=0.0)
+
+    candidate = _mesh_envelope_candidate(
+        mask,
+        roi,
+        DetectorConfig(
+            envelope_quantile=0.0,
+            envelope_window_px=9,
+            envelope_step_px=1,
+            min_window_pixels=1,
+            mesh_row_width_keep_ratio=0.1,
+            mesh_row_count_keep_ratio=0.1,
+            contour_box_padding_px=0.0,
+        ),
+    )
+
+    assert candidate is not None
+    debug = candidate.metadata["debug_artifacts"]
+    full_box = candidate.metadata["contour_projection_box"]
+    band_box = candidate.metadata["contour_measurement_band_box"]
+    assert candidate.width_px == pytest.approx(60.0, abs=1.0)
+    assert debug["contour_full_box"] == full_box
+    assert debug["contour_measurement_band_box"] == band_box
+    assert debug["contour_box_coverage_ratio"] >= 0.995
+    assert max(point["y"] for point in full_box) >= 110.0
+    assert max(point["y"] for point in band_box) < 80.0
+
+
 def test_mesh_envelope_candidate_uses_one_row_for_formal_ab() -> None:
     mask = np.zeros((120, 140), dtype=bool)
     mask[12:32, 30:91] = True

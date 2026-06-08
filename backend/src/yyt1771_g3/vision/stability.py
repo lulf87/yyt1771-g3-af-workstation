@@ -10,6 +10,8 @@ class CandidateSelectionState:
     selected_candidate: DetectionCandidate | None = None
     pending_candidate_id: str | None = None
     pending_count: int = 0
+    pending_distance_jump_candidate_id: str | None = None
+    pending_distance_jump_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,7 @@ class CandidateSelection:
     rejected_candidates: list[DetectionCandidate]
     rejected_reason: str
     state: CandidateSelectionState
+    distance_jump_guard_triggered: bool = False
 
 
 def select_stable_candidate(
@@ -48,6 +51,46 @@ def select_stable_candidate(
             rejected_reason="JUMP_EXCEEDS_LIMIT",
             state=state,
         )
+
+    distance_jump = abs(raw_best.width_px - previous.width_px)
+    if config.distance_jump_limit_px > 0 and distance_jump > config.distance_jump_limit_px:
+        if config.distance_jump_policy == "mark_invalid":
+            return CandidateSelection(
+                raw_best_candidate=raw_best,
+                selected_candidate=None,
+                rejected_candidates=[
+                    _reject(candidate, "DISTANCE_JUMP_EXCEEDS_LIMIT")
+                    for candidate in candidates
+                ],
+                rejected_reason="DISTANCE_JUMP_EXCEEDS_LIMIT",
+                state=state,
+                distance_jump_guard_triggered=True,
+            )
+
+        pending_count = (
+            state.pending_distance_jump_count + 1
+            if state.pending_distance_jump_candidate_id == raw_best.candidate_id
+            else 1
+        )
+        if pending_count < config.distance_jump_hold_frames:
+            return CandidateSelection(
+                raw_best_candidate=raw_best,
+                selected_candidate=previous,
+                rejected_candidates=[
+                    _reject(candidate, "DISTANCE_JUMP_GUARD_HELD_PREVIOUS")
+                    for candidate in candidates
+                    if candidate != previous
+                ],
+                rejected_reason="",
+                state=CandidateSelectionState(
+                    selected_candidate=previous,
+                    pending_candidate_id=state.pending_candidate_id,
+                    pending_count=state.pending_count,
+                    pending_distance_jump_candidate_id=raw_best.candidate_id,
+                    pending_distance_jump_count=pending_count,
+                ),
+                distance_jump_guard_triggered=True,
+            )
 
     tied = [
         candidate

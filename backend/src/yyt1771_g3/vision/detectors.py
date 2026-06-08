@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -21,6 +22,14 @@ from yyt1771_g3.core.models import (
     RotatedROI,
 )
 from yyt1771_g3.vision.stability import CandidateSelectionState, select_stable_candidate
+
+
+@dataclass(frozen=True)
+class MeshEnvelopeRowsResult:
+    all_rows: list[dict[str, float]]
+    measurement_rows: list[dict[str, float]]
+    rejected_rows: list[dict[str, Any]]
+    diagnostics: dict[str, Any]
 
 
 def detect_frame(
@@ -206,7 +215,10 @@ def _finish_candidate_detection(
         "selection_state": {
             "pending_candidate_id": selection.state.pending_candidate_id,
             "pending_count": selection.state.pending_count,
+            "pending_distance_jump_candidate_id": selection.state.pending_distance_jump_candidate_id,
+            "pending_distance_jump_count": selection.state.pending_distance_jump_count,
         },
+        "distance_jump_guard_triggered": bool(selection.distance_jump_guard_triggered),
     }
     debug_artifacts.update(selected.metadata.get("debug_artifacts", {}))
     if extra_debug:
@@ -376,11 +388,21 @@ def _largest_mesh_region(mask: np.ndarray, config: DetectorConfig) -> np.ndarray
     return obj
 
 
-def _mesh_envelope_rows(mask: np.ndarray, config: DetectorConfig) -> list[dict[str, float]]:
+def _mesh_envelope_rows(mask: np.ndarray, config: DetectorConfig) -> MeshEnvelopeRowsResult:
     ys, xs = np.nonzero(mask)
     min_pixels = max(1, int(config.min_window_pixels))
     if len(xs) < min_pixels:
-        return []
+        return MeshEnvelopeRowsResult(
+            all_rows=[],
+            measurement_rows=[],
+            rejected_rows=[],
+            diagnostics={
+                "mesh_all_row_count": 0,
+                "mesh_measurement_row_count": 0,
+                "mesh_rejected_row_count": 0,
+                "fallback_used": False,
+            },
+        )
 
     height = mask.shape[0]
     window = max(5, int(config.envelope_window_px), int(0.04 * height), 25)
@@ -396,6 +418,8 @@ def _mesh_envelope_rows(mask: np.ndarray, config: DetectorConfig) -> list[dict[s
         xx = xs[selected].astype(float)
         left = float(np.quantile(xx, q))
         right = float(np.quantile(xx, 1.0 - q))
+        start_v = max(0, center_v - window // 2)
+        end_v = min(height - 1, center_v + window // 2)
         rows.append(
             {
                 "v": float(center_v),
@@ -403,20 +427,163 @@ def _mesh_envelope_rows(mask: np.ndarray, config: DetectorConfig) -> list[dict[s
                 "right": right,
                 "width": right - left,
                 "pixel_count": float(pixel_count),
+                "window_start_v": float(start_v),
+                "window_end_v": float(end_v),
             }
         )
 
     if not rows:
-        return []
+        return MeshEnvelopeRowsResult(
+            all_rows=[],
+            measurement_rows=[],
+            rejected_rows=[],
+            diagnostics={
+                "mesh_all_row_count": 0,
+                "mesh_measurement_row_count": 0,
+                "mesh_rejected_row_count": 0,
+                "fallback_used": False,
+            },
+        )
 
     max_width = max(row["width"] for row in rows)
     max_count = max(row["pixel_count"] for row in rows)
-    return [
-        row
-        for row in rows
-        if row["width"] >= config.mesh_row_width_keep_ratio * max_width
-        and row["pixel_count"] >= config.mesh_row_count_keep_ratio * max_count
+    raw_width = max_width
+    rejected_rows: list[dict[str, Any]] = []
+    keep_rows: list[dict[str, float]] = []
+    for row in rows:
+        if row["width"] < config.mesh_row_width_keep_ratio * max_width:
+            rejected_rows.append({**row, "rejected_reason": "ROW_WIDTH_BELOW_KEEP_RATIO"})
+            continue
+        if row["pixel_count"] < config.mesh_row_count_keep_ratio * max_count:
+            rejected_rows.append({**row, "rejected_reason": "ROW_COUNT_BELOW_KEEP_RATIO"})
+            continue
+        keep_rows.append(row)
+
+    boundary_rows: list[dict[str, float]] = []
+    boundary_rejected_count = 0
+    if config.boundary_support_enabled:
+        for row in keep_rows:
+            support = _mesh_boundary_support(mask, row, config)
+            supported_row = {**row, **support}
+            if bool(support["boundary_support_pass"]):
+                boundary_rows.append(supported_row)
+                continue
+            boundary_rejected_count += 1
+            rejected_rows.append(
+                {
+                    **supported_row,
+                    "rejected_reason": "BOUNDARY_SUPPORT_WEAK",
+                }
+            )
+    else:
+        boundary_rows = keep_rows
+
+    percentile_source = boundary_rows or keep_rows or rows
+    percentile_width = float(
+        np.percentile(
+            np.array([row["width"] for row in percentile_source], dtype=float),
+            min(max(float(config.envelope_width_percentile), 0.0), 100.0),
+        )
+    )
+    threshold = percentile_width + max(0.0, float(config.envelope_width_outlier_epsilon_px))
+    measurement_rows: list[dict[str, float]] = []
+    outlier_rejected_count = 0
+    for row in boundary_rows:
+        if row["width"] > threshold and not _has_width_consensus(row, boundary_rows, config, step):
+            outlier_rejected_count += 1
+            rejected_rows.append(
+                {
+                    **row,
+                    "rejected_reason": "WIDTH_OUTLIER_WITHOUT_CONSENSUS",
+                }
+            )
+            continue
+        measurement_rows.append(row)
+
+    fallback_used = False
+    if not measurement_rows:
+        fallback_used = True
+        measurement_rows = keep_rows or rows
+
+    diagnostics = {
+        "raw_width_px": float(raw_width),
+        "robust_width_percentile_px": float(percentile_width),
+        "envelope_width_percentile": float(config.envelope_width_percentile),
+        "envelope_width_outlier_epsilon_px": float(config.envelope_width_outlier_epsilon_px),
+        "envelope_min_consensus_rows": int(config.envelope_min_consensus_rows),
+        "boundary_support_enabled": bool(config.boundary_support_enabled),
+        "boundary_support_window_px": int(config.boundary_support_window_px),
+        "boundary_support_min_pixels": int(config.boundary_support_min_pixels),
+        "boundary_support_min_ratio": float(config.boundary_support_min_ratio),
+        "boundary_support_rejected_count": int(boundary_rejected_count),
+        "rejected_outlier_rows_count": int(outlier_rejected_count),
+        "fallback_used": bool(fallback_used),
+        "mesh_all_row_count": len(rows),
+        "mesh_measurement_row_count": len(measurement_rows),
+        "mesh_rejected_row_count": len(rejected_rows),
+    }
+    return MeshEnvelopeRowsResult(
+        all_rows=rows,
+        measurement_rows=measurement_rows,
+        rejected_rows=rejected_rows,
+        diagnostics=diagnostics,
+    )
+
+
+def _mesh_boundary_support(
+    mask: np.ndarray,
+    row: dict[str, float],
+    config: DetectorConfig,
+) -> dict[str, float | bool]:
+    height, width = mask.shape
+    y0 = max(0, int(round(row["window_start_v"])))
+    y1 = min(height - 1, int(round(row["window_end_v"])))
+    left = int(round(row["left"]))
+    right = int(round(row["right"]))
+    support_window = max(1, int(config.boundary_support_window_px))
+
+    left_x0 = max(0, left - support_window)
+    left_x1 = min(width - 1, left + support_window)
+    right_x0 = max(0, right - support_window)
+    right_x1 = min(width - 1, right + support_window)
+    band = mask[y0 : y1 + 1]
+    left_count = int(np.count_nonzero(band[:, left_x0 : left_x1 + 1]))
+    right_count = int(np.count_nonzero(band[:, right_x0 : right_x1 + 1]))
+    denominator = max(1.0, float(row["pixel_count"]))
+    left_ratio = float(left_count) / denominator
+    right_ratio = float(right_count) / denominator
+    min_count = max(1, int(config.boundary_support_min_pixels))
+    min_ratio = max(0.0, float(config.boundary_support_min_ratio))
+    pixel_pass = left_count >= min_count and right_count >= min_count
+    low_ratio = min(left_ratio, right_ratio)
+    high_ratio = max(left_ratio, right_ratio)
+    ratio_pass = low_ratio >= min_ratio or low_ratio >= high_ratio * 0.8
+    return {
+        "left_boundary_support_pixels": float(left_count),
+        "right_boundary_support_pixels": float(right_count),
+        "left_boundary_support_ratio": left_ratio,
+        "right_boundary_support_ratio": right_ratio,
+        "boundary_support_pass": bool(pixel_pass and ratio_pass),
+    }
+
+
+def _has_width_consensus(
+    row: dict[str, float],
+    rows: list[dict[str, float]],
+    config: DetectorConfig,
+    step: int,
+) -> bool:
+    min_rows = max(1, int(config.envelope_min_consensus_rows))
+    if min_rows <= 1:
+        return True
+    near_v = max(1.0, float(step) * float(min_rows))
+    epsilon = max(0.0, float(config.envelope_width_outlier_epsilon_px))
+    similar = [
+        other
+        for other in rows
+        if abs(other["v"] - row["v"]) <= near_v and other["width"] >= row["width"] - epsilon
     ]
+    return len(similar) >= min_rows
 
 
 def _mesh_envelope_candidate(
@@ -424,7 +591,8 @@ def _mesh_envelope_candidate(
     roi: RotatedROI,
     config: DetectorConfig,
 ) -> DetectionCandidate | None:
-    rows = _mesh_envelope_rows(mask, config)
+    rows_result = _mesh_envelope_rows(mask, config)
+    rows = rows_result.measurement_rows
     if not rows:
         return None
 
@@ -436,23 +604,21 @@ def _mesh_envelope_candidate(
         return None
 
     center_v = float(selected_row["v"])
+    all_rows = rows_result.all_rows or rows
     min_v = min(row["v"] for row in rows)
     max_v = max(row["v"] for row in rows)
-    global_left_row = min(rows, key=lambda row: row["left"])
-    global_right_row = max(rows, key=lambda row: row["right"])
+    global_left_row = min(all_rows, key=lambda row: row["left"])
+    global_right_row = max(all_rows, key=lambda row: row["right"])
     global_left = float(global_left_row["left"])
     global_right = float(global_right_row["right"])
     a = roi_local_to_measurement_point(roi, left, center_v)
     b = roi_local_to_measurement_point(roi, right, center_v)
-    box = [
-        roi_local_to_measurement_point(roi, left, min_v),
-        roi_local_to_measurement_point(roi, right, min_v),
-        roi_local_to_measurement_point(roi, right, max_v),
-        roi_local_to_measurement_point(roi, left, max_v),
-    ]
+    measurement_band_box = _measurement_band_box(mask, roi, selected_row, config)
+    full_box, box_diagnostics = _contour_full_box(mask, roi, config, measurement_band_box)
+    projection_box = full_box or measurement_band_box
     confidence = min(1.0, 0.25 + length / max(1.0, roi.width) * 0.65 + len(rows) / max(1.0, mask.shape[0]))
     return DetectionCandidate(
-        candidate_id="archived-mesh-envelope-rows",
+        candidate_id=f"archived-mesh-envelope-row-{int(round(center_v))}",
         axis_position_px=float(center_v),
         width_px=float(math.dist((a.x, a.y), (b.x, b.y))),
         a=a,
@@ -461,27 +627,130 @@ def _mesh_envelope_candidate(
         metadata={
             "debug_artifacts": {
                 "mesh_envelope_row_count": len(rows),
+                **rows_result.diagnostics,
+                **box_diagnostics,
                 "mesh_left_px": float(a.x),
                 "mesh_right_px": float(b.x),
                 "mesh_left_local_px": float(left),
                 "mesh_right_local_px": float(right),
                 "mesh_best_row_v_px": center_v,
                 "mesh_selected_row_width_px": length,
+                "selected_row": dict(selected_row),
+                "selected_measurement_row_v_px": center_v,
+                "selected_measurement_row_width_px": length,
                 "mesh_global_left_local_px": global_left,
                 "mesh_global_left_row_v_px": float(global_left_row["v"]),
                 "mesh_global_right_local_px": global_right,
                 "mesh_global_right_row_v_px": float(global_right_row["v"]),
                 "mesh_global_span_px": global_right - global_left,
+                "contour_full_box": projection_box,
+                "contour_measurement_band_box": measurement_band_box,
+                "show_measurement_band_box": bool(config.show_measurement_band_box),
             },
             "local_min_along_px": float(left),
             "local_max_along_px": float(right),
             "local_min_perpendicular_px": float(min_v),
             "local_max_perpendicular_px": float(max_v),
             "theta_deg": float(roi.angle_deg),
-            "contour_projection_box": [point.model_dump(mode="json") for point in box],
+            "contour_projection_box": projection_box,
+            "contour_full_box": projection_box,
+            "contour_measurement_band_box": measurement_band_box,
             "contour_direction_arrow": [point.model_dump(mode="json") for point in [a, b]],
         },
     )
+
+
+def _measurement_band_box(
+    mask: np.ndarray,
+    roi: RotatedROI,
+    selected_row: dict[str, float],
+    config: DetectorConfig,
+) -> list[dict[str, float]]:
+    half_window = max(1.0, float(max(5, int(config.envelope_window_px), int(0.04 * mask.shape[0]), 25))) / 2.0
+    left = float(selected_row["left"])
+    right = float(selected_row["right"])
+    center_v = float(selected_row["v"])
+    top = max(0.0, center_v - half_window)
+    bottom = min(float(mask.shape[0] - 1), center_v + half_window)
+    points = [
+        roi_local_to_measurement_point(roi, left, top),
+        roi_local_to_measurement_point(roi, right, top),
+        roi_local_to_measurement_point(roi, right, bottom),
+        roi_local_to_measurement_point(roi, left, bottom),
+    ]
+    return [point.model_dump(mode="json") for point in points]
+
+
+def _contour_full_box(
+    mask: np.ndarray,
+    roi: RotatedROI,
+    config: DetectorConfig,
+    measurement_band_box: list[dict[str, float]],
+) -> tuple[list[dict[str, float]], dict[str, Any]]:
+    if config.contour_box_mode == "measurement_band":
+        return measurement_band_box, {
+            "contour_box_mode": config.contour_box_mode,
+            "contour_box_padding_px": float(config.contour_box_padding_px),
+            "contour_box_quantile": float(config.contour_box_quantile),
+            "contour_box_coverage_ratio": 1.0,
+            "contour_touches_roi_edge": False,
+        }
+
+    ys, xs = np.nonzero(mask)
+    if len(xs) == 0:
+        return [], {
+            "contour_box_mode": config.contour_box_mode,
+            "contour_box_padding_px": float(config.contour_box_padding_px),
+            "contour_box_quantile": float(config.contour_box_quantile),
+            "contour_box_coverage_ratio": 0.0,
+            "contour_touches_roi_edge": False,
+        }
+
+    q = 0.0 if config.contour_box_mode == "component_bbox" else min(max(float(config.contour_box_quantile), 0.0), 0.49)
+    padding = max(0.0, float(config.contour_box_padding_px))
+    if q <= 0.0:
+        left = float(xs.min())
+        right = float(xs.max())
+        top = float(ys.min())
+        bottom = float(ys.max())
+    else:
+        xf = xs.astype(float)
+        yf = ys.astype(float)
+        left = float(np.quantile(xf, q))
+        right = float(np.quantile(xf, 1.0 - q))
+        top = float(np.quantile(yf, q))
+        bottom = float(np.quantile(yf, 1.0 - q))
+
+    left = max(0.0, left - padding)
+    right = min(float(mask.shape[1] - 1), right + padding)
+    top = max(0.0, top - padding)
+    bottom = min(float(mask.shape[0] - 1), bottom + padding)
+    inside = (xs.astype(float) >= left) & (xs.astype(float) <= right) & (ys.astype(float) >= top) & (ys.astype(float) <= bottom)
+    coverage = float(np.count_nonzero(inside)) / max(1.0, float(len(xs)))
+    guard = max(0.0, float(config.roi_edge_guard_px))
+    touches_roi_edge = bool(
+        left <= guard
+        or top <= guard
+        or right >= float(mask.shape[1] - 1) - guard
+        or bottom >= float(mask.shape[0] - 1) - guard
+    )
+    points = [
+        roi_local_to_measurement_point(roi, left, top),
+        roi_local_to_measurement_point(roi, right, top),
+        roi_local_to_measurement_point(roi, right, bottom),
+        roi_local_to_measurement_point(roi, left, bottom),
+    ]
+    diagnostics: dict[str, Any] = {
+        "contour_box_mode": config.contour_box_mode,
+        "contour_box_padding_px": float(config.contour_box_padding_px),
+        "contour_box_quantile": float(q),
+        "contour_box_coverage_ratio": coverage,
+        "contour_box_min_coverage_ratio": float(config.contour_box_min_coverage_ratio),
+        "contour_touches_roi_edge": touches_roi_edge,
+    }
+    if touches_roi_edge:
+        diagnostics["roi_edge_warning"] = "Detected contour touches ROI boundary; expand ROI or increase detection_roi_padding_px."
+    return [point.model_dump(mode="json") for point in points], diagnostics
 
 
 def _wire_bundle_mask(gray: np.ndarray, config: DetectorConfig) -> np.ndarray:

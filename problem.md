@@ -54,7 +54,7 @@
 | P-0028 | RESOLVED_BROWSER_VERIFIED | P1 | analysis / AFAS / live offline stream | 短 Run 结束保存 analysis 时 AFAS baseline 点数不足会导致 stream network error | 2026-06-06 | 2026-06-06 | Codex | C 类 Run 目标温度停止浏览器复测已通过 |
 | P-0029 | RESOLVED_BROWSER_VERIFIED | P1 | local env / archived scripts | 系统 Python 的 OpenCV wheel 与 NumPy 2.x ABI 不兼容，归档脚本无法 import cv2 | 2026-06-06 | 2026-06-06 | Codex | 环境类问题，浏览器复测不适用；cv2 导入和归档脚本合成图运行已通过 |
 | P-0030 | RESOLVED_BROWSER_VERIFIED | P0 | vision / live offline run / detector audit | A/C 图示 ROI 需采用归档前处理 + G3 稳定支撑列/同窗口 A/B 规则并全帧浏览器审计 | 2026-06-06 | 2026-06-06 | Codex | A/C 图示 ROI 真实浏览器全帧 run + manifest 审计已通过 |
-| P-0031 | OPEN | P1 | vision / setup overlay / archive comparison | A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全 | 2026-06-06 | 2026-06-06 | Codex | 待确认是否增加 outer_contour / filled_contour overlay 或调整说明 |
+| P-0031 | RESOLVED_BROWSER_VERIFIED | P1 | vision / setup overlay / archive comparison | A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全 | 2026-06-06 | 2026-06-08 | Codex | full contour box + measurement band 浏览器复测已通过 |
 | P-0032 | OPEN | P1 | vision / archive comparison / curve stability | A 类当前 ROI 下归档网格类跨 row 宽度也会产生尖峰，不宜直接替换 G3 正式 distance | 2026-06-06 | 2026-06-08 | Codex | 待确认是否仅作为诊断或引入额外稳定约束 |
 | P-0038 | OPEN | P1 | run curves / realtime AF | Run 结束时缺少独立实时结果链 As/Af/AF95，与 Analysis AFAS 后处理未形成两套分析 | 2026-06-07 | 2026-06-07 | Codex | 待实现后用 A/C Run + Analysis 浏览器复测 |
 | P-0039 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run trend chart | Run 页实时 temperature-distance 曲线过小且缺少监护式状态分层 | 2026-06-07 | 2026-06-07 | Codex | golden A Run 页真实浏览器复测已通过 |
@@ -69,7 +69,7 @@
 | P-0048 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / API client / probe | Offline Probe 请求把前端 setup source 字段发给 backend，导致 422 extra_forbidden | 2026-06-08 | 2026-06-08 | Codex | golden A Setup Probe current frame 浏览器复测已通过 |
 | P-0049 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis temperature-distance X 轴不应使用 Latest window 或局部温度窗口 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis 浏览器复测已通过 |
 | P-0050 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis y-axis | Run/Analysis temperature-distance Y 轴需兼顾完整范围、最小细节跨度和 outlier 抑制 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis Y 轴浏览器复测已通过 |
-| P-0051 | OPEN | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | 待修复后用 Playback 1400/1460/1461 + Run 浏览器复测 |
+| P-0051 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | Playback 1400/1460/1461 + Run 浏览器复测已通过 |
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
 
@@ -2967,7 +2967,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0031 — A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P1
 - Module: `backend/src/yyt1771_g3/vision/detectors.py`, Setup overlay, archive comparison
 - Found date: 2026-06-06
@@ -3031,16 +3031,35 @@ output/audits/p0031_roi_angle_archive_compare/fig3_angle_minus_11_28_overlay.png
 4. 归档线束类是另一套 C 类序列算法，含 temporal mask stabilization 和 rolling median；不能直接用于 A 类网格截图判断。
 ```
 
+#### Resolution log
+
+- 2026-06-08: 将 A 类 diagnostics 中的完整轮廓区域与正式 max-width 测量带分离。后端新增 `contour_full_box`、`contour_measurement_band_box`，兼容字段 `contour_projection_box` 指向 full contour box；前端红色框标记 "Full detected contour region"，橙色虚线框标记 "Measurement band"。正式 A/B 与 `distance_px` 仍只来自 selected measurement row。
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8030/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps: 使用 P-0051 ROI 设置 Setup frame 1461 probe；Run 从 frame 1458 开始并观察 live frame 1461 overlay 和 diagnostics。
+- Expected: 红色 full contour box 表示完整 detected contour region；橙色 measurement band 单独显示；A/B 箭头仍为正式测量线；full contour box 不改变 distance。
+- Actual: Setup frame 1461 显示 `distance=999.00px`、`contour_full_box` 4 点、`contour_measurement_band_box` 4 点；Run frame 1461 显示 `VALID`、`999.00px`、"Full detected contour region" 与 "Measurement band"。
+- Result: PASS
+- Evidence: `output/playwright/p0051_speck_retest/setup_probe_frame_1461.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1461_diagnostics.json`, `output/playwright/p0051_speck_retest/run_start_1458_stop_after_1461.png`
+
 #### Final status
 
-OPEN
+RESOLVED_BROWSER_VERIFIED
 
 
 ---
 
 ### P-0032 — A 类当前 ROI 下归档网格类跨 row 宽度也会产生尖峰，不宜直接替换 G3 正式 distance
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P1
 - Module: `backend/src/yyt1771_g3/vision/detectors.py`, archive comparison, curve stability
 - Found date: 2026-06-06
@@ -5683,7 +5702,19 @@ frame 1461:
 
 #### Fix summary
 
-待实现。候选方向：
+2026-06-08: 实现 robust max-width row selection、boundary support filter、full contour box / measurement band 诊断分离和 distance jump guard。新增回归测试覆盖 frame 1400/1460/1461、synthetic side speck、full contour box 与 measurement band 分离。
+
+代码修复摘要：
+
+```text
+1. `_mesh_envelope_rows()` 改为返回 all_rows / measurement_rows / rejected_rows / diagnostics。
+2. 对 A 类 row-window 增加 boundary support filter，frame 1461 中 raw_width=1020px 的右侧 speck 行被拒绝，正式 selected row 回到 999px。
+3. `contour_full_box` 基于 speck 过滤后的主 target mask bbox，`contour_measurement_band_box` 基于 selected row；full contour box 不参与 distance_px。
+4. `DetectorConfig` 新增 robust max-width、boundary support、contour box 和 distance jump guard 参数，并由前端 schema 化输入支持 int / float / bool / select。
+5. Run 稳定器新增 distance jump guard，默认 hold_previous。
+```
+
+候选方向：
 
 ```text
 1. A 类 mesh_region 增加外侧小突起 / 细颈连接剪枝。
@@ -5698,26 +5729,37 @@ PYTHONPATH=backend/src python3 - <<'PY'
 # 重算 golden_a_20260522_dev_lab frame 1400/1460/1461 的 DetectionResult 和 mask 连通域诊断
 PY
 Result: reproduced frame 1461 VALID distance=1020px, target x>=1100 pixels=368.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py backend/tests/unit/test_stability.py backend/tests/integration/test_golden_detector_smoke.py -q
+Result: 24 passed.
+
+npm run build
+Result: PASS.
+
+Browser Setup probe:
+frame 1400: VALID distance=996.00px
+frame 1460: VALID distance=995.00px
+frame 1461: VALID distance=999.00px, raw_width=1020px, boundary_support_rejected_count=30, fallback_used=false.
 ```
 
 #### Browser retest log
 
-- Retest date:
-- Browser:
-- OS:
-- Frontend URL:
-- Backend URL:
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8030/`
 - Dataset: `golden_a_20260522_dev_lab`
-- Page: Playback / Run
-- Steps:
-- Expected:
-- Actual:
-- Result: PASS / FAIL
-- Evidence:
+- Page: Setup / Run
+- Steps: 在浏览器中设置 ROI `center_x=1178.85, center_y=522.29, width=1260.1, height=307.04, angle_deg=-8.06`；分别 Probe frame 1400/1460/1461；Run 从 frame 1458 开始并观察 live frame 1461。
+- Expected: frame 1461 右侧小黑点不得把 B 点拉远；L 接近 frame 1460；diagnostics 同时显示 full contour box 和 measurement band。
+- Actual: Setup Probe 1400/1460/1461 距离分别为 `996.00px / 995.00px / 999.00px`；frame 1461 diagnostics 记录 `raw_width_px=1020`、`robust_width_percentile_px=995`、`boundary_support_rejected_count=30`、`mesh_right_local_px=1097`、`fallback_used=false`；Run live frame 1461 显示 `VALID`、`999.00px`、"Full detected contour region" 和 "Measurement band"。
+- Result: PASS
+- Evidence: `output/playwright/p0051_speck_retest/setup_probe_summary.json`, `output/playwright/p0051_speck_retest/setup_probe_frame_1400.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1460.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1461.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1461_diagnostics.json`, `output/playwright/p0051_speck_retest/run_start_1458_stop_after_1461.png`, `output/playwright/p0051_speck_retest/run_start_1458_stop_after_1461_summary.json`
 
 #### Final status
 
-OPEN
+RESOLVED_BROWSER_VERIFIED
 
 
 ---

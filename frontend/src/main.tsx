@@ -145,7 +145,10 @@ const DEFAULT_CONFIG = {
   switch_after_n_frames: 3,
   jump_limit_px: 35,
   min_confidence: 0.15,
+  dark_enhance_bg_kernel_px: 41,
+  hysteresis_low_ratio: 0.45,
   min_component_area_px: 80,
+  envelope_quantile: 0.02,
   envelope_window_px: 9,
   envelope_step_px: 2,
   min_window_pixels: 8,
@@ -153,6 +156,25 @@ const DEFAULT_CONFIG = {
   mask_open_kernel_px: 3,
   mask_close_kernel_px: 11,
   mask_dilate_kernel_px: 1,
+  mesh_row_width_keep_ratio: 0.45,
+  mesh_row_count_keep_ratio: 0.35,
+  envelope_width_percentile: 95,
+  envelope_width_outlier_epsilon_px: 8,
+  envelope_min_consensus_rows: 3,
+  boundary_support_enabled: true,
+  boundary_support_window_px: 9,
+  boundary_support_min_pixels: 6,
+  boundary_support_min_ratio: 0.05,
+  distance_jump_limit_px: 18,
+  distance_jump_hold_frames: 2,
+  distance_jump_policy: "hold_previous" as const,
+  contour_box_mode: "component_bbox" as const,
+  contour_box_padding_px: 8,
+  contour_box_quantile: 0,
+  contour_box_min_coverage_ratio: 0.995,
+  show_measurement_band_box: true,
+  roi_edge_guard_px: 5,
+  detection_roi_padding_px: 0,
   max_frames_per_run: 160,
   live_offline_fps: 8,
   target_temperature_celsius: null,
@@ -194,6 +216,70 @@ const DETECTOR_OPTIONS = [
   { value: "BalloonEnvelopeDetector", label: "BalloonEnvelopeDetector" },
   { value: "BundleEnvelopeDetector", label: "BundleEnvelopeDetector" },
   { value: "ReservedObjectDetector", label: "ReservedObjectDetector" }
+];
+
+type DetectorConfig = MeasurementDefinition["detector_config"];
+type DetectorParameterGroup =
+  | "Mask"
+  | "Threshold"
+  | "Envelope"
+  | "Robust max width"
+  | "Boundary support"
+  | "Contour diagnostics"
+  | "Temporal stability"
+  | "Run";
+
+type DetectorParameterDef = {
+  key: keyof DetectorConfig;
+  label: string;
+  type: "int" | "float" | "bool" | "select";
+  group: DetectorParameterGroup;
+  min?: number;
+  max?: number;
+  step?: number;
+  title?: string;
+  advanced?: boolean;
+  options?: Array<{ value: string; label: string }>;
+};
+
+const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
+  { key: "mask_open_kernel_px", label: "Mask open kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", title: "Larger values remove more isolated dark pixels." },
+  { key: "mask_close_kernel_px", label: "Mask close kernel", type: "int", min: 1, max: 51, step: 2, group: "Mask", title: "Larger values bridge short gaps in the mesh mask." },
+  { key: "mask_dilate_kernel_px", label: "Mask dilate kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", advanced: true, title: "Expands the detected mask after closing." },
+  { key: "hysteresis_low_ratio", label: "Hysteresis low ratio", type: "float", min: 0.1, max: 0.9, step: 0.05, group: "Threshold", title: "Lower values retain weaker dark-line responses connected to strong responses." },
+  { key: "dark_enhance_bg_kernel_px", label: "Dark enhance kernel", type: "int", min: 3, max: 101, step: 2, group: "Threshold", advanced: true, title: "Background estimation size for dark-line enhancement." },
+  { key: "envelope_quantile", label: "Envelope quantile", type: "float", min: 0, max: 0.15, step: 0.005, group: "Envelope", title: "Ignores this fraction of extreme pixels on each side of a row window." },
+  { key: "min_window_pixels", label: "Min window pixels", type: "int", min: 1, max: 200, step: 1, group: "Envelope", title: "Minimum foreground support required in a row window." },
+  { key: "mesh_row_count_keep_ratio", label: "Row count keep ratio", type: "float", min: 0.1, max: 0.95, step: 0.05, group: "Envelope", title: "Higher values keep only denser row windows." },
+  { key: "envelope_window_px", label: "Envelope window px", type: "int", min: 1, max: 101, step: 2, group: "Envelope", advanced: true, title: "Sliding row-window height for envelope measurement." },
+  { key: "envelope_step_px", label: "Envelope step px", type: "int", min: 1, max: 20, step: 1, group: "Envelope", advanced: true, title: "Vertical step between row-window candidates." },
+  { key: "mesh_row_width_keep_ratio", label: "Row width keep ratio", type: "float", min: 0.1, max: 1, step: 0.05, group: "Envelope", advanced: true, title: "Higher values reject narrower row-window candidates." },
+  { key: "min_component_area_px", label: "Min component area", type: "int", min: 1, max: 5000, step: 10, group: "Mask", advanced: true, title: "Minimum component size for the detected target region." },
+  { key: "envelope_width_percentile", label: "Robust width percentile", type: "float", min: 80, max: 100, step: 0.5, group: "Robust max width", title: "High-percentile width used as a robust ceiling for row selection." },
+  { key: "envelope_width_outlier_epsilon_px", label: "Width outlier epsilon px", type: "float", min: 0, max: 50, step: 1, group: "Robust max width", title: "Extra width allowed above the robust percentile before consensus is required." },
+  { key: "envelope_min_consensus_rows", label: "Min consensus rows", type: "int", min: 1, max: 20, step: 1, group: "Robust max width", title: "Nearby rows required before an extra-wide row is trusted." },
+  { key: "boundary_support_enabled", label: "Boundary support filter", type: "bool", group: "Boundary support", title: "Rejects row windows whose edge pixels have weak support." },
+  { key: "boundary_support_window_px", label: "Boundary support window px", type: "int", min: 1, max: 51, step: 2, group: "Boundary support", title: "Horizontal strip around each candidate boundary for support counting." },
+  { key: "boundary_support_min_pixels", label: "Boundary support min pixels", type: "int", min: 1, max: 100, step: 1, group: "Boundary support", title: "Minimum pixels required near each candidate boundary." },
+  { key: "boundary_support_min_ratio", label: "Boundary support min ratio", type: "float", min: 0, max: 0.5, step: 0.01, group: "Boundary support", title: "Minimum boundary support relative to row-window foreground pixels." },
+  { key: "contour_box_mode", label: "Contour box mode", type: "select", group: "Contour diagnostics", options: [
+    { value: "component_bbox", label: "Component bbox" },
+    { value: "robust_component_bbox", label: "Robust component bbox" },
+    { value: "measurement_band", label: "Measurement band" }
+  ], title: "Controls the red diagnostic contour box; formal A/B still uses the measurement row." },
+  { key: "contour_box_padding_px", label: "Contour box padding px", type: "float", min: 0, max: 50, step: 1, group: "Contour diagnostics", title: "Expands the full contour diagnostic box." },
+  { key: "contour_box_quantile", label: "Contour box quantile", type: "float", min: 0, max: 0.05, step: 0.001, group: "Contour diagnostics", title: "Robust box quantile; 0 preserves all target-mask edges." },
+  { key: "show_measurement_band_box", label: "Show measurement band", type: "bool", group: "Contour diagnostics", title: "Shows the orange band actually used for A/B max-width selection." },
+  { key: "roi_edge_guard_px", label: "ROI edge guard px", type: "float", min: 0, max: 50, step: 1, group: "Contour diagnostics", advanced: true, title: "Warns when the detected contour is close to the ROI edge." },
+  { key: "detection_roi_padding_px", label: "Detection ROI padding px", type: "float", min: 0, max: 100, step: 1, group: "Contour diagnostics", advanced: true, title: "Reserved internal padding for detection; default keeps the formal ROI unchanged." },
+  { key: "distance_jump_limit_px", label: "Distance jump limit px", type: "float", min: 0, max: 100, step: 1, group: "Temporal stability", title: "Run-time guard for sudden distance changes." },
+  { key: "distance_jump_hold_frames", label: "Distance jump hold frames", type: "int", min: 1, max: 10, step: 1, group: "Temporal stability", advanced: true, title: "Consecutive frames required before accepting a large distance jump." },
+  { key: "distance_jump_policy", label: "Distance jump policy", type: "select", group: "Temporal stability", advanced: true, options: [
+    { value: "hold_previous", label: "Hold previous" },
+    { value: "mark_invalid", label: "Mark invalid" }
+  ], title: "How Run handles unconfirmed distance jumps." },
+  { key: "max_frames_per_run", label: "Max frames per run", type: "int", min: 1, max: 20000, step: 10, group: "Run", advanced: true, title: "Frame limit for live offline runs." },
+  { key: "live_offline_fps", label: "Live offline fps", type: "float", min: 0.5, max: 30, step: 0.5, group: "Run", advanced: true, title: "Playback speed for live offline runs." }
 ];
 
 function App() {
@@ -1241,12 +1327,12 @@ function DetectorSetupControls({
     onPreviewAffectingChange?.(change);
   }
 
-  function patchDetectorConfig(key: keyof MeasurementDefinition["detector_config"], value: number) {
+  function patchDetectorConfig(key: keyof DetectorConfig, value: DetectorConfig[keyof DetectorConfig]) {
     onMeasurement({
       ...measurement,
       detector_config: {
         ...measurement.detector_config,
-        [key]: Math.max(1, Math.round(value))
+        [key]: value
       }
     });
   }
@@ -1307,52 +1393,136 @@ function DetectorSetupControls({
           </option>
         </select>
       </label>
-      <div className="twoColumnControls">
-        <NumberField
-          label="Min component"
-          min={1}
-          value={measurement.detector_config.min_component_area_px ?? 80}
-          onChange={(value) => patchDetectorConfig("min_component_area_px", value)}
-          onCommit={() => commitDetectorConfig("min_component_area_px")}
+      <DetectorParameterGroups
+        definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => !definition.advanced)}
+        detectorConfig={measurement.detector_config}
+        onChange={patchDetectorConfig}
+        onCommit={commitDetectorConfig}
+      />
+      <details className="advancedDetectorParameters">
+        <summary>Advanced</summary>
+        <DetectorParameterGroups
+          definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => definition.advanced)}
+          detectorConfig={measurement.detector_config}
+          onChange={patchDetectorConfig}
+          onCommit={commitDetectorConfig}
         />
-        <NumberField
-          label="Envelope window"
-          min={1}
-          value={measurement.detector_config.envelope_window_px ?? 9}
-          onChange={(value) => patchDetectorConfig("envelope_window_px", value)}
-          onCommit={() => commitDetectorConfig("envelope_window_px")}
-        />
-        <NumberField
-          label="Envelope step"
-          min={1}
-          value={measurement.detector_config.envelope_step_px ?? 2}
-          onChange={(value) => patchDetectorConfig("envelope_step_px", value)}
-          onCommit={() => commitDetectorConfig("envelope_step_px")}
-        />
-        <NumberField
-          label="Mask open"
-          min={1}
-          value={measurement.detector_config.mask_open_kernel_px ?? 3}
-          onChange={(value) => patchDetectorConfig("mask_open_kernel_px", value)}
-          onCommit={() => commitDetectorConfig("mask_open_kernel_px")}
-        />
-        <NumberField
-          label="Mask close"
-          min={1}
-          value={measurement.detector_config.mask_close_kernel_px ?? 11}
-          onChange={(value) => patchDetectorConfig("mask_close_kernel_px", value)}
-          onCommit={() => commitDetectorConfig("mask_close_kernel_px")}
-        />
-        <NumberField
-          label="Mask dilate"
-          min={1}
-          value={measurement.detector_config.mask_dilate_kernel_px ?? 1}
-          onChange={(value) => patchDetectorConfig("mask_dilate_kernel_px", value)}
-          onCommit={() => commitDetectorConfig("mask_dilate_kernel_px")}
-        />
-      </div>
+      </details>
     </div>
   );
+}
+
+function DetectorParameterGroups({
+  definitions,
+  detectorConfig,
+  onChange,
+  onCommit
+}: {
+  definitions: DetectorParameterDef[];
+  detectorConfig: DetectorConfig;
+  onChange: (key: keyof DetectorConfig, value: DetectorConfig[keyof DetectorConfig]) => void;
+  onCommit: (key: string) => void;
+}) {
+  const groups = Array.from(new Set(definitions.map((definition) => definition.group)));
+  return (
+    <>
+      {groups.map((group) => (
+        <div className="detectorParameterGroup" key={group}>
+          <h4>{group}</h4>
+          <div className="twoColumnControls">
+            {definitions
+              .filter((definition) => definition.group === group)
+              .map((definition) => (
+                <DetectorParameterField
+                  definition={definition}
+                  detectorConfig={detectorConfig}
+                  key={String(definition.key)}
+                  onChange={onChange}
+                  onCommit={onCommit}
+                />
+              ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function DetectorParameterField({
+  definition,
+  detectorConfig,
+  onChange,
+  onCommit
+}: {
+  definition: DetectorParameterDef;
+  detectorConfig: DetectorConfig;
+  onChange: (key: keyof DetectorConfig, value: DetectorConfig[keyof DetectorConfig]) => void;
+  onCommit: (key: string) => void;
+}) {
+  const value = detectorConfig[definition.key] ?? (DEFAULT_CONFIG as DetectorConfig)[definition.key];
+  if (definition.type === "bool") {
+    return (
+      <label className="field checkboxField" title={definition.title}>
+        <span>{definition.label}</span>
+        <input
+          checked={Boolean(value)}
+          onChange={(event) => {
+            onChange(definition.key, event.target.checked);
+            onCommit(String(definition.key));
+          }}
+          type="checkbox"
+        />
+      </label>
+    );
+  }
+  if (definition.type === "select") {
+    return (
+      <label className="field" title={definition.title}>
+        <span>{definition.label}</span>
+        <select
+          onChange={(event) => {
+            onChange(definition.key, event.target.value as DetectorConfig[keyof DetectorConfig]);
+            onCommit(String(definition.key));
+          }}
+          value={typeof value === "string" ? value : ""}
+        >
+          {(definition.options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+  return (
+    <NumberField
+      label={definition.label}
+      max={definition.max}
+      min={definition.min}
+      step={definition.step}
+      title={definition.title}
+      value={typeof value === "number" ? value : Number(definition.min ?? 0)}
+      onChange={(nextValue) => {
+        onChange(definition.key, normalizeDetectorNumber(definition, nextValue));
+      }}
+      onCommit={(nextValue) => {
+        onChange(definition.key, normalizeDetectorNumber(definition, nextValue));
+        onCommit(String(definition.key));
+      }}
+    />
+  );
+}
+
+function normalizeDetectorNumber(definition: DetectorParameterDef, value: number): number {
+  const fallback = typeof (DEFAULT_CONFIG as DetectorConfig)[definition.key] === "number"
+    ? Number((DEFAULT_CONFIG as DetectorConfig)[definition.key])
+    : 0;
+  let next = Number.isFinite(value) ? value : fallback;
+  if (definition.type === "int") next = Math.round(next);
+  if (definition.min != null) next = Math.max(definition.min, next);
+  if (definition.max != null) next = Math.min(definition.max, next);
+  return next;
 }
 
 function TemperatureControlPanel({
@@ -1446,21 +1616,26 @@ function NumberField({
   label,
   value,
   min,
+  max,
   onChange,
   onCommit,
-  step = 1
+  step = 1,
+  title
 }: {
   label: string;
   value: number;
   min?: number;
+  max?: number;
   onChange: (value: number) => void;
   onCommit?: (value: number) => void;
   step?: number;
+  title?: string;
 }) {
   return (
-    <label className="field">
+    <label className="field" title={title}>
       <span>{label}</span>
       <input
+        max={max}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
         onBlur={(event) => onCommit?.(Number(event.currentTarget.value))}
@@ -1576,12 +1751,18 @@ function DetectionDiagnosticImages({
 }) {
   const images = readDiagnosticImages(debugArtifacts);
   if (!images) return null;
+  const roiWarning =
+    debugArtifacts &&
+    typeof debugArtifacts.roi_edge_warning === "string"
+      ? debugArtifacts.roi_edge_warning
+      : null;
   return (
     <section className="diagnosticImagePanel" aria-label="Detection diagnostic images">
       <div className="diagnosticImageHeader">
         <h3>Detection Diagnostics</h3>
         <span>{images.mask.coordinates}</span>
       </div>
+      {roiWarning ? <div className="diagnosticWarning">{roiWarning}</div> : null}
       <div className="diagnosticImageGrid">
         <DiagnosticImageFigure image={images.mask} />
         <DiagnosticImageFigure image={images.contour} />
@@ -1965,21 +2146,40 @@ function ContourProjectionOverlay({
   debugArtifacts: Record<string, unknown>;
   transform: FrameDisplayTransform;
 }) {
-  const box = readPointArray(debugArtifacts.contour_projection_box);
+  const fullBox = readPointArray(debugArtifacts.contour_full_box);
+  const projectionBox = readPointArray(debugArtifacts.contour_projection_box);
+  const box = fullBox.length === 4 ? fullBox : projectionBox;
+  const bandBox = readPointArray(debugArtifacts.contour_measurement_band_box);
   const arrow = readPointArray(debugArtifacts.contour_direction_arrow);
-  if (box.length !== 4 || arrow.length !== 2) return null;
+  if (box.length !== 4 && arrow.length !== 2) return null;
   const displayBox = box.map((point) => measurementPointToDisplay(point, transform));
+  const displayBandBox = bandBox.map((point) => measurementPointToDisplay(point, transform));
   const displayArrow = arrow.map((point) => measurementPointToDisplay(point, transform));
   const theta = numberFromUnknown(debugArtifacts.contour_theta_deg);
   const length = numberFromUnknown(debugArtifacts.contour_length_px);
-  const label = `${theta == null ? "theta=?" : `theta=${theta.toFixed(1)} deg`}  ${
+  const showBand = debugArtifacts.show_measurement_band_box !== false;
+  const label = `Full detected contour region  ${theta == null ? "theta=?" : `theta=${theta.toFixed(1)} deg`}  ${
     length == null ? "L=?" : `L=${length.toFixed(1)}px`
   }`;
   return (
     <g className="contourProjectionOverlay">
-      <polygon points={displayBox.map((point) => `${point.x},${point.y}`).join(" ")} />
-      <line x1={displayArrow[0].x} y1={displayArrow[0].y} x2={displayArrow[1].x} y2={displayArrow[1].y} />
-      <path d={arrowHeadPath(displayArrow[0], displayArrow[1], 18, 0.45)} />
+      {displayBox.length === 4 ? (
+        <polygon className="contourFullBox" points={displayBox.map((point) => `${point.x},${point.y}`).join(" ")} />
+      ) : null}
+      {showBand && displayBandBox.length === 4 ? (
+        <>
+          <polygon className="contourMeasurementBandBox" points={displayBandBox.map((point) => `${point.x},${point.y}`).join(" ")} />
+          <text className="contourMeasurementBandLabel" x={displayBandBox[0].x + 8} y={displayBandBox[0].y + 18}>
+            Measurement band
+          </text>
+        </>
+      ) : null}
+      {displayArrow.length === 2 ? (
+        <>
+          <line x1={displayArrow[0].x} y1={displayArrow[0].y} x2={displayArrow[1].x} y2={displayArrow[1].y} />
+          <path d={arrowHeadPath(displayArrow[0], displayArrow[1], 18, 0.45)} />
+        </>
+      ) : null}
       <text x={18} y={28}>
         {label}
       </text>

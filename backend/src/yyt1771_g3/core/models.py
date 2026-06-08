@@ -69,6 +69,23 @@ class DetectorConfig(G3Model):
     mesh_region_margin_px: int = 30
     mesh_row_width_keep_ratio: float = 0.45
     mesh_row_count_keep_ratio: float = 0.35
+    envelope_width_percentile: float = 95.0
+    envelope_width_outlier_epsilon_px: float = 8.0
+    envelope_min_consensus_rows: int = 3
+    boundary_support_window_px: int = 9
+    boundary_support_min_pixels: int = 6
+    boundary_support_min_ratio: float = 0.05
+    boundary_support_enabled: bool = True
+    distance_jump_limit_px: float = 18.0
+    distance_jump_hold_frames: int = 2
+    distance_jump_policy: Literal["hold_previous", "mark_invalid"] = "hold_previous"
+    contour_box_mode: Literal["component_bbox", "robust_component_bbox", "measurement_band"] = "component_bbox"
+    contour_box_padding_px: float = 8.0
+    contour_box_quantile: float = 0.0
+    contour_box_min_coverage_ratio: float = 0.995
+    show_measurement_band_box: bool = True
+    roi_edge_guard_px: float = 5.0
+    detection_roi_padding_px: float = 0.0
     wire_threshold_scale: float = 0.9
     wire_min_response: float = 8.0
     wire_bridge_kernel_px: int = 3
@@ -86,6 +103,10 @@ class DetectorConfig(G3Model):
         "switch_after_n_frames",
         "min_component_area_px",
         "mesh_region_margin_px",
+        "envelope_min_consensus_rows",
+        "boundary_support_window_px",
+        "boundary_support_min_pixels",
+        "distance_jump_hold_frames",
         "wire_min_component_area_px",
         "max_frames_per_run",
     )
