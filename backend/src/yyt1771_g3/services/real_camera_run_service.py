@@ -67,6 +67,7 @@ def run_real_camera(
                 measurement,
                 frame_index=frame_index,
                 stability_state=state,
+                generate_diagnostics=_initial_run_diagnostics_enabled(measurement),
             )
             detection = _attach_temperature(detection, frame.timestamp_ms, temperature, temp_sync_target_ms)
             frame_records.append(
@@ -111,6 +112,13 @@ def run_real_camera(
     run_store.write_run_manifest(manifest)
     run_store.write_analysis_result(analysis)
     return RealCameraRunResult(manifest=manifest, analysis=analysis)
+
+
+def _initial_run_diagnostics_enabled(measurement: MeasurementDefinition) -> bool:
+    config = measurement.detector_config
+    if config.run_detector_mode == "diagnostics":
+        return True
+    return config.run_diagnostics_mode == "every_frame"
 
 
 def _prepare_temperature_controller(

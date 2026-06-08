@@ -73,6 +73,7 @@
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
 | P-0056 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / frontend diagnostics | A 类 frame 680 左下浅色气泡连入 Detected mask | 2026-06-08 | 2026-06-08 | Codex | golden A frame 680/800 Setup probe + 1400/1460/1461 回归浏览器复测已通过 |
+| P-0057 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend parameters | Detector processing scale 与 Run 快速诊断路径需支持原图坐标还原并降低 UI 卡顿 | 2026-06-08 | 2026-06-08 | Codex | golden A scale 0.5/1.0 Probe + Run 浏览器复测已通过；C 类 detector 回归已通过 |
 
 ---
 
@@ -122,6 +123,56 @@ C 类：多细支整体视为一个目标，相邻细支间白色间隙视为目
 - Actual: A/C probe and run returned backend DetectionResult with overlay; exports generated CSV/JSON/PNG/overlay/parameters artifacts.
 - Result: PASS
 - Evidence: `output/playwright/m3_playback_probe_golden_c_last.png`, `output/playwright/m7_live_offline_run_golden_a.png`, `output/playwright/m9_export_golden_a_artifacts.png`, `output/playwright/m9_export_golden_c_artifacts.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0057 — Detector processing scale 与 Run 快速诊断路径需支持原图坐标还原并降低 UI 卡顿
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `frontend/src`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+
+#### Problem
+
+A 类 BalloonEnvelopeDetector 在 frame 680 气泡、frame 1461 右侧 speck 等小尺度伪影附近仍需要更稳健的处理尺度策略。Run 默认路径当前会返回大尺寸 `diagnostic_images`，容易造成实时 UI 卡顿。新增 detector processing scale 后，正式 A/B、distance_px、overlay 坐标仍必须回到原始 measurement/source pixel 坐标。
+
+#### Expected
+
+```text
+processing_scale_enabled=true 且 processing_scale<1.0 时，A 类 detector 在 ROI-local 降采样图上运行 mask / envelope / robust max_width。
+所有正式 A/B、distance_px、contour / measurement band overlay 字段还原到原始图像坐标。
+processing_scale=false 或 scale=1.0 时尽量保持现有行为。
+Probe / Playback diagnostics 继续生成完整诊断图。
+Run fast 默认不每帧生成大尺寸 diagnostic_images；suspicious_only 只对可疑帧生成。
+前端提供 Image processing / Scale 与 Run performance 参数，并批量刷新 Run 结果，避免每帧重绘整页。
+```
+
+#### Resolution log
+
+- 2026-06-08: 初始登记；按 TDD 添加后端缩放、坐标还原、diagnostics gating 和 golden scale 对比测试，再实现最小有效补丁。
+- 2026-06-08: 实现 `DetectorConfig.processing_scale*`、Run diagnostics/performance 参数、ROI-local downsample、scaled detector config、候选坐标还原、保守 full-res endpoint refine、runtime breakdowns 和 Run fast diagnostics gating。Run 默认 `fast + suspicious_only` 正常帧不再返回大尺寸 `diagnostic_images`；Probe 保留完整 diagnostics。前端新增 `Image processing / Scale` 与 `Run performance` 参数组，并按 `run_preview_fps` / `run_result_batch_size` 对 live Run state 进行批量刷新。
+- 2026-06-08: 自动化验证通过：`PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q`（95 passed），`npm test -- --run`（43 passed），`npm run build`（passed）。
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5173/`
+- Backend URL: `http://127.0.0.1:8000/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps: Open Setup in browser; verify `Image processing / Scale` and `Run performance` parameter groups; Probe frame 680 with default processing scale; run browser-context exact ROI probes for frames 680/800 using P-0056 ROI and 1400/1460/1461 using P-0051 ROI at scale 1.0 and 0.5; run browser-context live offline stream for frames 1460-1464 with scale 0.5, `run_detector_mode=fast`, `run_diagnostics_mode=suspicious_only`; start/stop Run page UI and confirm chart/frame updates without visible lockup.
+- Expected: Scale 0.5 keeps formal A/B and distance in source pixels; frame 680 bubble does not become A; frame 1461 speck does not pull B; Probe has full diagnostics; default Run normal frames omit diagnostic images; UI Run updates trend/frame and remains responsive.
+- Actual: Exact browser probe distances: frame 680 scale 1.0 = 1003.00 px, scale 0.5 = 1002.00 px; frame 800 scale 1.0 = 1001.00 px, scale 0.5 = 1001.48 px; frame 1400 scale 1.0 = 995.00 px, scale 0.5 = 992.00 px; frame 1460 scale 1.0 = 994.00 px, scale 0.5 = 992.00 px; frame 1461 scale 1.0 = 994.00 px, scale 0.5 = 992.00 px. Scale 0.5 rows reported `coordinates_rescaled_to_full_res=true`. Browser stream frames 1460-1464 produced no `diagnostic_images`, all `diagnostics_generated=false`, average detector runtime 96.17 ms, distances stable at approximately 992 px. UI Run completed a partial run with trend and live frame visible.
+- Result: PASS
+- Evidence: `output/playwright/p0057_setup_probe_frame680.png`, `output/playwright/p0057_browser_retest.json`, `output/playwright/p0057_run_completed.png`
 
 #### Final status
 

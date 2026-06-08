@@ -240,9 +240,9 @@ def test_live_offline_run_stream_api_emits_frame_events_and_final_run(tmp_path: 
     complete_events = [event for event in events if event["event"] == "complete"]
     assert [event["frame_index"] for event in frame_events] == [1, 2]
     assert all(event["detection_result"]["detection_status"] == "VALID" for event in frame_events)
-    diagnostic_images = frame_events[0]["detection_result"]["debug_artifacts"]["diagnostic_images"]
-    assert diagnostic_images["mask"]["data_url"].startswith("data:image/png;base64,")
-    assert diagnostic_images["contour"]["data_url"].startswith("data:image/png;base64,")
+    debug_artifacts = frame_events[0]["detection_result"]["debug_artifacts"]
+    assert debug_artifacts["diagnostics_generated"] is False
+    assert "diagnostic_images" not in debug_artifacts
     assert frame_events[0]["curve_points"]["distance_time"]["frame_index"] == 1
     assert len(complete_events) == 1
     assert len(complete_events[0]["run_manifest"]["detection_results"]) == 2

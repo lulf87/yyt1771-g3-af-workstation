@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,12 +52,14 @@ def detect_frame(
     *,
     frame_index: int,
     previous_candidate: DetectionCandidate | None = None,
+    generate_diagnostics: bool = True,
 ) -> DetectionResult:
     result, _ = detect_frame_with_state(
         frame,
         measurement,
         frame_index=frame_index,
         stability_state=CandidateSelectionState(selected_candidate=previous_candidate),
+        generate_diagnostics=generate_diagnostics,
     )
     return result
 
@@ -67,6 +70,7 @@ def detect_frame_with_state(
     *,
     frame_index: int,
     stability_state: CandidateSelectionState | None = None,
+    generate_diagnostics: bool = True,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     detector = measurement.detector
     state = stability_state or CandidateSelectionState()
@@ -80,6 +84,7 @@ def detect_frame_with_state(
             frame_index=frame_index,
             detector_name=str(detector.value),
             stability_state=state,
+            generate_diagnostics=generate_diagnostics,
         )
     if detector == DetectorType.BUNDLE_ENVELOPE:
         return _detect_wire_bundle_max_width(
@@ -89,6 +94,7 @@ def detect_frame_with_state(
             frame_index=frame_index,
             detector_name=str(detector.value),
             stability_state=state,
+            generate_diagnostics=generate_diagnostics,
         )
     return _invalid(frame_index, "UNKNOWN_DETECTOR"), state
 
@@ -101,37 +107,54 @@ def _detect_mesh_envelope_max_width(
     frame_index: int,
     detector_name: str,
     stability_state: CandidateSelectionState,
+    generate_diagnostics: bool,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
+    detector_start = time.perf_counter()
     if frame.size == 0:
         return _invalid(frame_index, "EMPTY_FRAME"), stability_state
 
+    preprocessing_start = time.perf_counter()
     local = _warp_rotated_roi(frame, roi)
     if local.size == 0:
         return _invalid(frame_index, "EMPTY_ROI"), stability_state
-    gray = _to_gray(local)
-    raw_dark_mask = _dark_foreground_mask(gray, config)
-    raw_target = _largest_mesh_region(raw_dark_mask, config)
+    full_gray = _to_gray(local)
+    scale = _effective_processing_scale(config)
+    proc_gray = _resize_roi(full_gray, scale=scale, mode=config.processing_scale_mode)
+    proc_config = _scaled_detector_config(config, scale) if scale < 1.0 else config
+    proc_roi = _processed_local_roi(proc_gray)
+    preprocessing_runtime_ms = _elapsed_ms(preprocessing_start)
+
+    mask_start = time.perf_counter()
+    raw_dark_mask = _dark_foreground_mask(proc_gray, proc_config)
+    raw_target = _largest_mesh_region(raw_dark_mask, proc_config)
+    mask_runtime_ms = _elapsed_ms(mask_start)
     if raw_target is None:
         return _invalid(frame_index, "NO_TARGET"), stability_state
-    raw_candidate = _mesh_envelope_candidate(raw_target, roi, config)
-    bubble_result = _bright_bubble_suppress_zone(gray, config)
-    bubble_result = _peripheral_bubble_suppress_zone(bubble_result, raw_target, config)
-    dark_line_response = _dark_line_response(gray, config) if config.dark_line_filter_enabled else np.zeros_like(gray, dtype=float)
+
+    envelope_start = time.perf_counter()
+    raw_candidate = _mesh_envelope_candidate(raw_target, proc_roi, proc_config)
+    bubble_result = _bright_bubble_suppress_zone(proc_gray, proc_config)
+    bubble_result = _peripheral_bubble_suppress_zone(bubble_result, raw_target, proc_config)
+    dark_line_response = (
+        _dark_line_response(proc_gray, proc_config)
+        if proc_config.dark_line_filter_enabled
+        else np.zeros_like(proc_gray, dtype=float)
+    )
     measurement_mask = np.asarray(raw_dark_mask, dtype=bool).copy()
-    if config.bubble_suppress_enabled:
+    if proc_config.bubble_suppress_enabled:
         measurement_mask &= ~bubble_result.zone
-    if config.dark_line_filter_enabled and config.dark_line_min_response > 0.0:
-        measurement_mask &= dark_line_response >= float(config.dark_line_min_response)
-    spur_result = _prune_short_artifact_spurs(measurement_mask, dark_line_response, bubble_result.zone, config)
+    if proc_config.dark_line_filter_enabled and proc_config.dark_line_min_response > 0.0:
+        measurement_mask &= dark_line_response >= float(proc_config.dark_line_min_response)
+    spur_result = _prune_short_artifact_spurs(measurement_mask, dark_line_response, bubble_result.zone, proc_config)
     measurement_mask = spur_result.mask
-    clean_target = _largest_mesh_region(measurement_mask, config)
+    clean_target = _largest_mesh_region(measurement_mask, proc_config)
     if clean_target is None and raw_candidate is None:
         return _invalid(frame_index, "NO_TARGET"), stability_state
 
     clean_candidate = _mesh_envelope_candidate(
         clean_target,
-        roi,
-        config,
+        proc_roi,
+        proc_config,
         endpoint_guard_zone=bubble_result.zone,
         ridge_response=dark_line_response,
     ) if clean_target is not None else None
@@ -145,8 +168,28 @@ def _detect_mesh_envelope_max_width(
     )
     if candidate is None or target is None:
         return _invalid(frame_index, "NO_VALID_ARCHIVED_CONTOUR"), stability_state
+    coordinates_rescaled = scale < 1.0
+    if coordinates_rescaled:
+        candidate = _restore_candidate_to_full_res(candidate, roi, scale=scale)
+    refine_debug: dict[str, Any] = {
+        "full_res_refine_used": False,
+        "full_res_refine_runtime_ms": 0.0,
+    }
+    if coordinates_rescaled and config.refine_endpoint_on_full_res:
+        candidate, refine_debug = _refine_candidate_on_full_res(candidate, full_gray, roi, config)
+    envelope_runtime_ms = _elapsed_ms(envelope_start)
+
     candidates = [candidate] if candidate is not None else []
-    return _finish_candidate_detection(
+    extra_debug = {
+        "mesh_target_mask_pixels": int(np.count_nonzero(target)),
+        "bubble_candidate_source": bubble_candidate_source,
+        **bubble_result.diagnostics,
+        "dark_line_filter_enabled": bool(proc_config.dark_line_filter_enabled),
+        **spur_result.diagnostics,
+    }
+    if coordinates_rescaled:
+        extra_debug = _restore_debug_artifacts_to_full_res(extra_debug, scale)
+    result, next_state = _finish_candidate_detection(
         frame_index=frame_index,
         roi=roi,
         config=config,
@@ -156,11 +199,19 @@ def _detect_mesh_envelope_max_width(
         candidates=candidates,
         measurement_mode="archived_mesh_envelope_rows",
         extra_debug={
-            "mesh_target_mask_pixels": int(np.count_nonzero(target)),
-            "bubble_candidate_source": bubble_candidate_source,
-            **bubble_result.diagnostics,
-            "dark_line_filter_enabled": bool(config.dark_line_filter_enabled),
-            **spur_result.diagnostics,
+            **extra_debug,
+            **_processing_scale_debug(
+                config=config,
+                proc_config=proc_config,
+                scale=scale,
+                full_gray=full_gray,
+                proc_gray=proc_gray,
+                coordinates_rescaled=coordinates_rescaled,
+            ),
+            **refine_debug,
+            "preprocessing_runtime_ms": preprocessing_runtime_ms,
+            "mask_runtime_ms": mask_runtime_ms,
+            "envelope_runtime_ms": envelope_runtime_ms,
         },
         diagnostic_masks={
             "raw_dark_mask": {
@@ -176,7 +227,10 @@ def _detect_mesh_envelope_max_width(
                 "mask": measurement_mask,
             },
         },
+        generate_diagnostics=generate_diagnostics,
     )
+    result.debug_artifacts["detector_runtime_ms"] = _elapsed_ms(detector_start)
+    return result, next_state
 
 
 def _detect_wire_bundle_max_width(
@@ -187,21 +241,37 @@ def _detect_wire_bundle_max_width(
     frame_index: int,
     detector_name: str,
     stability_state: CandidateSelectionState,
+    generate_diagnostics: bool,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
+    detector_start = time.perf_counter()
     if frame.size == 0:
         return _invalid(frame_index, "EMPTY_FRAME"), stability_state
 
+    preprocessing_start = time.perf_counter()
     local = _warp_rotated_roi(frame, roi)
     if local.size == 0:
         return _invalid(frame_index, "EMPTY_ROI"), stability_state
-    gray = _to_gray(local)
-    target = _wire_bundle_mask(gray, config)
-    if np.count_nonzero(target) < max(1, int(config.min_window_pixels)):
+    full_gray = _to_gray(local)
+    scale = _effective_processing_scale(config)
+    proc_gray = _resize_roi(full_gray, scale=scale, mode=config.processing_scale_mode)
+    proc_config = _scaled_detector_config(config, scale) if scale < 1.0 else config
+    proc_roi = _processed_local_roi(proc_gray)
+    preprocessing_runtime_ms = _elapsed_ms(preprocessing_start)
+
+    mask_start = time.perf_counter()
+    target = _wire_bundle_mask(proc_gray, proc_config)
+    mask_runtime_ms = _elapsed_ms(mask_start)
+    if np.count_nonzero(target) < max(1, int(proc_config.min_window_pixels)):
         return _invalid(frame_index, "NO_TARGET"), stability_state
 
-    candidate = _wire_projection_candidate(target, roi, config)
+    envelope_start = time.perf_counter()
+    candidate = _wire_projection_candidate(target, proc_roi, proc_config)
+    coordinates_rescaled = scale < 1.0
+    if candidate is not None and coordinates_rescaled:
+        candidate = _restore_candidate_to_full_res(candidate, roi, scale=scale)
+    envelope_runtime_ms = _elapsed_ms(envelope_start)
     candidates = [candidate] if candidate is not None else []
-    return _finish_candidate_detection(
+    result, next_state = _finish_candidate_detection(
         frame_index=frame_index,
         roi=roi,
         config=config,
@@ -212,8 +282,24 @@ def _detect_wire_bundle_max_width(
         measurement_mode="archived_wire_bundle_projection",
         extra_debug={
             "wire_target_mask_pixels": int(np.count_nonzero(target)),
+            **_processing_scale_debug(
+                config=config,
+                proc_config=proc_config,
+                scale=scale,
+                full_gray=full_gray,
+                proc_gray=proc_gray,
+                coordinates_rescaled=coordinates_rescaled,
+            ),
+            "full_res_refine_used": False,
+            "full_res_refine_runtime_ms": 0.0,
+            "preprocessing_runtime_ms": preprocessing_runtime_ms,
+            "mask_runtime_ms": mask_runtime_ms,
+            "envelope_runtime_ms": envelope_runtime_ms,
         },
+        generate_diagnostics=generate_diagnostics,
     )
+    result.debug_artifacts["detector_runtime_ms"] = _elapsed_ms(detector_start)
+    return result, next_state
 
 
 def _finish_candidate_detection(
@@ -228,6 +314,7 @@ def _finish_candidate_detection(
     measurement_mode: str,
     extra_debug: dict[str, Any] | None = None,
     diagnostic_masks: dict[str, dict[str, Any]] | None = None,
+    generate_diagnostics: bool = True,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     coverage = float(np.count_nonzero(target)) / float(target.size)
     if not candidates:
@@ -264,6 +351,9 @@ def _finish_candidate_detection(
             quality=DetectionQuality(confidence=confidence, roi_coverage=coverage),
         ), selection.state
 
+    diagnostics_start = time.perf_counter()
+    diagnostic_images = _diagnostic_images(target, config, diagnostic_masks) if generate_diagnostics else None
+    diagnostics_runtime_ms = _elapsed_ms(diagnostics_start)
     debug_artifacts: dict[str, Any] = {
         "selected_detector": detector_name,
         "contour_measurement_mode": measurement_mode,
@@ -273,7 +363,8 @@ def _finish_candidate_detection(
         "contour_direction_arrow": selected.metadata.get("contour_direction_arrow", []),
         "target_mask_pixels": int(np.count_nonzero(target)),
         "candidate_count": len(candidates),
-        "diagnostic_images": _diagnostic_images(target, config, diagnostic_masks),
+        "diagnostics_generated": bool(generate_diagnostics),
+        "diagnostics_runtime_ms": diagnostics_runtime_ms,
         "selection_state": {
             "pending_candidate_id": selection.state.pending_candidate_id,
             "pending_count": selection.state.pending_count,
@@ -285,6 +376,8 @@ def _finish_candidate_detection(
     debug_artifacts.update(selected.metadata.get("debug_artifacts", {}))
     if extra_debug:
         debug_artifacts.update(extra_debug)
+    if diagnostic_images is not None:
+        debug_artifacts["diagnostic_images"] = diagnostic_images
 
     return DetectionResult(
         frame_index=frame_index,
@@ -304,6 +397,447 @@ def _finish_candidate_detection(
         ),
         debug_artifacts=debug_artifacts,
     ), selection.state
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000.0
+
+
+def _effective_processing_scale(config: DetectorConfig) -> float:
+    if not config.processing_scale_enabled:
+        return 1.0
+    return max(0.25, min(1.0, float(config.processing_scale)))
+
+
+def _resize_roi(gray: np.ndarray, *, scale: float, mode: str) -> np.ndarray:
+    if scale >= 1.0:
+        return gray
+    height, width = gray.shape[:2]
+    resized_width = max(1, int(round(width * scale)))
+    resized_height = max(1, int(round(height * scale)))
+    source = np.asarray(gray)
+    if mode == "gaussian_pyramid":
+        sigma = max(0.5, (1.0 / max(scale, 1e-6) - 1.0) * 0.5)
+        source = ndimage.gaussian_filter(source.astype(float), sigma=sigma)
+        source = np.clip(source, 0, 255).astype(np.uint8)
+        resample = Image.Resampling.BILINEAR
+    else:
+        resample = Image.Resampling.BOX
+    image = Image.fromarray(np.ascontiguousarray(source))
+    resized = image.resize((resized_width, resized_height), resample=resample)
+    return np.asarray(resized, dtype=np.uint8)
+
+
+def _processed_local_roi(gray: np.ndarray) -> RotatedROI:
+    height, width = gray.shape[:2]
+    return RotatedROI(
+        center_x=float(width) / 2.0,
+        center_y=float(height) / 2.0,
+        width=float(width),
+        height=float(height),
+        angle_deg=0.0,
+    )
+
+
+def _scale_length(value: int | float, scale: float, *, minimum: int = 1) -> int:
+    return max(minimum, int(round(float(value) * scale)))
+
+
+def _scale_float_length(value: int | float, scale: float) -> float:
+    return float(value) * scale
+
+
+def _scale_area(value: int | float, scale: float, *, minimum: int = 1) -> int:
+    return max(minimum, int(round(float(value) * scale * scale)))
+
+
+def _scale_kernel(value: int, scale: float) -> int:
+    scaled = max(1, int(round(float(value) * scale)))
+    if scaled % 2 == 0:
+        scaled += 1
+    return scaled
+
+
+def _scaled_detector_config(config: DetectorConfig, scale: float) -> DetectorConfig:
+    if scale >= 1.0:
+        return config
+    updates: dict[str, Any] = {
+        "envelope_window_px": _scale_kernel(config.envelope_window_px, scale),
+        "envelope_step_px": _scale_length(config.envelope_step_px, scale),
+        "min_window_pixels": _scale_length(config.min_window_pixels, scale),
+        "boundary_support_window_px": _scale_kernel(config.boundary_support_window_px, scale),
+        "boundary_support_min_pixels": _scale_length(config.boundary_support_min_pixels, scale),
+        "mesh_region_margin_px": _scale_length(config.mesh_region_margin_px, scale),
+        "distance_jump_limit_px": _scale_float_length(config.distance_jump_limit_px, scale),
+        "envelope_width_outlier_epsilon_px": _scale_float_length(config.envelope_width_outlier_epsilon_px, scale),
+        "mask_open_kernel_px": _scale_kernel(config.mask_open_kernel_px, scale),
+        "mask_close_kernel_px": _scale_kernel(config.mask_close_kernel_px, scale),
+        "mask_dilate_kernel_px": _scale_kernel(config.mask_dilate_kernel_px, scale),
+        "min_component_area_px": _scale_area(config.min_component_area_px, scale),
+        "bubble_min_area_px": _scale_area(config.bubble_min_area_px, scale),
+        "bubble_max_area_px": _scale_area(config.bubble_max_area_px, scale),
+        "bubble_max_bbox_px": _scale_length(config.bubble_max_bbox_px, scale),
+        "bubble_local_radius_px": _scale_kernel(config.bubble_local_radius_px, scale),
+        "bubble_suppress_radius_px": _scale_kernel(config.bubble_suppress_radius_px, scale),
+        "dark_line_filter_length_px": _scale_kernel(config.dark_line_filter_length_px, scale),
+        "dark_line_filter_width_px": _scale_kernel(config.dark_line_filter_width_px, scale),
+        "spur_prune_max_length_px": _scale_length(config.spur_prune_max_length_px, scale),
+        "spur_prune_dilate_px": _scale_kernel(config.spur_prune_dilate_px, scale),
+        "wire_min_component_area_px": _scale_area(config.wire_min_component_area_px, scale),
+        "wire_min_length_px": _scale_float_length(config.wire_min_length_px, scale),
+        "wire_box_padding_px": _scale_float_length(config.wire_box_padding_px, scale),
+        "contour_close_kernel_px": _scale_kernel(config.contour_close_kernel_px, scale),
+        "contour_box_padding_px": _scale_float_length(config.contour_box_padding_px, scale),
+        "roi_edge_guard_px": _scale_float_length(config.roi_edge_guard_px, scale),
+        "detection_roi_padding_px": _scale_float_length(config.detection_roi_padding_px, scale),
+    }
+    return config.model_copy(update=updates)
+
+
+def _processing_scale_debug(
+    *,
+    config: DetectorConfig,
+    proc_config: DetectorConfig,
+    scale: float,
+    full_gray: np.ndarray,
+    proc_gray: np.ndarray,
+    coordinates_rescaled: bool,
+) -> dict[str, Any]:
+    return {
+        "processing_scale_enabled": bool(config.processing_scale_enabled),
+        "processing_scale_effective": float(scale),
+        "processing_scale_mode": str(config.processing_scale_mode),
+        "processed_roi_shape": [int(proc_gray.shape[0]), int(proc_gray.shape[1])],
+        "full_res_roi_shape": [int(full_gray.shape[0]), int(full_gray.shape[1])],
+        "scaled_config_summary": _scaled_config_summary(config, proc_config, scale),
+        "coordinates_rescaled_to_full_res": bool(coordinates_rescaled),
+    }
+
+
+def _scaled_config_summary(config: DetectorConfig, proc_config: DetectorConfig, scale: float) -> dict[str, Any]:
+    fields = [
+        "envelope_window_px",
+        "envelope_step_px",
+        "min_window_pixels",
+        "boundary_support_window_px",
+        "boundary_support_min_pixels",
+        "mesh_region_margin_px",
+        "distance_jump_limit_px",
+        "envelope_width_outlier_epsilon_px",
+        "mask_open_kernel_px",
+        "mask_close_kernel_px",
+        "mask_dilate_kernel_px",
+        "min_component_area_px",
+        "bubble_min_area_px",
+        "bubble_max_area_px",
+        "dark_line_filter_length_px",
+        "dark_line_filter_width_px",
+        "spur_prune_max_length_px",
+        "wire_min_component_area_px",
+    ]
+    return {
+        "scale": float(scale),
+        "fields": {
+            field: {"original": getattr(config, field), "processed": getattr(proc_config, field)}
+            for field in fields
+            if getattr(config, field) != getattr(proc_config, field)
+        },
+    }
+
+
+def _restore_candidate_to_full_res(
+    candidate: DetectionCandidate,
+    full_res_roi: RotatedROI,
+    *,
+    scale: float,
+) -> DetectionCandidate:
+    if scale >= 1.0:
+        return candidate
+    metadata = _scale_candidate_metadata(candidate.metadata, full_res_roi, scale)
+    left = _number_from_path(metadata, "local_min_along_px")
+    right = _number_from_path(metadata, "local_max_along_px")
+    center_v = candidate.axis_position_px / scale
+    debug = metadata.get("debug_artifacts")
+    if isinstance(debug, dict):
+        left = _number_from_path(debug, "mesh_left_local_px") or left
+        right = _number_from_path(debug, "mesh_right_local_px") or right
+        center_v = _number_from_path(debug, "selected_measurement_row_v_px") or _number_from_path(debug, "mesh_best_row_v_px") or center_v
+    if left is None or right is None:
+        left = candidate.a.x / scale
+        right = candidate.b.x / scale
+    a = roi_local_to_measurement_point(full_res_roi, left, center_v)
+    b = roi_local_to_measurement_point(full_res_roi, right, center_v)
+    metadata["contour_direction_arrow"] = [point.model_dump(mode="json") for point in [a, b]]
+    if isinstance(debug, dict):
+        debug["mesh_left_px"] = float(a.x)
+        debug["mesh_right_px"] = float(b.x)
+    return DetectionCandidate(
+        candidate_id=candidate.candidate_id,
+        axis_position_px=float(center_v),
+        width_px=float(math.dist((a.x, a.y), (b.x, b.y))),
+        a=a,
+        b=b,
+        confidence=candidate.confidence,
+        rejected_reason=candidate.rejected_reason,
+        metadata=metadata,
+    )
+
+
+def _scale_candidate_metadata(metadata: dict[str, Any], full_res_roi: RotatedROI, scale: float) -> dict[str, Any]:
+    restored = _deep_copy_jsonish(metadata)
+    for key in [
+        "local_min_along_px",
+        "local_max_along_px",
+        "local_min_perpendicular_px",
+        "local_max_perpendicular_px",
+    ]:
+        if key in restored:
+            restored[key] = float(restored[key]) / scale
+
+    for key in ["contour_projection_box", "contour_full_box", "contour_measurement_band_box"]:
+        if key in restored:
+            restored[key] = _restore_local_box_points(restored[key], full_res_roi, scale)
+
+    debug = restored.get("debug_artifacts")
+    if isinstance(debug, dict):
+        _scale_debug_artifacts_in_place(debug, scale)
+        for key in ["contour_full_box", "contour_measurement_band_box"]:
+            if key in debug:
+                debug[key] = _restore_local_box_points(debug[key], full_res_roi, scale)
+        selected_row = debug.get("selected_row")
+        if isinstance(selected_row, dict):
+            _scale_row_in_place(selected_row, scale)
+        if "mesh_selected_row_width_px" in debug:
+            debug["selected_measurement_row_width_px"] = debug["mesh_selected_row_width_px"]
+        if "mesh_best_row_v_px" in debug:
+            debug["selected_measurement_row_v_px"] = debug["mesh_best_row_v_px"]
+
+    return restored
+
+
+def _deep_copy_jsonish(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _deep_copy_jsonish(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_deep_copy_jsonish(item) for item in value]
+    return value
+
+
+def _scale_debug_artifacts_in_place(debug: dict[str, Any], scale: float) -> None:
+    coordinate_keys = [
+        "mesh_left_local_px",
+        "mesh_right_local_px",
+        "mesh_best_row_v_px",
+        "selected_measurement_row_v_px",
+        "mesh_global_left_local_px",
+        "mesh_global_left_row_v_px",
+        "mesh_global_right_local_px",
+        "mesh_global_right_row_v_px",
+        "wire_min_along_px",
+        "wire_max_along_px",
+        "wire_min_perpendicular_px",
+        "wire_max_perpendicular_px",
+        "wire_support_group_min_along_px",
+        "wire_support_group_max_along_px",
+        "wire_global_quantile_min_along_px",
+        "wire_global_quantile_max_along_px",
+    ]
+    length_keys = [
+        "mesh_selected_row_width_px",
+        "selected_measurement_row_width_px",
+        "mesh_global_span_px",
+        "raw_width_px",
+        "robust_width_percentile_px",
+        "wire_raw_length_px",
+        "wire_width_perpendicular_px",
+        "wire_global_quantile_length_px",
+        "wire_support_merge_gap_px",
+        "wire_support_base_merge_gap_px",
+        "wire_support_continuity_merge_gap_px",
+    ]
+    for key in coordinate_keys + length_keys:
+        if key in debug and isinstance(debug[key], (int, float)):
+            debug[key] = float(debug[key]) / scale
+
+
+def _scale_row_in_place(row: dict[str, Any], scale: float) -> None:
+    for key in ["v", "left", "right", "width", "window_start_v", "window_end_v"]:
+        if key in row and isinstance(row[key], (int, float)):
+            row[key] = float(row[key]) / scale
+
+
+def _restore_local_box_points(points: Any, full_res_roi: RotatedROI, scale: float) -> list[dict[str, float]]:
+    restored: list[dict[str, float]] = []
+    if not isinstance(points, list):
+        return restored
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        x = point.get("x")
+        y = point.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            continue
+        restored_point = roi_local_to_measurement_point(full_res_roi, float(x) / scale, float(y) / scale)
+        restored.append(restored_point.model_dump(mode="json"))
+    return restored
+
+
+def _restore_debug_artifacts_to_full_res(debug: dict[str, Any], scale: float) -> dict[str, Any]:
+    restored = _deep_copy_jsonish(debug)
+    area_keys = [
+        "bubble_suppress_zone_area_px",
+        "bubble_suppress_zone_area_raw_px",
+        "spur_prune_removed_area_px",
+    ]
+    for key in area_keys:
+        if key in restored and isinstance(restored[key], (int, float)):
+            restored[key] = int(round(float(restored[key]) / (scale * scale)))
+    box_lists = ["bubble_rejected_boxes"]
+    for key in box_lists:
+        items = restored.get(key)
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                for coord_key in ["left", "right", "top", "bottom", "bbox_width_px", "bbox_height_px"]:
+                    if coord_key in item and isinstance(item[coord_key], (int, float)):
+                        item[coord_key] = float(item[coord_key]) / scale
+                if "area_px" in item and isinstance(item["area_px"], (int, float)):
+                    item["area_px"] = int(round(float(item["area_px"]) / (scale * scale)))
+    for key in [
+        "bubble_peripheral_filter_left_px",
+        "bubble_peripheral_filter_right_px",
+        "bubble_peripheral_filter_center_v_px",
+        "bubble_peripheral_filter_lateral_margin_px",
+        "bubble_peripheral_filter_vertical_margin_px",
+    ]:
+        if key in restored and isinstance(restored[key], (int, float)):
+            restored[key] = float(restored[key]) / scale
+    return restored
+
+
+def _number_from_path(container: dict[str, Any], key: str) -> float | None:
+    value = container.get(key)
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _refine_candidate_on_full_res(
+    candidate: DetectionCandidate,
+    full_gray: np.ndarray,
+    roi: RotatedROI,
+    config: DetectorConfig,
+) -> tuple[DetectionCandidate, dict[str, Any]]:
+    start = time.perf_counter()
+    band = max(1, int(config.full_res_refine_band_px))
+    debug = candidate.metadata.get("debug_artifacts", {})
+    if not isinstance(debug, dict):
+        return candidate, {
+            "full_res_refine_used": False,
+            "full_res_refine_runtime_ms": _elapsed_ms(start),
+            "full_res_refine_rejected_reason": "MISSING_DEBUG_GEOMETRY",
+        }
+    left = _number_from_path(debug, "mesh_left_local_px") or _number_from_path(candidate.metadata, "local_min_along_px")
+    right = _number_from_path(debug, "mesh_right_local_px") or _number_from_path(candidate.metadata, "local_max_along_px")
+    center_v = _number_from_path(debug, "selected_measurement_row_v_px") or candidate.axis_position_px
+    if left is None or right is None:
+        return candidate, {
+            "full_res_refine_used": False,
+            "full_res_refine_runtime_ms": _elapsed_ms(start),
+            "full_res_refine_rejected_reason": "MISSING_ENDPOINTS",
+        }
+
+    response = _enhance_dark_lines(full_gray, config.dark_enhance_bg_kernel_px).astype(float)
+    threshold = max(_otsu_threshold(response.astype(np.uint8)), float(response.max()) * 0.25)
+    y0 = max(0, int(round(center_v)) - band)
+    y1 = min(full_gray.shape[0] - 1, int(round(center_v)) + band)
+    search_radius = band * 2
+
+    def _refined_endpoint(endpoint: float, side: str) -> float | None:
+        x0 = max(0, int(round(endpoint)) - search_radius)
+        x1 = min(full_gray.shape[1] - 1, int(round(endpoint)) + search_radius)
+        patch = response[y0 : y1 + 1, x0 : x1 + 1]
+        ys, xs = np.nonzero(patch >= threshold)
+        if len(xs) == 0:
+            return None
+        local_xs = xs.astype(float) + float(x0)
+        return float(np.min(local_xs) if side == "left" else np.max(local_xs))
+
+    refined_left = _refined_endpoint(left, "left")
+    refined_right = _refined_endpoint(right, "right")
+    if refined_left is None or refined_right is None:
+        return candidate, {
+            "full_res_refine_used": False,
+            "full_res_refine_runtime_ms": _elapsed_ms(start),
+            "full_res_refine_rejected_reason": "NO_DARK_SUPPORT_IN_LOCAL_BAND",
+        }
+    left_delta = refined_left - left
+    right_delta = refined_right - right
+    new_width = refined_right - refined_left
+    old_width = right - left
+    max_refine_width_growth = max(4.0, old_width * 0.005)
+    if (
+        abs(left_delta) > band
+        or abs(right_delta) > band
+        or new_width <= 0.0
+        or new_width > old_width + max_refine_width_growth
+    ):
+        return candidate, {
+            "full_res_refine_used": False,
+            "full_res_refine_runtime_ms": _elapsed_ms(start),
+            "full_res_refine_left_delta_px": float(left_delta),
+            "full_res_refine_right_delta_px": float(right_delta),
+            "full_res_refine_rejected_reason": "REFINE_OUTSIDE_LOCAL_GUARD",
+        }
+
+    refined = _replace_candidate_mesh_geometry(candidate, roi, refined_left, refined_right, center_v)
+    return refined, {
+        "full_res_refine_used": True,
+        "full_res_refine_runtime_ms": _elapsed_ms(start),
+        "full_res_refine_left_delta_px": float(left_delta),
+        "full_res_refine_right_delta_px": float(right_delta),
+        "full_res_refine_rejected_reason": "",
+    }
+
+
+def _replace_candidate_mesh_geometry(
+    candidate: DetectionCandidate,
+    roi: RotatedROI,
+    left: float,
+    right: float,
+    center_v: float,
+) -> DetectionCandidate:
+    metadata = _deep_copy_jsonish(candidate.metadata)
+    debug = metadata.get("debug_artifacts")
+    if isinstance(debug, dict):
+        debug["mesh_left_local_px"] = float(left)
+        debug["mesh_right_local_px"] = float(right)
+        debug["mesh_best_row_v_px"] = float(center_v)
+        debug["selected_measurement_row_v_px"] = float(center_v)
+        debug["mesh_selected_row_width_px"] = float(right - left)
+        debug["selected_measurement_row_width_px"] = float(right - left)
+        selected_row = debug.get("selected_row")
+        if isinstance(selected_row, dict):
+            selected_row["left"] = float(left)
+            selected_row["right"] = float(right)
+            selected_row["width"] = float(right - left)
+    metadata["local_min_along_px"] = float(left)
+    metadata["local_max_along_px"] = float(right)
+    a = roi_local_to_measurement_point(roi, left, center_v)
+    b = roi_local_to_measurement_point(roi, right, center_v)
+    metadata["contour_direction_arrow"] = [point.model_dump(mode="json") for point in [a, b]]
+    if isinstance(debug, dict):
+        debug["mesh_left_px"] = float(a.x)
+        debug["mesh_right_px"] = float(b.x)
+    return DetectionCandidate(
+        candidate_id=candidate.candidate_id,
+        axis_position_px=float(center_v),
+        width_px=float(math.dist((a.x, a.y), (b.x, b.y))),
+        a=a,
+        b=b,
+        confidence=candidate.confidence,
+        rejected_reason=candidate.rejected_reason,
+        metadata=metadata,
+    )
 
 
 def _warp_rotated_roi(frame: np.ndarray, roi: RotatedROI) -> np.ndarray:
@@ -534,6 +1068,9 @@ def _select_mesh_candidate_with_bubble_guard(
     max_safe_shrink = max(8.0, raw_width * 0.01)
     if broad_zone and shrink_px > max_safe_shrink:
         return raw_candidate, raw_target, "raw_guard_broad_bubble_zone"
+    excessive_clean_shrink = shrink_px > max(24.0, raw_width * 0.18)
+    if excessive_clean_shrink:
+        return raw_candidate, raw_target, "raw_guard_excessive_clean_shrink"
     return clean_candidate, clean_target, "clean_measurement_mask"
 
 

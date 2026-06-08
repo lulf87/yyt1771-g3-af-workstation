@@ -350,6 +350,76 @@ def test_streamed_live_offline_run_frame_events_emit_lightweight_smoothed_afas_p
     assert len(final_preview["smoothed"]["temperature_celsius"]) == 21
 
 
+def test_streamed_live_offline_run_fast_mode_omits_diagnostic_images_until_requested(tmp_path: Path) -> None:
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=2)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    base_measurement = MeasurementDefinition(
+        measurement_id="run-fast-diagnostics-measurement",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=2,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+            run_detector_mode="fast",
+            run_diagnostics_mode="suspicious_only",
+        ),
+    )
+
+    fast_events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=base_measurement,
+            start_frame=1,
+            max_frames=2,
+            target_fps=8.0,
+        )
+    )
+    fast_frame_debug = [event for event in fast_events if event["event"] == "frame"][0]["detection_result"]["debug_artifacts"]
+
+    diagnostic_measurement = MeasurementDefinition.model_validate(
+        {
+            **base_measurement.model_dump(mode="json"),
+            "measurement_id": "run-every-frame-diagnostics-measurement",
+            "detector_config": {
+                **base_measurement.detector_config.model_dump(mode="json"),
+                "run_detector_mode": "diagnostics",
+                "run_diagnostics_mode": "every_frame",
+            },
+        }
+    )
+    diagnostic_events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=diagnostic_measurement,
+            start_frame=1,
+            max_frames=2,
+            target_fps=8.0,
+        )
+    )
+    diagnostic_frame_debug = [
+        event for event in diagnostic_events if event["event"] == "frame"
+    ][0]["detection_result"]["debug_artifacts"]
+
+    assert fast_frame_debug["diagnostics_generated"] is False
+    assert "diagnostic_images" not in fast_frame_debug
+    assert diagnostic_frame_debug["diagnostics_generated"] is True
+    assert diagnostic_frame_debug["diagnostic_images"]["mask"]["data_url"].startswith("data:image/png;base64,")
+
+
 def test_streamed_live_offline_run_short_frame_events_defer_afas_preview(tmp_path: Path) -> None:
     dataset_root = tmp_path / "dataset"
     dataset_root.mkdir()

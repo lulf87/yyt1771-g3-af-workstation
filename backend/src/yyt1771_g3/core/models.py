@@ -114,6 +114,19 @@ class DetectorConfig(G3Model):
     wire_min_elongation: float = 2.2
     wire_box_padding_px: float = 12.0
     wire_support_merge_gap_ratio: float = 0.06
+    processing_scale_enabled: bool = True
+    processing_scale: float = 0.5
+    processing_scale_mode: Literal["area_downsample", "gaussian_pyramid"] = "area_downsample"
+    refine_endpoint_on_full_res: bool = True
+    full_res_refine_band_px: int = 12
+    run_detector_mode: Literal["fast", "enhanced", "diagnostics"] = "fast"
+    run_diagnostics_mode: Literal["off", "suspicious_only", "every_frame"] = "suspicious_only"
+    run_preview_fps: int = 5
+    run_result_batch_size: int = 10
+    run_enhanced_detector_on_suspicious: bool = True
+    endpoint_jump_limit_px: float = 12.0
+    suspicious_boundary_reject_ratio: float = 0.35
+    suspicious_outlier_reject_count: int = 1
     max_frames_per_run: int = 160
     live_offline_fps: float = 8.0
     target_temperature_celsius: float | None = None
@@ -137,6 +150,10 @@ class DetectorConfig(G3Model):
         "spur_prune_max_length_px",
         "spur_prune_dilate_px",
         "wire_min_component_area_px",
+        "full_res_refine_band_px",
+        "run_preview_fps",
+        "run_result_batch_size",
+        "suspicious_outlier_reject_count",
         "max_frames_per_run",
     )
     @classmethod
@@ -144,6 +161,11 @@ class DetectorConfig(G3Model):
         if value <= 0:
             raise ValueError(f"{info.field_name} must be > 0")
         return value
+
+    @field_validator("processing_scale")
+    @classmethod
+    def _clamp_processing_scale(cls, value: float) -> float:
+        return max(0.25, min(1.0, float(value)))
 
 
 class MeasurementDefinition(G3Model):

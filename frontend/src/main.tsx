@@ -195,6 +195,19 @@ const DEFAULT_CONFIG = {
   spur_prune_dilate_px: 3,
   spur_prune_min_ridge_response: 0,
   spur_prune_require_bubble_overlap_or_low_ridge: true,
+  processing_scale_enabled: true,
+  processing_scale: 0.5,
+  processing_scale_mode: "area_downsample" as const,
+  refine_endpoint_on_full_res: true,
+  full_res_refine_band_px: 12,
+  run_detector_mode: "fast" as const,
+  run_diagnostics_mode: "suspicious_only" as const,
+  run_preview_fps: 5,
+  run_result_batch_size: 10,
+  run_enhanced_detector_on_suspicious: true,
+  endpoint_jump_limit_px: 12,
+  suspicious_boundary_reject_ratio: 0.35,
+  suspicious_outlier_reject_count: 1,
   max_frames_per_run: 160,
   live_offline_fps: 8,
   target_temperature_celsius: null,
@@ -240,6 +253,7 @@ const DETECTOR_OPTIONS = [
 
 type DetectorConfig = MeasurementDefinition["detector_config"];
 type DetectorParameterGroup =
+  | "Image processing / Scale"
   | "Mask"
   | "Threshold"
   | "Envelope"
@@ -250,6 +264,7 @@ type DetectorParameterGroup =
   | "Spur pruning"
   | "Contour diagnostics"
   | "Temporal stability"
+  | "Run performance"
   | "Run";
 
 type DetectorParameterDef = {
@@ -266,6 +281,14 @@ type DetectorParameterDef = {
 };
 
 const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
+  { key: "processing_scale_enabled", label: "Processing scale", type: "bool", group: "Image processing / Scale", title: "Runs detector masking and envelope selection on a downsampled ROI while preserving source-pixel outputs." },
+  { key: "processing_scale", label: "Processing scale factor", type: "float", min: 0.25, max: 1, step: 0.05, group: "Image processing / Scale", title: "ROI-local processing scale; A/B and distance are restored to source pixels." },
+  { key: "processing_scale_mode", label: "Scale mode", type: "select", group: "Image processing / Scale", options: [
+    { value: "area_downsample", label: "Area downsample" },
+    { value: "gaussian_pyramid", label: "Gaussian pyramid" }
+  ], title: "Downsampling method used before detector preprocessing." },
+  { key: "refine_endpoint_on_full_res", label: "Full-res endpoint refine", type: "bool", group: "Image processing / Scale", title: "Refines restored endpoints in a narrow full-resolution band when scale is below 1.0." },
+  { key: "full_res_refine_band_px", label: "Full-res refine band", type: "int", min: 1, max: 80, step: 1, group: "Image processing / Scale", advanced: true, title: "Local source-pixel band used for endpoint refinement." },
   { key: "mask_open_kernel_px", label: "Mask open kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", title: "Larger values remove more isolated dark pixels." },
   { key: "mask_close_kernel_px", label: "Mask close kernel", type: "int", min: 1, max: 51, step: 2, group: "Mask", title: "Larger values bridge short gaps in the mesh mask." },
   { key: "mask_dilate_kernel_px", label: "Mask dilate kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", advanced: true, title: "Expands the detected mask after closing." },
@@ -321,6 +344,22 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
     { value: "hold_previous", label: "Hold previous" },
     { value: "mark_invalid", label: "Mark invalid" }
   ], title: "How Run handles unconfirmed distance jumps." },
+  { key: "endpoint_jump_limit_px", label: "Endpoint jump limit px", type: "float", min: 0, max: 100, step: 1, group: "Temporal stability", advanced: true, title: "Suspicious-frame threshold for selected endpoint/axis jumps." },
+  { key: "suspicious_boundary_reject_ratio", label: "Suspicious boundary ratio", type: "float", min: 0, max: 1, step: 0.05, group: "Temporal stability", advanced: true, title: "Run diagnostics trigger when boundary-support rejections are high." },
+  { key: "suspicious_outlier_reject_count", label: "Suspicious outlier rows", type: "int", min: 1, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Run diagnostics trigger when this many width-outlier rows are rejected." },
+  { key: "run_detector_mode", label: "Run detector mode", type: "select", group: "Run performance", options: [
+    { value: "fast", label: "Fast" },
+    { value: "enhanced", label: "Enhanced" },
+    { value: "diagnostics", label: "Diagnostics" }
+  ], title: "Default detector path used during Run." },
+  { key: "run_diagnostics_mode", label: "Run diagnostics", type: "select", group: "Run performance", options: [
+    { value: "off", label: "Off" },
+    { value: "suspicious_only", label: "Suspicious only" },
+    { value: "every_frame", label: "Every frame" }
+  ], title: "Controls when Run streams large diagnostic images." },
+  { key: "run_preview_fps", label: "Run preview fps", type: "int", min: 1, max: 30, step: 1, group: "Run performance", title: "Limits image/overlay refresh rate during streaming Run." },
+  { key: "run_result_batch_size", label: "Run result batch", type: "int", min: 1, max: 100, step: 1, group: "Run performance", title: "Batches Run curve/state updates by processed frames." },
+  { key: "run_enhanced_detector_on_suspicious", label: "Enhanced on suspicious", type: "bool", group: "Run performance", advanced: true, title: "Allows suspicious frames to rerun with diagnostics enabled." },
   { key: "max_frames_per_run", label: "Max frames per run", type: "int", min: 1, max: 20000, step: 10, group: "Run", advanced: true, title: "Frame limit for live offline runs." },
   { key: "live_offline_fps", label: "Live offline fps", type: "float", min: 0.5, max: 30, step: 0.5, group: "Run", advanced: true, title: "Playback speed for live offline runs." }
 ];
@@ -489,6 +528,29 @@ function App() {
     liveRunIdRef.current = null;
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialLiveRun(selectedId, frameIndex, selectedDataset?.frame_count ?? frameIndex));
+    const runPreviewFps = Math.round(clamp(Number(measurement.detector_config.run_preview_fps ?? 5), 1, 30));
+    const runResultBatchSize = Math.round(clamp(Number(measurement.detector_config.run_result_batch_size ?? 10), 1, 100));
+    const previewIntervalMs = 1000 / runPreviewFps;
+    const maxBatchWaitMs = 180;
+    let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
+    let lastPreviewUpdateMs = 0;
+    let batchFlushTimer: number | null = null;
+
+    const clearBatchFlushTimer = () => {
+      if (batchFlushTimer == null) return;
+      window.clearTimeout(batchFlushTimer);
+      batchFlushTimer = null;
+    };
+    const flushPendingFrameEvents = (forcePreview: boolean) => {
+      if (pendingFrameEvents.length === 0) return;
+      const events = pendingFrameEvents;
+      pendingFrameEvents = [];
+      const now = Date.now();
+      const refreshPreview = forcePreview || now - lastPreviewUpdateMs >= previewIntervalMs;
+      if (refreshPreview) lastPreviewUpdateMs = now;
+      setLiveRun((current) => updateLiveRunFromFrames(current, events, { refreshPreview }));
+    };
+
     try {
       const response = await streamLiveOfflineRun(selectedId, measurement, {
         startFrame: frameIndex,
@@ -498,8 +560,21 @@ function App() {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
           liveRunProcessedFramesRef.current = event.processed_frames;
-          setLiveRun((current) => updateLiveRunFromFrame(current, event));
+          pendingFrameEvents.push(event);
+          const now = Date.now();
+          const shouldRefreshPreview = now - lastPreviewUpdateMs >= previewIntervalMs;
+          if (pendingFrameEvents.length >= runResultBatchSize || shouldRefreshPreview) {
+            clearBatchFlushTimer();
+            flushPendingFrameEvents(shouldRefreshPreview);
+          } else if (batchFlushTimer == null) {
+            batchFlushTimer = window.setTimeout(() => {
+              batchFlushTimer = null;
+              flushPendingFrameEvents(false);
+            }, maxBatchWaitMs);
+          }
         } else if (event.event === "complete") {
+          clearBatchFlushTimer();
+          flushPendingFrameEvents(true);
           liveRunIdRef.current = event.run_manifest.run_id;
           liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
           setLiveRun((current) =>
@@ -517,6 +592,8 @@ function App() {
       });
       setRunResult(response);
     } catch (err) {
+      clearBatchFlushTimer();
+      flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped" } : current));
         const stoppedRunId = liveRunIdRef.current;
@@ -546,6 +623,7 @@ function App() {
         setRunResult(null);
       }
     } finally {
+      clearBatchFlushTimer();
       if (runAbortRef.current === controller) {
         runAbortRef.current = null;
       }
@@ -3774,8 +3852,26 @@ function createInitialLiveRun(datasetId: string, startFrame: number, frameCount:
   };
 }
 
-function updateLiveRunFromFrame(current: LiveRunState | null, event: LiveOfflineFrameEvent): LiveRunState {
+function updateLiveRunFromFrames(
+  current: LiveRunState | null,
+  events: LiveOfflineFrameEvent[],
+  options: { refreshPreview: boolean }
+): LiveRunState | null {
+  if (events.length === 0) return current;
+  return events.reduce<LiveRunState | null>((next, event, index) => (
+    updateLiveRunFromFrame(next, event, {
+      refreshPreview: options.refreshPreview && index === events.length - 1
+    })
+  ), current);
+}
+
+function updateLiveRunFromFrame(
+  current: LiveRunState | null,
+  event: LiveOfflineFrameEvent,
+  options: { refreshPreview?: boolean } = {}
+): LiveRunState {
   const runId = event.run_id;
+  const refreshPreview = options.refreshPreview ?? true;
   const previous = current ?? {
     runId,
     datasetId: event.dataset_id,
@@ -3801,12 +3897,12 @@ function updateLiveRunFromFrame(current: LiveRunState | null, event: LiveOffline
     runId,
     datasetId: event.dataset_id,
     status: "running",
-    frameIndex: event.frame_index,
-    frameUrl: apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
+    frameIndex: refreshPreview ? event.frame_index : previous.frameIndex,
+    frameUrl: refreshPreview ? apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }) : previous.frameUrl,
     frameCount: event.frame_count,
     totalFrames: event.total_frames,
     processedFrames: event.processed_frames,
-    detectionResult: event.detection_result,
+    detectionResult: refreshPreview ? event.detection_result : previous.detectionResult,
     analysis
   };
 }
