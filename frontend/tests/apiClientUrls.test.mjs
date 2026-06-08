@@ -66,7 +66,7 @@ test("diagnostic image metadata exposes mask and contour display sources", async
           right: 62,
           bottom: 27,
           stroke: "#ff4040",
-          stroke_width_px: 2
+          stroke_width_px: 5
         },
         data_url: "data:image/png;base64,mask"
       },
@@ -82,7 +82,7 @@ test("diagnostic image metadata exposes mask and contour display sources", async
   assert.equal(images.mask.src, "data:image/png;base64,mask");
   assert.equal(images.mask.overlayBox.source, "selected_candidate_local_projection_bounds");
   assert.equal(images.mask.overlayBox.left, 12);
-  assert.equal(images.mask.overlayBox.strokeWidthPx, 2);
+  assert.equal(images.mask.overlayBox.strokeWidthPx, 5);
   assert.equal(images.contour.label, "Envelope contour");
   assert.match(images.contour.src, /\/api\/debug\/contour\.png$/);
   assert.equal(images.contour.overlayBox, null);

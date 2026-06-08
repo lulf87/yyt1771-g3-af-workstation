@@ -73,6 +73,7 @@
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
 | P-0054 | RESOLVED_BROWSER_VERIFIED | P1 | vision / setup run diagnostics | Setup 和 Run 实时诊断图需要显示外包络矩形 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图矩形浏览器复测已通过 |
+| P-0055 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | 高 ROI 诊断图固定高度显示导致右侧像被截断 | 2026-06-08 | 2026-06-08 | Codex | golden A 用户截图 ROI Setup 诊断图浏览器复测已通过 |
 
 ---
 
@@ -443,7 +444,7 @@ rg -n "/Users/lulingfeng" backend frontend scripts || true
 - Frontend URL: `http://127.0.0.1:5174/`
 - Backend URL: `http://127.0.0.1:8002/`
 - Dataset: `golden_a_20260522_dev_lab`
-- Page: Setup
+- Page: Setup / Run
 - Steps: Open frontend; confirm dataset list contains `golden_a_20260522_dev_lab`; select A dataset; verify Setup metrics and first/last frame previews.
 - Expected: Dataset id is listed; object class is `A_BALLOON_ENVELOPE`; detector is `BalloonEnvelopeDetector`; width mode is `max_width`; frame count and temperature rows are 5807; first/last frame images render.
 - Actual: Expected values and previews rendered.
@@ -6065,6 +6066,108 @@ Result: PASS.
 - Evidence:
   - `output/playwright/p0054_setup_diagnostic_rectangle.png`
   - `output/playwright/p0054_run_diagnostic_rectangle.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0055 — 高 ROI 诊断图固定高度显示导致右侧像被截断
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/styles.css`, `backend/src/yyt1771_g3/vision/detectors.py`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户截图中的 Setup 诊断图使用较高 rotated ROI：
+
+```text
+center_x = 1107.74
+center_y = 703.93
+width = 1269.76
+height = 765.79
+angle_deg = -14.68
+```
+
+该 ROI 生成的诊断图自然尺寸为 `1270 × 766`。旧 UI 将诊断 `<img>` 固定为 `height: 240px` 并使用 `object-fit: contain`，导致图像按高度缩放，横向实际内容较小，红色矩形 2px 描边缩放后不足 1 个屏幕像素，右边界看起来像缺失或没显示全。
+
+#### Investigation
+
+```text
+Backend probe with the user ROI:
+diagnostic PNG size = 1270 × 766
+overlay_box = left 207, top 101, right 1218, bottom 665
+mask white bbox = x 164..1225, y 67..760
+```
+
+结论：后端诊断 PNG 没有真正丢失右侧；右侧仍有约 45 px ROI-local 余量。问题是前端固定高度压缩和 2px 描边太细造成视觉误判。
+
+#### Fix summary
+
+```text
+1. `frontend/src/styles.css`
+   - 诊断图从固定 `height: 240px; object-fit: contain;` 改为 `width: 100%; height: auto;`。
+   - 对 `1270 × 766` 这类高 ROI，1920px 宽视窗下每张诊断图显示为约 `597 × 360`，不再横向压缩。
+
+2. `backend/src/yyt1771_g3/vision/detectors.py`
+   - 诊断矩形描边从 2px 加粗到 5px。
+   - `overlay_box.stroke_width_px` 同步返回 5，便于测试和前端诊断。
+
+3. Tests
+   - Setup probe 和 Run stream 集成测试增加 `stroke_width_px >= 5` 断言。
+   - 前端 API client 测试同步验证 5px overlay box 元数据解析。
+```
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Initial RED result: FAIL, 2 tests failed because `stroke_width_px` was still 2.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+Result after fix: PASS, 2 passed.
+
+npm test -- tests/apiClientUrls.test.mjs
+Result: PASS, 43 tests passed under repository npm test invocation.
+
+npm run build
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome via Playwright CLI, headless
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Restart backend 8020 with current branch code and open frontend 5179.
+  2. Set Setup ROI to the user screenshot values: `1107.74, 703.93, 1269.76, 765.79, -14.68`.
+  3. Click `Probe current frame`.
+  4. Confirm `Detection Diagnostics` displays `Detected mask` and `Envelope contour`.
+  5. Resize browser to `1920 × 1000`, save screenshot, and inspect diagnostic `<img>` natural/display dimensions.
+  6. Open Run page, start Live Offline Run with the same setup measurement, wait for a live frame, and inspect latest diagnostic `<img>` dimensions.
+- Expected: Diagnostic images display complete right side and visible red rectangle boundaries without fixed-height horizontal compression.
+- Actual:
+  - Probe returned `VALID`, `distance = 1011.00 px`.
+  - Diagnostic natural size: `1270 × 766`.
+  - Diagnostic display size at 1920px viewport: `597 × 360` for both `Detected mask` and `Envelope contour`.
+  - Run latest diagnostic display size at 1920px viewport: `587 × 354` for both `Detected mask` and `Envelope contour`.
+  - Right-side red rectangle boundary is visible in both diagnostic images.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0055_setup_diagnostic_fit_user_roi.png`
+  - `output/playwright/p0055_setup_diagnostic_fit_user_roi_1920.png`
+  - `output/playwright/p0055_run_diagnostic_fit_user_roi_1920.png`
 
 #### Final status
 

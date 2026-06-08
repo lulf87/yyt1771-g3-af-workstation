@@ -813,7 +813,7 @@ def _diagnostic_overlay_box(metadata: dict[str, Any], shape: tuple[int, ...]) ->
         "right": right,
         "bottom": bottom,
         "stroke": "#ff4040",
-        "stroke_width_px": 2,
+        "stroke_width_px": 5,
     }
 
 
@@ -844,7 +844,7 @@ def _binary_mask_png_data_url(mask: np.ndarray, *, overlay_box: dict[str, Any] |
                 (int(overlay_box["right"]), int(overlay_box["bottom"])),
             ],
             outline=(255, 64, 64),
-            width=max(1, int(overlay_box.get("stroke_width_px", 2))),
+            width=max(1, int(overlay_box.get("stroke_width_px", 5))),
         )
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")

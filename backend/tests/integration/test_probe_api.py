@@ -252,6 +252,7 @@ def _assert_diagnostic_image_has_envelope_box(image_info: dict[str, object]) -> 
     overlay_box = image_info["overlay_box"]
     assert overlay_box["source"] == "selected_candidate_local_projection_bounds"
     assert overlay_box["stroke"] == "#ff4040"
+    assert overlay_box["stroke_width_px"] >= 5
     assert 0 <= overlay_box["left"] <= overlay_box["right"] < image_info["width"]
     assert 0 <= overlay_box["top"] <= overlay_box["bottom"] < image_info["height"]
 
