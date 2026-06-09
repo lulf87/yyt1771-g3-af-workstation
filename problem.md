@@ -75,6 +75,8 @@
 | P-0056 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / frontend diagnostics | A 类 frame 680 左下浅色气泡连入 Detected mask | 2026-06-08 | 2026-06-08 | Codex | golden A frame 680/800 Setup probe + 1400/1460/1461 回归浏览器复测已通过 |
 | P-0057 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend parameters | Detector processing scale 与 Run 快速诊断路径需支持原图坐标还原并降低 UI 卡顿 | 2026-06-08 | 2026-06-08 | Codex | golden A scale 0.5/1.0 Probe + Run 浏览器复测已通过；C 类 detector 回归已通过 |
 | P-0058 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend diagnostics | A 类 fast/enhanced/diagnostics 未真正拆分且默认 diagnostics 图过重 | 2026-06-08 | 2026-06-08 | Codex | golden A/C Setup diagnostics + golden A Run suspicious_only 浏览器复测已通过 |
+| P-0059 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup / temperature control | Real camera Setup 缺少可调 preview 刷新率和温控串口选择 | 2026-06-08 | 2026-06-08 | Codex | 真实 Hik 相机 Setup + 模拟 LU92XX 温控串口选择浏览器复测已通过 |
+| P-0060 | RESOLVED_BROWSER_VERIFIED | P0 | backend / live offline run / detector policy | A 类 Run fast/off 每帧因 ROI 边界 warning 升级 enhanced 导致过慢 | 2026-06-08 | 2026-06-08 | Codex | golden A Run fast/off policy benchmark + Chrome headless browser-context Run 复测已通过 |
 
 ---
 
@@ -6232,6 +6234,218 @@ Result after fix: PASS.
   - `output/playwright/p0056_setup_frame680_bubble_diagnostics.png`
   - `output/playwright/p0056_setup_frame800_clean_diagnostics.png`
   - `output/playwright/p0056_p0051_frame1461_regression.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0059 — Real camera Setup 缺少可调 preview 刷新率和温控串口选择
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src`, `backend/src/yyt1771_g3/api`, `backend/src/yyt1771_g3/core/models.py`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+Real camera Setup preview 刷新率固定为 1 fps，用户不能在界面调节。Temperature Control 区域只能扫描端口和读取温度，不能选择串口；`Read temp` 和正式 `real-camera-runs` 也不能显式使用 Setup 保存的串口。模拟温控的 pseudo-tty `/dev/ttys000` 可读温度，但 pyserial 扫描不会列出该端口，导致下拉框无法选择当前配置端口。
+
+#### Expected
+
+```text
+Setup Real camera preview 提供 1-5 fps 的低频 UI preview 刷新率调节，并保存到 measurement_definition.detector_config.setup_preview_fps。
+Temperature Control 提供温控串口选择，保存到 measurement_definition.detector_config.temperature_serial_port。
+Read temp 使用所选串口，不触发真实相机 frame refresh。
+Real camera Run 使用 Setup 保存的 temperature_serial_port。
+串口列表应包含扫描到的端口和当前硬件配置端口。
+Offline dataset / offline run 不受影响。
+```
+
+#### Fix summary
+
+- 2026-06-08: 新增 `setup_preview_fps` 与 `temperature_serial_port` 到前后端 `DetectorConfig`。
+- 2026-06-08: Real Camera Preview 面板新增 `setup_preview_fps` 数值输入，轮询 interval 按 1-5 fps 计算并显示当前 UI preview rate。
+- 2026-06-08: Temperature Control 面板新增 `temperature_serial_port` 下拉框；`Read temp` 调用 `/api/temperature/status?port=...`。
+- 2026-06-08: `/api/temperature/serial-ports` 合并当前硬件配置端口，解决 `/dev/ttys000` 等配置端口未被 pyserial 扫描列出的问题。
+- 2026-06-08: `/api/real-camera-runs` 根据 Setup 保存的 `temperature_serial_port` 构建温控 controller；不修改本地 YAML，不硬编码本机 MVS 路径。
+
+#### Tests run
+
+```bash
+npm test -- tests/setupSources.test.mjs tests/apiClientUrls.test.mjs
+Result before fix: FAIL, expected missing setup_preview_fps / selectedPort / temperature status query port.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py -q
+Result before fix: FAIL, selected serial port not passed and temperature_serial_port rejected by backend model.
+
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py -q
+Result after fix: PASS, 9 passed.
+
+npm test
+Result after fix: PASS, 45 passed.
+
+npm run build
+Result after fix: PASS.
+
+PYTHONPATH=backend/src pytest backend/tests -q
+Result after fix: PASS, 108 passed.
+
+git diff --check
+Result after fix: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source; Hik camera `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`; simulated LU92XX on `/dev/ttys000`
+- Page: Setup
+- Steps:
+  1. Open Setup and select `Source = Real camera`.
+  2. Confirm automatic real camera preview shows current frame.
+  3. Click `Ports` and confirm `/dev/ttys000` appears in `temperature_serial_port`.
+  4. Select `/dev/ttys000`.
+  5. Set `setup_preview_fps = 2.5` and confirm `Live refresh = 2.5 fps UI preview`.
+  6. Freeze current setup frame.
+  7. Click `Read temp`.
+- Expected:
+  - Preview remains real camera source with camera metadata and source frame shape.
+  - Selected temperature serial port is saved/displayed as `/dev/ttys000`.
+  - Read temp calls `/api/temperature/status?port=%2Fdev%2Fttys000`.
+  - Read temp does not trigger `/api/camera/preview` and frozen frame timestamp stays unchanged.
+- Actual:
+  - Preview metadata: `camera_status=ok`, `model=MV-CA060-11GM`, `serial_number=00J67378626`, `ip=192.168.3.211`, `pixel_format=mono8`, `Frame shape=1364 × 2048`.
+  - `setup_preview_fps` displayed `2.5`; `Live refresh` displayed `2.5 fps UI preview` before freeze.
+  - Temperature Control displayed `Selected port=/dev/ttys000`, `Status=ok`, `Source=lu92xx_modbus_rtu`.
+  - Frozen frame timestamp stayed `1780934282120` before and after `Read temp`.
+  - Fetch log after `Read temp`: one request to `http://127.0.0.1:8034/api/temperature/status?port=%2Fdev%2Fttys000`; zero `/api/camera/preview` requests.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0059_setup_fps_serial_retest.png`
+  - `output/playwright/p0059_setup_fps_serial_retest.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0060 — A 类 Run fast/off 每帧因 ROI 边界 warning 升级 enhanced 导致过慢
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/run_detector_policy.py`, Run services, `DetectorConfig`, frontend detector config controls
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+最新性能诊断显示，在 `run_detector_mode=fast`、`run_diagnostics_mode=off`、`show_advanced_diagnostics=false`、`processing_scale=0.5` 且 heavy detector options 关闭时，A 类 Run 的 diagnostics 确实没有生成，但 `contour_touches_roi_edge` 每帧进入 suspicious reason，导致 `enhanced_rerun_used=true` 达到 100/100。用户以为在跑 fast，实际每帧都升级到 enhanced，A Run 明显慢于 C Run。
+
+#### Expected
+
+```text
+contour_touches_roi_edge / roi_edge_warning / contour_near_roi_edge 等 ROI 边界类 warning 只用于 UI/诊断提示。
+默认 run_enhanced_detector_policy=rerun_worthy_only 时，只有 rerun_worthy_reasons 非空才允许 enhanced rerun。
+run_enhanced_detector_policy=all_suspicious 保留旧行为，兼容需要任意 suspicious 都 rerun 的诊断场景。
+run_diagnostics_mode=off 仍应保证 diagnostics_generated=false、无 diagnostic_images。
+```
+
+#### Actual
+
+修复前 `should_rerun_with_enhanced()` 对 `detection_suspicious_reasons()` 返回的任意 reason 都 rerun enhanced，且 `contour_touches_roi_edge` 与真正需要 rerun 的原因混在同一列表中。
+
+#### Fix summary
+
+- 新增 `run_enhanced_detector_policy: "never" | "rerun_worthy_only" | "all_suspicious"`，默认 `rerun_worthy_only`。
+- 新增 `endpoint_jump_warmup_frames=3`、`endpoint_jump_confirm_frames=2`。
+- 将 suspicious reason 分为 `warning_only_reasons` 和 `rerun_worthy_reasons`，并在 `debug_artifacts` 输出：
+  `suspicious`、`suspicious_reasons`、`warning_only_reasons`、`rerun_worthy_reasons`、`enhanced_rerun_used`、`enhanced_rerun_reason`、Run config fields 和 `detector_execution_mode`。
+- Live offline Run 和 real camera Run 共用同一个 policy state；endpoint jump warm-up 以本次 Run 已处理帧数计，不使用原始 frame index。
+- 前端 `DetectorConfig` 类型、默认值和参数面板补充 enhanced rerun policy 与 endpoint jump warm-up/confirm 控件。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_run_detector_policy.py -q
+Result: PASS, 5 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_contour_edge_warning_does_not_rerun_enhanced backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_all_suspicious_preserves_contour_edge_enhanced_rerun backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_fast_mode_omits_diagnostic_images_until_requested -q
+Result: PASS, 3 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_real_camera_run_service.py::test_real_camera_run_suspicious_only_uses_enhanced_core_diagnostics backend/tests/unit/test_envelope_detectors.py::test_detector_config_processing_scale_defaults_and_clamp -q
+Result: PASS, 2 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+Result: PASS, 108 passed.
+
+npm test -- --run
+Result: PASS, 45 passed.
+
+npm run build
+Result: PASS.
+```
+
+#### Benchmark log
+
+- Script/location: temporary Python here-doc; output JSON `/tmp/g3_p0060_run_policy_benchmark.json`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Frames: 100 from frame 1
+- Config: fast/off, scale 0.5, advanced diagnostics false, full-res refine/bubble/dark-line/spur options off
+
+| Case | Frames | FPS | enhanced_rerun_used | diagnostics_generated | diagnostic_images | Modes |
+|---|---:|---:|---:|---:|---:|---|
+| A Run fast/off/rerun_worthy_only | 100 | 13.763 | 3 | 0 | 0 | fast 97, enhanced 3 |
+| A Run fast/off/all_suspicious | 100 | 7.628 | 100 | 0 | 0 | enhanced 100 |
+| A detector-only fast scale=0.5 | 100 | 14.859 | 0 | 0 | 0 | fast 100 |
+| C Run fast/off | 100 | 14.942 | 0 | 0 | 0 | fast 100 |
+
+Reason counts for A `rerun_worthy_only`: `contour_touches_roi_edge=100` and `roi_edge_warning=100` stayed warning-only; `endpoint_jump_px_above_limit=3` was rerun-worthy after warm-up/confirmation.
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome headless via Chrome DevTools Protocol
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8035/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run / browser-context Live Offline Run API
+- Steps:
+  1. Start temporary backend/frontend from current code on 8035/5176.
+  2. Open the frontend page in isolated headless Chrome and confirm page text lists G3 pages and golden datasets.
+  3. From the browser page context, call `POST /api/live-offline-runs` for A dataset, 100 frames, fast/off, `run_enhanced_detector_policy=rerun_worthy_only`.
+  4. Inspect returned run manifest `debug_artifacts` for diagnostics and rerun stats.
+- Expected:
+  - Page loads with G3 Setup/Run UI and golden A dataset visible.
+  - `diagnostics_generated=0/100`, no `diagnostic_images`.
+  - ROI edge warnings remain warning-only and do not by themselves trigger enhanced rerun.
+  - Enhanced rerun count is far below 100/100.
+- Actual:
+  - Page loaded; screenshot saved.
+  - Run result: 100 frames, 13.57 fps, `diagnosticsGeneratedFrames=0`, `diagnosticImagesFrames=0`, `enhancedRerunUsedFrames=3`, modes `fast=97`, `enhanced=3`.
+  - Warning-only reasons: `contour_touches_roi_edge=100`, `roi_edge_warning=100`.
+  - Rerun-worthy reasons: `endpoint_jump_px_above_limit=3`.
+- Result: PASS
+- Evidence:
+  - `/tmp/g3_p0060_browser_retest.json`
+  - `/tmp/g3_p0060_browser_retest.png`
+
+#### Next-stage items
+
+1. Optimize `_mesh_envelope_rows`, especially repeated `np.quantile` calls.
+2. Support `_warp_rotated_roi(output_scale=processing_scale)` to avoid full-res warp before resize.
+3. Evaluate OpenCV morphology fast path.
 
 #### Final status
 

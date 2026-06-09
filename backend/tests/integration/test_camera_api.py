@@ -208,6 +208,33 @@ def test_temperature_status_endpoint_reads_configured_controller(monkeypatch, tm
     assert controller.closed is True
 
 
+def test_temperature_status_endpoint_uses_selected_serial_port(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, SerialPortConfig, TempConfig
+
+    controller = FakeApiTemperatureController()
+    captured_configs = []
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(temp=TempConfig(serial=SerialPortConfig(port="/dev/default-temp"))),
+    )
+
+    def fake_build_temperature_controller(config):  # noqa: ANN001, ANN202
+        captured_configs.append(config)
+        return controller
+
+    monkeypatch.setattr(api_main, "build_temperature_controller", fake_build_temperature_controller)
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/status", params={"port": "/dev/ttys000"})
+
+    assert response.status_code == 200
+    assert captured_configs[0].temp.serial.port == "/dev/ttys000"
+    assert controller.closed is True
+
+
 def test_temperature_serial_ports_endpoint_returns_discovered_ports(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.temperature.serial_ports import SerialPortInfo
@@ -225,11 +252,35 @@ def test_temperature_serial_ports_endpoint_returns_discovered_ports(monkeypatch)
     assert response.json()["ports"][0]["device"] == "COM5"
 
 
+def test_temperature_serial_ports_endpoint_includes_configured_port(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, SerialPortConfig, TempConfig
+    from yyt1771_g3.temperature.serial_ports import SerialPortInfo
+
+    monkeypatch.setattr(
+        api_main,
+        "list_serial_ports",
+        lambda: [SerialPortInfo(device="COM5", name="COM5", description="USB Serial", hwid="VID:PID")],
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(temp=TempConfig(serial=SerialPortConfig(port="/dev/ttys000"))),
+    )
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/serial-ports")
+
+    assert response.status_code == 200
+    assert [port["device"] for port in response.json()["ports"]] == ["COM5", "/dev/ttys000"]
+
+
 def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
     from yyt1771_g3.api import main as api_main
 
     controllers: list[FakeApiTemperatureController] = []
+    temperature_configs = []
     camera_profiles: list[dict] = []
 
     class CapturingCameraSource(FakeApiCameraSource):
@@ -238,6 +289,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
             camera_profiles.append(self.profile)
 
     def fake_build_temperature_controller(config):  # noqa: ANN001, ANN202
+        temperature_configs.append(config)
         controller = FakeApiTemperatureController()
         controllers.append(controller)
         return controller
@@ -272,6 +324,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
                     "max_frames_per_run": 1,
                     "target_temperature_celsius": 55.0,
                     "temperature_power_percent": 68.0,
+                    "temperature_serial_port": "/dev/ttys000",
                 },
             },
         },
@@ -283,6 +336,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
     assert payload["run_manifest"]["temperature_records"][0]["celsius"] == 25.3
     assert payload["run_manifest"]["detection_results"][0]["temperature_sync_status"] == "TEMP_SYNC_OK"
     assert camera_profiles[0]["exposure_us"] == 50000
+    assert temperature_configs[0].temp.serial.port == "/dev/ttys000"
     assert controllers[0].target_values == [55.0]
     assert controllers[0].power_values == [68.0]
     assert controllers[0].stopped is True

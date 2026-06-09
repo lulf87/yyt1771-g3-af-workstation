@@ -174,6 +174,7 @@ def test_real_camera_run_suspicious_only_uses_enhanced_core_diagnostics(tmp_path
             run_detector_mode="fast",
             run_diagnostics_mode="suspicious_only",
             run_enhanced_detector_on_suspicious=True,
+            run_enhanced_detector_policy="all_suspicious",
             suspicious_boundary_reject_ratio=0.0,
         ),
     )

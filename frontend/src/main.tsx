@@ -83,13 +83,17 @@ import {
   createRealCameraMeasurementFromShape,
   freezePreview,
   frozenFrameSetupChangeMessage,
+  normalizeSetupPreviewFps,
   previewRefreshStatusLabel,
   resumeLivePreview,
   runModeForSetupSource,
   runResultMatchesSetupSource,
+  selectSetupTemperatureSerialPort,
   shouldPollRealCameraPreview,
   shouldRefreshRealCameraFrameAfterSetupChange,
   shouldRefreshRealCameraFrameAfterRoiCommit,
+  setupPreviewFpsLabel,
+  setupPreviewIntervalMs,
   updateRealCameraPreviewState,
   type PreviewRefreshStatus,
   type RealCameraPreviewMode,
@@ -207,7 +211,10 @@ const DEFAULT_CONFIG = {
   run_preview_fps: 5,
   run_result_batch_size: 10,
   run_enhanced_detector_on_suspicious: true,
+  run_enhanced_detector_policy: "rerun_worthy_only" as const,
   endpoint_jump_limit_px: 12,
+  endpoint_jump_warmup_frames: 3,
+  endpoint_jump_confirm_frames: 2,
   suspicious_boundary_reject_ratio: 0.35,
   suspicious_outlier_reject_count: 1,
   max_frames_per_run: 160,
@@ -238,7 +245,6 @@ const DEFAULT_AFAS_ANALYSIS_FORM: AfasAnalysisFormState = {
 };
 
 const LIVE_FRAME_DISPLAY_MAX_WIDTH = 1024;
-const REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS = 1000;
 const REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS = 500;
 
 const OBJECT_CLASS_OPTIONS = [
@@ -353,6 +359,8 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
     { value: "mark_invalid", label: "Mark invalid" }
   ], title: "How Run handles unconfirmed distance jumps." },
   { key: "endpoint_jump_limit_px", label: "Endpoint jump limit px", type: "float", min: 0, max: 100, step: 1, group: "Temporal stability", advanced: true, title: "Suspicious-frame threshold for selected endpoint/axis jumps." },
+  { key: "endpoint_jump_warmup_frames", label: "Endpoint jump warm-up", type: "int", min: 0, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Run frames ignored before endpoint-jump rerun decisions." },
+  { key: "endpoint_jump_confirm_frames", label: "Endpoint jump confirm", type: "int", min: 1, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Consecutive endpoint-jump frames required before enhanced rerun." },
   { key: "suspicious_boundary_reject_ratio", label: "Suspicious boundary ratio", type: "float", min: 0, max: 1, step: 0.05, group: "Temporal stability", advanced: true, title: "Run diagnostics trigger when boundary-support rejections are high." },
   { key: "suspicious_outlier_reject_count", label: "Suspicious outlier rows", type: "int", min: 1, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Run diagnostics trigger when this many width-outlier rows are rejected." },
   { key: "run_detector_mode", label: "Run detector mode", type: "select", group: "Run performance", options: [
@@ -368,6 +376,11 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   { key: "run_preview_fps", label: "Run preview fps", type: "int", min: 1, max: 30, step: 1, group: "Run performance", title: "Limits image/overlay refresh rate during streaming Run." },
   { key: "run_result_batch_size", label: "Run result batch", type: "int", min: 1, max: 100, step: 1, group: "Run performance", title: "Batches Run curve/state updates by processed frames." },
   { key: "run_enhanced_detector_on_suspicious", label: "Enhanced on suspicious", type: "bool", group: "Run performance", advanced: true, title: "Allows suspicious frames to rerun with diagnostics enabled." },
+  { key: "run_enhanced_detector_policy", label: "Enhanced rerun policy", type: "select", group: "Run performance", advanced: true, options: [
+    { value: "never", label: "Never" },
+    { value: "rerun_worthy_only", label: "Rerun-worthy only" },
+    { value: "all_suspicious", label: "All suspicious" }
+  ], title: "Controls which suspicious reasons can upgrade Run frames to enhanced." },
   { key: "max_frames_per_run", label: "Max frames per run", type: "int", min: 1, max: 20000, step: 10, group: "Run", advanced: true, title: "Frame limit for live offline runs." },
   { key: "live_offline_fps", label: "Live offline fps", type: "float", min: 0.5, max: 30, step: 0.5, group: "Run", advanced: true, title: "Playback speed for live offline runs." }
 ];
@@ -426,12 +439,19 @@ function App() {
 
   useEffect(() => {
     if (!shouldPollRealCameraPreview(page, setupSource, cameraPreviewState)) return;
+    const previewIntervalMs = setupPreviewIntervalMs(measurement?.detector_config.setup_preview_fps);
     void previewRealCameraFrame("live");
     const timer = window.setInterval(() => {
       void previewRealCameraFrame("live");
-    }, REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS);
+    }, previewIntervalMs);
     return () => window.clearInterval(timer);
-  }, [page, setupSource, cameraPreviewState?.mode, cameraPreviewState?.cameraStatus]);
+  }, [
+    page,
+    setupSource,
+    cameraPreviewState?.mode,
+    cameraPreviewState?.cameraStatus,
+    measurement?.detector_config.setup_preview_fps
+  ]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -771,7 +791,11 @@ function App() {
     setError("");
     setTemperatureError(null);
     try {
-      setTemperatureStatus(await getTemperatureStatus());
+      setTemperatureStatus(
+        await getTemperatureStatus({
+          port: measurementRef.current?.detector_config.temperature_serial_port
+        })
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setTemperatureError(temperatureErrorFromUnknown(err));
@@ -1133,8 +1157,18 @@ function PageContent({
             previewError={cameraPreviewError}
             previewState={cameraPreviewState}
             refreshStatus={cameraPreviewRefreshStatus}
+            previewFps={measurement.detector_config.setup_preview_fps}
             previewing={previewingCamera}
             probing={probing}
+            onPreviewFpsChange={(fps) =>
+              onMeasurement({
+                ...measurement,
+                detector_config: {
+                  ...measurement.detector_config,
+                  setup_preview_fps: normalizeSetupPreviewFps(fps)
+                }
+              })
+            }
             onRefresh={onPreviewRealCamera}
             onProbe={onProbeRealCameraSetup}
             onFreeze={onFreezeRealCameraPreview}
@@ -1240,8 +1274,10 @@ function CameraSetupStatusPanel({
   previewError,
   previewState,
   refreshStatus,
+  previewFps,
   previewing,
   probing,
+  onPreviewFpsChange,
   onRefresh,
   onProbe,
   onFreeze,
@@ -1252,8 +1288,10 @@ function CameraSetupStatusPanel({
   previewError: CameraPreviewError | null;
   previewState: RealCameraPreviewState | null;
   refreshStatus: PreviewRefreshStatus;
+  previewFps: number | null | undefined;
   previewing: boolean;
   probing: boolean;
+  onPreviewFpsChange: (fps: number) => void;
   onRefresh: () => void;
   onProbe: () => void;
   onFreeze: () => void;
@@ -1285,9 +1323,18 @@ function CameraSetupStatusPanel({
         <Metric label="Frame shape" value={preview ? preview.shape.join(" × ") : "None"} />
         <Metric label="Timestamp" value={preview?.timestamp_ms ?? "None"} />
         <Metric label="Frozen timestamp" value={previewState?.frozenTimestampMs ?? "None"} />
-        <Metric label="Live refresh" value={isFrozen ? "Paused" : `${1000 / REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS} fps UI preview`} />
+        <Metric label="Live refresh" value={isFrozen ? "Paused" : setupPreviewFpsLabel(previewFps)} />
         <Metric label="Preview refresh" value={previewRefreshStatusLabel(refreshStatus)} />
       </dl>
+      <NumberField
+        label="setup_preview_fps"
+        max={5}
+        min={1}
+        onChange={(value) => onPreviewFpsChange(normalizeSetupPreviewFps(value))}
+        step={0.5}
+        title="Real camera Setup UI preview refresh rate."
+        value={normalizeSetupPreviewFps(previewFps)}
+      />
       <div className="buttonPair">
         <button className="secondaryButton" disabled={previewing} onClick={onRefresh} type="button">
           <RefreshCcw size={16} aria-hidden="true" />
@@ -1687,6 +1734,11 @@ function TemperatureControlPanel({
     temperatureError,
     fallbackTemperature
   );
+  const selectedPort = measurement.detector_config.temperature_serial_port?.trim() ?? "";
+  const serialPortOptions = uniqueStrings([
+    selectedPort,
+    ...serialPorts.map((port) => port.device || port.name)
+  ]);
 
   function patchConfig(patch: Partial<MeasurementDefinition["detector_config"]>) {
     onMeasurement({
@@ -1708,6 +1760,7 @@ function TemperatureControlPanel({
         <Metric label="Timestamp" value={summary.timestamp} />
         <Metric label="Target" value={summary.targetTemperatureCelsius} />
         <Metric label="Power" value={summary.temperaturePowerPercent} />
+        <Metric label="Selected port" value={summary.selectedPort} />
         <Metric label="Ports" value={summary.ports} />
         <Metric label="Port count" value={summary.portCount} />
         <Metric label="Error" value={summary.error} />
@@ -1724,6 +1777,20 @@ function TemperatureControlPanel({
           onChange={(v) => patchConfig({ temperature_power_percent: clamp(v, 0, 100) })}
         />
       </div>
+      <label className="field">
+        <span>temperature_serial_port</span>
+        <select
+          onChange={(event) => onMeasurement(selectSetupTemperatureSerialPort(measurement, event.target.value))}
+          value={selectedPort}
+        >
+          <option value="">Configured/default</option>
+          {serialPortOptions.map((port) => (
+            <option key={port} value={port}>
+              {port}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="buttonPair">
         <button className="secondaryButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
           <Thermometer size={16} aria-hidden="true" />
@@ -4104,6 +4171,18 @@ function formatTemperatureStatus(status: TemperatureStatusResponse | null): stri
 function clamp(value: number, low: number, high: number): number {
   if (!Number.isFinite(value)) return low;
   return Math.max(low, Math.min(high, value));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
 }
 
 async function waitForStoppedRun(runId: string): Promise<RunResponse> {

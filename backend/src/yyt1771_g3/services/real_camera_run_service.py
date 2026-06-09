@@ -20,8 +20,10 @@ from yyt1771_g3.core.models import (
 )
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.services.run_detector_policy import (
+    RunDetectorPolicyState,
+    analyze_detection_suspicion,
     annotate_run_detection,
-    detection_suspicious_reasons,
+    enhanced_rerun_reasons,
     enhanced_rerun_diagnostics_enabled,
     initial_run_diagnostics_enabled,
     measurement_for_detector_mode,
@@ -57,6 +59,7 @@ def run_real_camera(
     raw_dir = run_dir / "raw_frames"
     raw_dir.mkdir(parents=True, exist_ok=True)
     state = CandidateSelectionState()
+    policy_state = RunDetectorPolicyState()
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -79,8 +82,9 @@ def run_real_camera(
                 stability_state=previous_state,
                 generate_diagnostics=initial_run_diagnostics_enabled(measurement),
             )
-            suspicious_reasons = detection_suspicious_reasons(detection, measurement)
-            if should_rerun_with_enhanced(detection, measurement):
+            suspicion = analyze_detection_suspicion(detection, measurement, policy_state)
+            policy_state = suspicion.next_state
+            if should_rerun_with_enhanced(detection, measurement, analysis=suspicion.analysis):
                 enhanced_measurement = measurement_for_detector_mode(measurement, "enhanced")
                 detection, next_state = detect_frame_with_state(
                     frame.array,
@@ -91,13 +95,16 @@ def run_real_camera(
                 )
                 detection = annotate_run_detection(
                     detection,
-                    suspicious_reasons=suspicious_reasons or detection_suspicious_reasons(detection, measurement),
+                    measurement=measurement,
+                    analysis=suspicion.analysis,
                     enhanced_rerun_used=True,
+                    enhanced_rerun_reason=enhanced_rerun_reasons(suspicion.analysis, measurement),
                 )
             else:
                 detection = annotate_run_detection(
                     detection,
-                    suspicious_reasons=suspicious_reasons,
+                    measurement=measurement,
+                    analysis=suspicion.analysis,
                     enhanced_rerun_used=False,
                 )
             state = next_state

@@ -19,11 +19,12 @@ from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, OfflineDatasetRegistry
 from yyt1771_g3.services.run_detector_policy import (
+    RunDetectorPolicyState,
+    analyze_detection_suspicion,
     annotate_run_detection,
-    detection_suspicious_reasons,
+    enhanced_rerun_reasons,
     enhanced_rerun_diagnostics_enabled,
     initial_run_diagnostics_enabled,
-    is_detection_suspicious,
     measurement_for_detector_mode,
     should_rerun_with_enhanced,
 )
@@ -65,6 +66,7 @@ def run_live_offline_dataset(
     window = _resolve_frame_window(resolved.frame_count, start_frame, max_frames)
     run_id = _new_run_id(dataset_id)
     state = CandidateSelectionState()
+    policy_state = RunDetectorPolicyState()
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -72,7 +74,7 @@ def run_live_offline_dataset(
     stop_reason = "complete"
 
     for frame_index in range(window.start_frame, window.end_frame + 1):
-        frame_record, temperature_record, detection, state = _process_frame(
+        frame_record, temperature_record, detection, state, policy_state = _process_frame(
             registry,
             dataset_id,
             measurement,
@@ -80,6 +82,7 @@ def run_live_offline_dataset(
             temperature_rows,
             frame_index,
             state,
+            policy_state,
         )
         frame_records.append(frame_record)
         temperature_records.append(temperature_record)
@@ -119,6 +122,7 @@ def iter_live_offline_run_events(
     window = _resolve_frame_window(resolved.frame_count, start_frame, max_frames)
     run_id = _new_run_id(dataset_id)
     state = CandidateSelectionState()
+    policy_state = RunDetectorPolicyState()
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -129,7 +133,7 @@ def iter_live_offline_run_events(
 
     try:
         for processed, frame_index in enumerate(range(window.start_frame, window.end_frame + 1), start=1):
-            frame_record, temperature_record, detection, state = _process_frame(
+            frame_record, temperature_record, detection, state, policy_state = _process_frame(
                 registry,
                 dataset_id,
                 measurement,
@@ -137,6 +141,7 @@ def iter_live_offline_run_events(
                 temperature_rows,
                 frame_index,
                 state,
+                policy_state,
             )
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
@@ -274,7 +279,8 @@ def _process_frame(
     temperature_rows: list[dict[str, str]],
     frame_index: int,
     state: CandidateSelectionState,
-) -> tuple[FrameRecord, TemperatureRecord, DetectionResult, CandidateSelectionState]:
+    policy_state: RunDetectorPolicyState,
+) -> tuple[FrameRecord, TemperatureRecord, DetectionResult, CandidateSelectionState, RunDetectorPolicyState]:
     frame = registry.load_frame(dataset_id, frame_index)
     frame_meta = _frame_meta(manifest_payload, frame_index)
     frame_timestamp_ms = _int_or_none(frame_meta.get("timestamp_ms"))
@@ -287,8 +293,9 @@ def _process_frame(
         stability_state=state,
         generate_diagnostics=initial_run_diagnostics_enabled(measurement),
     )
-    suspicious_reasons = detection_suspicious_reasons(detection, measurement)
-    if should_rerun_with_enhanced(detection, measurement):
+    suspicion = analyze_detection_suspicion(detection, measurement, policy_state)
+    policy_state = suspicion.next_state
+    if should_rerun_with_enhanced(detection, measurement, analysis=suspicion.analysis):
         enhanced_measurement = measurement_for_detector_mode(measurement, "enhanced")
         detection, next_state = detect_frame_with_state(
             frame.array,
@@ -299,13 +306,16 @@ def _process_frame(
         )
         detection = annotate_run_detection(
             detection,
-            suspicious_reasons=suspicious_reasons or detection_suspicious_reasons(detection, measurement),
+            measurement=measurement,
+            analysis=suspicion.analysis,
             enhanced_rerun_used=True,
+            enhanced_rerun_reason=enhanced_rerun_reasons(suspicion.analysis, measurement),
         )
     else:
         detection = annotate_run_detection(
             detection,
-            suspicious_reasons=suspicious_reasons,
+            measurement=measurement,
+            analysis=suspicion.analysis,
             enhanced_rerun_used=False,
         )
     detection = _attach_temperature(detection, frame_timestamp_ms, synced)
@@ -324,14 +334,7 @@ def _process_frame(
         source=synced.source,
         sampled_this_frame=synced.sampled_this_frame,
     )
-    return frame_record, temperature_record, detection, next_state
-
-
-def _is_detection_suspicious(
-    detection: DetectionResult,
-    measurement: MeasurementDefinition,
-) -> bool:
-    return is_detection_suspicious(detection, measurement)
+    return frame_record, temperature_record, detection, next_state, policy_state
 
 
 def _frame_event(

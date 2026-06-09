@@ -126,13 +126,18 @@ class DetectorConfig(G3Model):
     run_preview_fps: int = 5
     run_result_batch_size: int = 10
     run_enhanced_detector_on_suspicious: bool = True
+    run_enhanced_detector_policy: Literal["never", "rerun_worthy_only", "all_suspicious"] = "rerun_worthy_only"
     endpoint_jump_limit_px: float = 12.0
+    endpoint_jump_warmup_frames: int = 3
+    endpoint_jump_confirm_frames: int = 2
     suspicious_boundary_reject_ratio: float = 0.35
     suspicious_outlier_reject_count: int = 1
     max_frames_per_run: int = 160
     live_offline_fps: float = 8.0
+    setup_preview_fps: float = 1.0
     target_temperature_celsius: float | None = None
     temperature_power_percent: float = 100.0
+    temperature_serial_port: str = ""
 
     @field_validator(
         "switch_after_n_frames",
@@ -155,6 +160,7 @@ class DetectorConfig(G3Model):
         "full_res_refine_band_px",
         "run_preview_fps",
         "run_result_batch_size",
+        "endpoint_jump_confirm_frames",
         "suspicious_outlier_reject_count",
         "max_frames_per_run",
     )
@@ -164,10 +170,27 @@ class DetectorConfig(G3Model):
             raise ValueError(f"{info.field_name} must be > 0")
         return value
 
+    @field_validator("endpoint_jump_warmup_frames")
+    @classmethod
+    def _non_negative_int(cls, value: int, info) -> int:  # noqa: ANN001
+        if value < 0:
+            raise ValueError(f"{info.field_name} must be >= 0")
+        return value
+
     @field_validator("processing_scale")
     @classmethod
     def _clamp_processing_scale(cls, value: float) -> float:
         return max(0.25, min(1.0, float(value)))
+
+    @field_validator("setup_preview_fps")
+    @classmethod
+    def _clamp_setup_preview_fps(cls, value: float) -> float:
+        return max(1.0, min(5.0, float(value)))
+
+    @field_validator("temperature_serial_port")
+    @classmethod
+    def _strip_temperature_serial_port(cls, value: str) -> str:
+        return str(value or "").strip()
 
 
 class MeasurementDefinition(G3Model):

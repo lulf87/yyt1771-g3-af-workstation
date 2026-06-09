@@ -5,7 +5,7 @@ import binascii
 import io
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,7 @@ from yyt1771_g3.services.real_camera_run_service import run_real_camera
 from yyt1771_g3.services.export_service import export_run
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
-from yyt1771_g3.temperature.serial_ports import list_serial_ports
+from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
 
 
 app = FastAPI(title="YY/T 1771 G3 Backend", version="0.1.0")
@@ -75,6 +75,13 @@ def _registry():
 
 def _hardware_config() -> HardwareConfig:
     return load_hardware_config()
+
+
+def _hardware_config_with_temperature_port(config: HardwareConfig, port: str | None) -> HardwareConfig:
+    selected_port = str(port or "").strip()
+    if not selected_port:
+        return config
+    return replace(config, temp=replace(config.temp, serial=replace(config.temp.serial, port=selected_port)))
 
 
 @app.get("/api/health")
@@ -495,12 +502,22 @@ def get_temperature_serial_ports() -> dict[str, Any]:
             status_code=503,
             detail={"temperature_status": "unavailable", "message": str(exc)},
         ) from exc
+    configured_port = _hardware_config().temp.serial.port.strip()
+    if configured_port and all(port.device != configured_port for port in ports):
+        ports.append(
+            SerialPortInfo(
+                device=configured_port,
+                name=configured_port,
+                description="configured",
+                hwid="configured",
+            )
+        )
     return {"ports": [asdict(port) for port in ports]}
 
 
 @app.get("/api/temperature/status")
-def get_temperature_status() -> dict[str, Any]:
-    config = _hardware_config()
+def get_temperature_status(port: str | None = None) -> dict[str, Any]:
+    config = _hardware_config_with_temperature_port(_hardware_config(), port)
     controller = build_temperature_controller(config)
     if controller is None:
         raise HTTPException(
@@ -526,7 +543,11 @@ def get_temperature_status() -> dict[str, Any]:
 def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
     config = _hardware_config()
     camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
-    temperature_controller = build_temperature_controller(config)
+    run_config = _hardware_config_with_temperature_port(
+        config,
+        request.measurement_definition.detector_config.temperature_serial_port,
+    )
+    temperature_controller = build_temperature_controller(run_config)
     try:
         result = run_real_camera(
             _run_store(),
@@ -536,7 +557,7 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
             max_frames=request.max_frames,
             target_fps=request.target_fps,
             camera_profile=camera_profile,
-            temp_sync_target_ms=config.run.temp_sync_target_ms,
+            temp_sync_target_ms=run_config.run.temp_sync_target_ms,
         )
     except CameraUnavailableError as exc:
         raise HTTPException(

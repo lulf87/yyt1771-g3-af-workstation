@@ -113,13 +113,18 @@ export type DetectorConfig = {
   run_preview_fps?: number;
   run_result_batch_size?: number;
   run_enhanced_detector_on_suspicious?: boolean;
+  run_enhanced_detector_policy?: "never" | "rerun_worthy_only" | "all_suspicious";
   endpoint_jump_limit_px?: number;
+  endpoint_jump_warmup_frames?: number;
+  endpoint_jump_confirm_frames?: number;
   suspicious_boundary_reject_ratio?: number;
   suspicious_outlier_reject_count?: number;
   max_frames_per_run?: number;
   live_offline_fps?: number;
+  setup_preview_fps?: number;
   target_temperature_celsius?: number | null;
   temperature_power_percent?: number;
+  temperature_serial_port?: string;
 };
 
 export type MeasurementDefinition = {
@@ -707,8 +712,12 @@ export function realCameraPreviewImageUrl(cacheKey: number): string {
   return `${API_BASE}/api/camera/preview.png?t=${cacheKey}`;
 }
 
-export async function getTemperatureStatus(): Promise<TemperatureStatusResponse> {
-  return requestJson<TemperatureStatusResponse>("/api/temperature/status");
+export async function getTemperatureStatus(options: { port?: string } = {}): Promise<TemperatureStatusResponse> {
+  const params = new URLSearchParams();
+  const port = options.port?.trim();
+  if (port) params.set("port", port);
+  const query = params.toString();
+  return requestJson<TemperatureStatusResponse>(`/api/temperature/status${query ? `?${query}` : ""}`);
 }
 
 export async function listTemperatureSerialPorts(): Promise<SerialPortInfo[]> {

@@ -327,6 +327,7 @@ test("real camera setup refreshes live frames only for preview-affecting changes
 test("setup temperature summary exposes controller status without being preview-affecting", async () => {
   const {
     buildSetupTemperatureSummary,
+    selectSetupTemperatureSerialPort,
     shouldRefreshRealCameraFrameAfterSetupChange,
     updateRealCameraPreviewState
   } = await loadSetupSourcesModule();
@@ -347,7 +348,8 @@ test("setup temperature summary exposes controller status without being preview-
     },
     detector_config: {
       target_temperature_celsius: 42.5,
-      temperature_power_percent: 55
+      temperature_power_percent: 55,
+      temperature_serial_port: "/dev/cu.usbserial-1210"
     }
   };
   const status = {
@@ -375,10 +377,17 @@ test("setup temperature summary exposes controller status without being preview-
     timestamp: "1779448000123",
     targetTemperatureCelsius: "42.50 °C",
     temperaturePowerPercent: "55 %",
+    selectedPort: "/dev/cu.usbserial-1210",
     ports: "/dev/cu.usbserial-1210",
     portCount: "1",
     error: "None"
   });
+
+  const selected = selectSetupTemperatureSerialPort(measurement, "/dev/ttys000");
+
+  assert.equal(selected.detector_config.temperature_serial_port, "/dev/ttys000");
+  assert.equal(selected.detector_config.target_temperature_celsius, 42.5);
+  assert.equal(selected.detector_config.temperature_power_percent, 55);
 
   assert.deepEqual(
     buildSetupTemperatureSummary(measurement, null, [], {
@@ -392,6 +401,7 @@ test("setup temperature summary exposes controller status without being preview-
       timestamp: "None",
       targetTemperatureCelsius: "42.50 °C",
       temperaturePowerPercent: "55 %",
+      selectedPort: "/dev/cu.usbserial-1210",
       ports: "None",
       portCount: "0",
       error: "/dev/cu.usbserial-1210 not found"
@@ -429,4 +439,32 @@ test("setup temperature summary exposes controller status without being preview-
     }),
     false
   );
+  assert.equal(
+    shouldRefreshRealCameraFrameAfterSetupChange("setup", "real_camera", liveState, {
+      kind: "detector_config",
+      key: "temperature_serial_port"
+    }),
+    false
+  );
+});
+
+test("real camera setup preview fps is a low-frequency saved parameter", async () => {
+  const {
+    createRealCameraMeasurementFromShape,
+    normalizeSetupPreviewFps,
+    setupPreviewFpsLabel,
+    setupPreviewIntervalMs
+  } = await loadSetupSourcesModule();
+
+  const measurement = createRealCameraMeasurementFromShape(null, [1364, 2048]);
+
+  assert.equal(measurement.detector_config.setup_preview_fps, 1);
+  assert.equal(normalizeSetupPreviewFps(null), 1);
+  assert.equal(normalizeSetupPreviewFps(0), 1);
+  assert.equal(normalizeSetupPreviewFps(2.5), 2.5);
+  assert.equal(normalizeSetupPreviewFps(9), 5);
+  assert.equal(setupPreviewIntervalMs(1), 1000);
+  assert.equal(setupPreviewIntervalMs(2.5), 400);
+  assert.equal(setupPreviewIntervalMs(5), 200);
+  assert.equal(setupPreviewFpsLabel(2.5), "2.5 fps UI preview");
 });

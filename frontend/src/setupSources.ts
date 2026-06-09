@@ -120,6 +120,7 @@ export type SetupTemperatureSummary = {
   timestamp: string;
   targetTemperatureCelsius: string;
   temperaturePowerPercent: string;
+  selectedPort: string;
   ports: string;
   portCount: string;
   error: string;
@@ -140,8 +141,10 @@ const DEFAULT_REAL_CAMERA_CONFIG = {
   mask_dilate_kernel_px: 1,
   max_frames_per_run: 160,
   live_offline_fps: 8,
+  setup_preview_fps: 1,
   target_temperature_celsius: null,
-  temperature_power_percent: 100
+  temperature_power_percent: 100,
+  temperature_serial_port: ""
 };
 
 export const SETUP_SOURCE_OPTIONS: SetupSourceOption[] = [
@@ -205,6 +208,32 @@ export function previewRefreshStatusLabel(status: PreviewRefreshStatus): string 
   if (status === "ok") return "Preview refreshed";
   if (status === "unavailable") return "Camera unavailable";
   return "Not refreshed";
+}
+
+export function normalizeSetupPreviewFps(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+  return clamp(value, 1, 5);
+}
+
+export function setupPreviewIntervalMs(fps: number | null | undefined): number {
+  return Math.round(1000 / normalizeSetupPreviewFps(fps));
+}
+
+export function setupPreviewFpsLabel(fps: number | null | undefined): string {
+  return `${formatRateNumber(normalizeSetupPreviewFps(fps))} fps UI preview`;
+}
+
+export function selectSetupTemperatureSerialPort(
+  measurement: MeasurementDefinition,
+  port: string
+): MeasurementDefinition {
+  return {
+    ...measurement,
+    detector_config: {
+      ...measurement.detector_config,
+      temperature_serial_port: port.trim()
+    }
+  };
 }
 
 export function shouldPollRealCameraPreview(
@@ -464,6 +493,7 @@ export function buildSetupTemperatureSummary(
         ? "None"
         : `${formatNumber(measurement.detector_config.target_temperature_celsius)} °C`,
     temperaturePowerPercent: `${formatNumber(measurement.detector_config.temperature_power_percent ?? 100, 0)} %`,
+    selectedPort: measurement.detector_config.temperature_serial_port?.trim() || "None",
     ports: serialPorts.length ? serialPorts.map((port) => port.device || port.name).join(", ") : "None",
     portCount: String(serialPorts.length),
     error: statusError || temperatureError?.message || "None"
@@ -499,6 +529,11 @@ function formatTemperatureValue(value: number | null | undefined): string {
 function formatCompactNumber(value: number): string {
   if (!Number.isFinite(value)) return "None";
   return Number.isInteger(value) ? Math.round(value).toLocaleString() : value.toFixed(2);
+}
+
+function formatRateNumber(value: number): string {
+  if (!Number.isFinite(value)) return "None";
+  return String(Number(value.toFixed(2)));
 }
 
 function clamp(value: number, min: number, max: number): number {

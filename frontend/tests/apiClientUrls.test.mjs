@@ -283,6 +283,7 @@ test("real camera run posts the saved setup measurement definition without overr
       live_offline_fps: 4,
       target_temperature_celsius: 42.5,
       temperature_power_percent: 55,
+      temperature_serial_port: "/dev/ttys000",
       min_component_area_px: 123
     }
   };
@@ -338,6 +339,36 @@ test("real camera run posts the saved setup measurement definition without overr
     assert.deepEqual(body.measurement_definition.detector_config, measurement.detector_config);
     assert.equal(body.max_frames, 77);
     assert.equal(body.target_fps, 4);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("temperature status request can target the selected serial port", async () => {
+  const { getTemperatureStatus } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        temperature_status: "ok",
+        reading: {
+          timestamp_ms: 1779448000123,
+          celsius: 24.2,
+          source: "lu92xx_modbus_rtu",
+          error: ""
+        }
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    await getTemperatureStatus({ port: "/dev/ttys000" });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/temperature\/status\?port=%2Fdev%2Fttys000$/);
   } finally {
     globalThis.fetch = originalFetch;
   }
