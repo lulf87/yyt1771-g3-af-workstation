@@ -83,6 +83,36 @@ def test_temperature_distance_curve_uses_only_ok_or_interpolated_points() -> Non
     assert analysis.all_frames == manifest.detection_results
 
 
+def test_analysis_result_keeps_raw_and_stabilized_distance_curves() -> None:
+    detection = _valid_detection(1, 18.0, TemperatureSyncStatus.TEMP_SYNC_OK, 30.0).model_copy(
+        update={
+            "raw_distance_px": 24.0,
+            "stabilized_distance_px": 18.0,
+            "result_display_source": "stabilized",
+        }
+    )
+    manifest = RunManifest(
+        run_id="run-raw-stabilized-analysis",
+        dataset_id="golden_a_20260522_dev_lab",
+        measurement_definition=MeasurementDefinition(
+            measurement_id="m-raw-stabilized",
+            object_class=ObjectClass.A_BALLOON_ENVELOPE,
+            detector=DetectorType.BALLOON_ENVELOPE,
+            width_mode=WidthMode.MAX_WIDTH,
+            roi=RotatedROI(center_x=10.0, center_y=10.0, width=12.0, height=8.0),
+        ),
+        detection_results=[detection],
+    )
+
+    analysis = build_analysis_result(manifest, analysis_id="analysis-raw-stabilized")
+
+    assert analysis.temperature_distance[0].y == 18.0
+    assert analysis.raw_temperature_distance[0].y == 24.0
+    assert analysis.stabilized_temperature_distance[0].y == 18.0
+    assert analysis.raw_distance_time[0].y == 24.0
+    assert analysis.stabilized_distance_time[0].y == 18.0
+
+
 def test_analysis_result_includes_afas_preprocessing_and_tangent_result() -> None:
     detection_results: list[DetectionResult] = []
     for index in range(63):

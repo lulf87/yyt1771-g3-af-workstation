@@ -336,6 +336,17 @@ input {
   gap: 10px;
 }
 
+.detectorPresetGroup {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detectorPresetGroup .secondaryButton {
+  white-space: normal;
+  line-height: 1.2;
+}
+
 .detectorParameterGroup {
   display: grid;
   gap: 8px;

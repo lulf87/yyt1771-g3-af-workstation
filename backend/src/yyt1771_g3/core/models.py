@@ -63,7 +63,9 @@ class DetectorConfig(G3Model):
     window_width_keep_ratio: float = 0.2
     window_count_keep_ratio: float = 0.15
     contour_projection_quantile: float = 0.002
+    contour_close_kernel: int = 21
     contour_close_kernel_px: int = 21
+    contour_smooth_window: int = 7
     mesh_min_width_ratio: float = 0.25
     mesh_min_height_ratio: float = 0.15
     mesh_region_margin_px: int = 30
@@ -79,6 +81,8 @@ class DetectorConfig(G3Model):
     distance_jump_limit_px: float = 18.0
     distance_jump_hold_frames: int = 2
     distance_jump_policy: Literal["hold_previous", "mark_invalid"] = "hold_previous"
+    temporal_stabilization_enabled: bool = False
+    temporal_stabilization_strength: Literal["weak", "medium", "strong"] = "medium"
     contour_box_mode: Literal["component_bbox", "robust_component_bbox", "measurement_band"] = "component_bbox"
     contour_box_padding_px: float = 8.0
     contour_box_quantile: float = 0.0
@@ -163,10 +167,18 @@ class DetectorConfig(G3Model):
         "endpoint_jump_confirm_frames",
         "suspicious_outlier_reject_count",
         "max_frames_per_run",
+        "contour_smooth_window",
     )
     @classmethod
     def _positive_int(cls, value: int, info) -> int:  # noqa: ANN001
         if value <= 0:
+            raise ValueError(f"{info.field_name} must be > 0")
+        return value
+
+    @field_validator("contour_close_kernel")
+    @classmethod
+    def _positive_optional_int(cls, value: int | None, info) -> int | None:  # noqa: ANN001
+        if value is not None and value <= 0:
             raise ValueError(f"{info.field_name} must be > 0")
         return value
 
@@ -265,8 +277,14 @@ class DetectionResult(G3Model):
     detection_status: DetectionStatus
     ab_points: ABPoints | None = None
     distance_px: float | None = None
+    raw_ab_points: ABPoints | None = None
+    raw_distance_px: float | None = None
+    stabilized_ab_points: ABPoints | None = None
+    stabilized_distance_px: float | None = None
+    result_display_source: Literal["raw", "stabilized"] = "raw"
     raw_best_candidate: DetectionCandidate | None = None
     selected_candidate: DetectionCandidate | None = None
+    stabilized_candidate: DetectionCandidate | None = None
     rejected_candidates: list[DetectionCandidate] = Field(default_factory=list)
     quality: DetectionQuality = Field(default_factory=DetectionQuality)
     rejected_reason: str = ""
@@ -284,6 +302,10 @@ class DetectionResult(G3Model):
         if self.detection_status == DetectionStatus.VALID:
             if self.ab_points is None or self.distance_px is None or self.selected_candidate is None:
                 raise ValueError("VALID detection requires ab_points, distance_px, and selected_candidate")
+            if self.raw_ab_points is None:
+                self.raw_ab_points = self.ab_points
+            if self.raw_distance_px is None:
+                self.raw_distance_px = self.distance_px
         elif self.ab_points is not None or self.distance_px is not None:
             raise ValueError("INVALID detection must not carry formal ab_points or distance_px")
         return self
@@ -324,8 +346,12 @@ class AnalysisResult(G3Model):
     run_id: str
     all_frames: list[DetectionResult] = Field(default_factory=list)
     distance_time: list[CurvePoint] = Field(default_factory=list)
+    raw_distance_time: list[CurvePoint] = Field(default_factory=list)
+    stabilized_distance_time: list[CurvePoint] = Field(default_factory=list)
     temperature_time: list[CurvePoint] = Field(default_factory=list)
     temperature_distance: list[CurvePoint] = Field(default_factory=list)
+    raw_temperature_distance: list[CurvePoint] = Field(default_factory=list)
+    stabilized_temperature_distance: list[CurvePoint] = Field(default_factory=list)
     afas_preprocessing: dict[str, Any] = Field(default_factory=dict)
     afas_analysis: dict[str, Any] = Field(default_factory=dict)
     export_artifacts: list[ExportArtifact] = Field(default_factory=list)

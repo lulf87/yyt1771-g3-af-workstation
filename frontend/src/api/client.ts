@@ -59,6 +59,8 @@ export type DetectorConfig = {
   envelope_step_px?: number;
   min_window_pixels?: number;
   window_width_keep_ratio?: number;
+  contour_close_kernel?: number;
+  contour_smooth_window?: number;
   mask_open_kernel_px?: number;
   mask_close_kernel_px?: number;
   mask_dilate_kernel_px?: number;
@@ -74,6 +76,8 @@ export type DetectorConfig = {
   distance_jump_limit_px?: number;
   distance_jump_hold_frames?: number;
   distance_jump_policy?: "hold_previous" | "mark_invalid";
+  temporal_stabilization_enabled?: boolean;
+  temporal_stabilization_strength?: "weak" | "medium" | "strong";
   contour_box_mode?: "component_bbox" | "robust_component_bbox" | "measurement_band";
   contour_box_padding_px?: number;
   contour_box_quantile?: number;
@@ -158,8 +162,14 @@ export type DetectionResult = {
   detection_status: string;
   ab_points: { a: ABPoint; b: ABPoint } | null;
   distance_px: number | null;
+  raw_ab_points: { a: ABPoint; b: ABPoint } | null;
+  raw_distance_px: number | null;
+  stabilized_ab_points: { a: ABPoint; b: ABPoint } | null;
+  stabilized_distance_px: number | null;
+  result_display_source: "raw" | "stabilized";
   raw_best_candidate: DetectionCandidate | null;
   selected_candidate: DetectionCandidate | null;
+  stabilized_candidate: DetectionCandidate | null;
   rejected_candidates: DetectionCandidate[];
   quality: {
     confidence: number;
@@ -258,8 +268,12 @@ export type AnalysisResult = {
   run_id: string;
   all_frames: DetectionResult[];
   distance_time: CurvePoint[];
+  raw_distance_time: CurvePoint[];
+  stabilized_distance_time: CurvePoint[];
   temperature_time: CurvePoint[];
   temperature_distance: CurvePoint[];
+  raw_temperature_distance: CurvePoint[];
+  stabilized_temperature_distance: CurvePoint[];
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;
   export_artifacts: ExportArtifact[];
@@ -309,6 +323,10 @@ export type LiveOfflineFrameEvent = {
     distance_time: CurvePoint | null;
     temperature_time: CurvePoint | null;
     temperature_distance: CurvePoint | null;
+    raw_distance_time?: CurvePoint | null;
+    raw_temperature_distance?: CurvePoint | null;
+    stabilized_distance_time?: CurvePoint | null;
+    stabilized_temperature_distance?: CurvePoint | null;
   };
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;

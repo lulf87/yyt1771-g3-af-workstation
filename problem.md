@@ -6454,6 +6454,104 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
+### P-0061 — 检测参数 UI 简化与 raw/stabilized 时序稳定双轨
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend`, `backend/core/models`, `backend/vision`, `backend/services/run`, `analysis`, `export`
+- Found date: 2026-06-09
+- Last update: 2026-06-09
+- Owner/tool: Codex
+
+#### Problem
+
+检测参数 UI 将性能、诊断、气泡抑制、暗线、spur、boundary support、row/envelope 等大量高级参数直接暴露在默认界面，普通 AF/As Run 调参路径过重。用户要求普通模式除样品/物体类型外，仅保留空间补断裂、轮廓平滑、时序一致性过滤三类核心调参，同时不要删除底层高级能力。
+
+时序一致性过滤还需要接入 `stabilize_contour_sequence.py` 的邻帧 mask 支持思想，并保证 raw detector 结果不被覆盖：Analysis/Export 需要同时保留 raw 与 stabilized 结果，UI 默认显示 stabilized 且可切换 raw 复核。
+
+#### Expected
+
+- 普通检测参数 UI 只显示 `contour_close_kernel`、`contour_smooth_window`、`temporal_stabilization_enabled`、`temporal_stabilization_strength`。
+- `processing_scale`、Run detector/diagnostics、enhanced policy、bubble suppression、dark line、spur pruning、boundary support、robust width percentile、envelope quantile、min window pixels、row keep ratios 等进入 Advanced。
+- 新增 Fast AF/As Run、Balanced AF/As Run、Diagnostics / Tuning presets。
+- Run 保留 raw/stabilized 双轨；离线批处理可用 centered temporal filter，流式/真实 Run 使用 causal filter 并记录 filter mode/delay。
+- Analysis/Export 同时保存 raw 与 stabilized distance 曲线和每帧距离。
+
+#### Actual
+
+代码层修复已完成，并通过真实浏览器复测：
+
+- 默认 Setup 参数面板仅显示对象类型、三组 presets、`contour_close_kernel`、`contour_smooth_window`、`temporal_stabilization_enabled`、`temporal_stabilization_strength`。
+- Advanced 展开后可见 processing scale、Run detector/diagnostics、enhanced policy、bubble、dark line、spur、boundary support、robust width、envelope、min window、row keep ratio 等高级参数。
+- 浏览器上下文 10 帧 A 数据集 Run 生成 centered temporal 结果：10/10 帧有 `raw_distance_px`，10/10 帧有 `stabilized_distance_px`，10/10 帧写入 raw/stabilized mask artifact path，diagnostics 仍为 0。
+- Export CSV 包含 `distance_px`、`raw_distance_px`、`stabilized_distance_px`、`result_display_source`。
+- UI Run 页面显示 raw/stabilized 切换，默认 Stabilized，可切 Raw。
+
+#### Fix summary
+
+- 新增 `DetectorConfig.contour_close_kernel`、`contour_smooth_window`、`temporal_stabilization_enabled`、`temporal_stabilization_strength`。
+- 新增 `DetectionResult.raw_*` / `stabilized_*` 字段和 `AnalysisResult.raw_*` / `stabilized_*` 曲线字段。
+- 新增 `vision/temporal_stabilization.py`，移植邻帧 mask support、小连通域 overlap 过滤、空间 close 后重提 A/C candidate 的核心逻辑。
+- Live offline batch Run 使用 centered filter；streaming live offline 和 real camera Run 使用 causal filter。
+- Export CSV 新增 `raw_distance_px`、`stabilized_distance_px`、`result_display_source`。
+- 前端默认 Detector Setup 只显示核心参数和 presets；Detector/Width mode 与复杂参数收进 Advanced。
+- Run/Analysis 增加 raw/stabilized 显示切换，默认 stabilized。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_core_models.py backend/tests/unit/test_temporal_stabilization.py backend/tests/unit/test_analysis_service.py backend/tests/integration/test_export_service.py -q
+npm test -- --run
+npm run build
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-09
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5178/`
+- Backend URL: `http://127.0.0.1:8033/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / browser-context Live Offline Run API / Export API
+- Steps:
+  1. Restart backend on 8033 and frontend on 5178 with `VITE_G3_API_BASE=http://127.0.0.1:8033`.
+  2. Open Setup and inspect visible detector parameter fields.
+  3. Expand Advanced and inspect hidden advanced detector fields.
+  4. Click Balanced AF/As Run preset and verify Run diagnostics/off, Run detector/fast, enhanced policy/rerun_worthy_only.
+  5. From browser page context, call `POST /api/live-offline-runs` for A dataset, 10 frames, temporal stabilization enabled, diagnostics off.
+  6. Call `POST /api/runs/{run_id}/exports` and inspect CSV header.
+  7. Start/stop a UI Live Offline Run and toggle Run Trend from Stabilized to Raw.
+- Expected:
+  - Default UI shows only core detector controls plus object type/presets.
+  - Advanced retains complex detector parameters.
+  - Presets apply expected hidden config values.
+  - Temporal Run preserves raw and stabilized distances/masks.
+  - Export saves raw/stabilized distance columns.
+  - UI defaults to Stabilized and allows Raw review.
+- Actual:
+  - Visible fields: `Object class`, `contour_close_kernel`, `contour_smooth_window`, `temporal_stabilization_enabled`, `temporal_stabilization_strength` plus ROI/temperature controls; complex detector fields were only in Advanced.
+  - Balanced preset produced `run_detector_mode=fast`, `run_diagnostics_mode=off`, `run_enhanced_detector_on_suspicious=true`, `run_enhanced_detector_policy=rerun_worthy_only`, `show_advanced_diagnostics=false`.
+  - Browser API Run `run-golden_a_20260522_dev_lab-20260609T021024449611Z`: 10 frames, `temporal_filter_mode=centered`, `result_display_source=stabilized`, raw/stabilized distance count 10/10, raw/stabilized mask path count 10/10, `diagnostics_generated=0`, `diagnostic_images=0`.
+  - Analysis counts: default temperature-distance 9, raw temperature-distance 9, stabilized temperature-distance 9.
+  - CSV header: `frame_index,detection_status,distance_px,raw_distance_px,stabilized_distance_px,result_display_source,...`.
+  - UI Run/Stop generated `run-golden_a_20260522_dev_lab-20260609T021213392543Z`; Run Trend showed Stabilized/Raw toggle and Raw became active after click.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0061_detector_ui_simplified.png`
+  - `output/playwright/p0061_run_raw_stabilized_toggle.png`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260609T021024449611Z/exports/frame_results.csv`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260609T021024449611Z/temporal_masks/frame_000001.raw_mask.png`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260609T021024449611Z/temporal_masks/frame_000001.stabilized_mask.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。

@@ -49,6 +49,16 @@ def test_measurement_definition_json_round_trip() -> None:
     assert MeasurementDefinition.model_validate(payload) == measurement
 
 
+def test_detector_config_exposes_basic_contour_and_temporal_controls() -> None:
+    config = DetectorConfig()
+
+    assert config.contour_close_kernel == 21
+    assert config.contour_close_kernel_px == 21
+    assert config.contour_smooth_window == 7
+    assert config.temporal_stabilization_enabled is False
+    assert config.temporal_stabilization_strength == "medium"
+
+
 def test_rotated_roi_rejects_non_positive_size() -> None:
     with pytest.raises(ValueError, match="width"):
         RotatedROI(center_x=10.0, center_y=10.0, width=0.0, height=5.0, angle_deg=0.0)

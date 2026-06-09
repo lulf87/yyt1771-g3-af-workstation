@@ -32,6 +32,7 @@ from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.sync import SyncedTemperature, sync_temperature_for_frame
 from yyt1771_g3.vision.detectors import detect_frame_with_state
 from yyt1771_g3.vision.stability import CandidateSelectionState
+from yyt1771_g3.vision.temporal_stabilization import CausalTemporalStabilizer, stabilize_detection_sequence
 
 
 AFAS_PREVIEW_INTERVAL_FRAMES = 10
@@ -90,6 +91,12 @@ def run_live_offline_dataset(
         if _target_temperature_reached(measurement, detection):
             stop_reason = "target_temperature_reached"
             break
+    detection_results = stabilize_detection_sequence(
+        detection_results,
+        measurement,
+        filter_mode="centered",
+        artifact_dir=run_store.run_dir(run_id) / "temporal_masks",
+    )
 
     return _save_run_result(
         run_store,
@@ -130,6 +137,10 @@ def iter_live_offline_run_events(
     temperature_distance_points: list[CurvePoint] = []
     saved_result: LiveOfflineRunResult | None = None
     stop_reason = "complete"
+    temporal_stabilizer = CausalTemporalStabilizer(
+        measurement,
+        artifact_dir=run_store.run_dir(run_id) / "temporal_masks",
+    )
 
     try:
         for processed, frame_index in enumerate(range(window.start_frame, window.end_frame + 1), start=1):
@@ -143,10 +154,11 @@ def iter_live_offline_run_events(
                 state,
                 policy_state,
             )
+            detection = temporal_stabilizer.apply(detection)
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
             detection_results.append(detection)
-            curve_points = curve_points_for_detection(detection)
+            curve_points = _curve_points_for_run_event(detection)
             if curve_points["temperature_distance"] is not None:
                 temperature_distance_points.append(curve_points["temperature_distance"])
             yield _frame_event(
@@ -233,6 +245,9 @@ def _save_run_result(
             "target_temperature_celsius": measurement.detector_config.target_temperature_celsius,
             "temperature_power_percent": measurement.detector_config.temperature_power_percent,
             "target_fps": target_fps or measurement.detector_config.live_offline_fps,
+            "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
+            "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
+            "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
         },
         software={"package": "yyt1771_g3", "phase": "G3-M7"},
     )
@@ -286,23 +301,25 @@ def _process_frame(
     frame_timestamp_ms = _int_or_none(frame_meta.get("timestamp_ms"))
     synced = sync_temperature_for_frame(frame_index, frame_timestamp_ms, temperature_rows)
     run_measurement = measurement_for_detector_mode(measurement, measurement.detector_config.run_detector_mode)
-    detection, next_state = detect_frame_with_state(
+    detection, next_state = _detect_frame_for_run(
         frame.array,
         run_measurement,
         frame_index=frame_index,
         stability_state=state,
         generate_diagnostics=initial_run_diagnostics_enabled(measurement),
+        collect_temporal_artifacts=measurement.detector_config.temporal_stabilization_enabled,
     )
     suspicion = analyze_detection_suspicion(detection, measurement, policy_state)
     policy_state = suspicion.next_state
     if should_rerun_with_enhanced(detection, measurement, analysis=suspicion.analysis):
         enhanced_measurement = measurement_for_detector_mode(measurement, "enhanced")
-        detection, next_state = detect_frame_with_state(
+        detection, next_state = _detect_frame_for_run(
             frame.array,
             enhanced_measurement,
             frame_index=frame_index,
             stability_state=state,
             generate_diagnostics=enhanced_rerun_diagnostics_enabled(measurement),
+            collect_temporal_artifacts=measurement.detector_config.temporal_stabilization_enabled,
         )
         detection = annotate_run_detection(
             detection,
@@ -368,6 +385,19 @@ def _frame_event(
         },
         "afas_preprocessing": afas_preprocessing,
         "afas_analysis": {"result_status": "pending"},
+    }
+
+
+def _curve_points_for_run_event(detection: DetectionResult) -> dict[str, CurvePoint | None]:
+    display_points = curve_points_for_detection(detection)
+    raw_points = curve_points_for_detection(detection, distance_source="raw")
+    stabilized_points = curve_points_for_detection(detection, distance_source="stabilized")
+    return {
+        **display_points,
+        "raw_distance_time": raw_points["distance_time"],
+        "raw_temperature_distance": raw_points["temperature_distance"],
+        "stabilized_distance_time": stabilized_points["distance_time"],
+        "stabilized_temperature_distance": stabilized_points["temperature_distance"],
     }
 
 
@@ -453,3 +483,30 @@ def _new_run_id(dataset_id: str) -> str:
     safe_dataset = re.sub(r"[^A-Za-z0-9_.-]+", "-", dataset_id).strip("-")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     return f"run-{safe_dataset}-{stamp}"
+
+
+def _run_temporal_filter_mode(detection_results: list[DetectionResult]) -> str:
+    for result in detection_results:
+        mode = result.debug_artifacts.get("temporal_filter_mode")
+        if isinstance(mode, str):
+            return mode
+    return "disabled"
+
+
+def _detect_frame_for_run(
+    frame,  # noqa: ANN001
+    measurement: MeasurementDefinition,
+    *,
+    frame_index: int,
+    stability_state: CandidateSelectionState,
+    generate_diagnostics: bool,
+    collect_temporal_artifacts: bool,
+):
+    kwargs: dict[str, Any] = {
+        "frame_index": frame_index,
+        "stability_state": stability_state,
+        "generate_diagnostics": generate_diagnostics,
+    }
+    if collect_temporal_artifacts:
+        kwargs["collect_temporal_artifacts"] = True
+    return detect_frame_with_state(frame, measurement, **kwargs)

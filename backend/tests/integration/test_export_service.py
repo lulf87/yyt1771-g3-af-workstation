@@ -77,7 +77,7 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
 
     run_dir = run_store.run_dir(manifest.run_id)
     csv_text = (run_dir / "exports" / "frame_results.csv").read_text(encoding="utf-8")
-    assert "frame_index,detection_status,distance_px" in csv_text
+    assert "frame_index,detection_status,distance_px,raw_distance_px,stabilized_distance_px,result_display_source" in csv_text
     assert len(csv_text.strip().splitlines()) == 3
 
     payload = json.loads((run_dir / "exports" / "run_export.json").read_text(encoding="utf-8"))

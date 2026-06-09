@@ -55,6 +55,7 @@ def detect_frame(
     generate_diagnostics: bool = True,
     detector_execution_mode: str | None = None,
     show_advanced_diagnostics: bool | None = None,
+    collect_temporal_artifacts: bool = False,
 ) -> DetectionResult:
     result, _ = detect_frame_with_state(
         frame,
@@ -64,6 +65,7 @@ def detect_frame(
         generate_diagnostics=generate_diagnostics,
         detector_execution_mode=detector_execution_mode,
         show_advanced_diagnostics=show_advanced_diagnostics,
+        collect_temporal_artifacts=collect_temporal_artifacts,
     )
     return result
 
@@ -77,6 +79,7 @@ def detect_frame_with_state(
     generate_diagnostics: bool = True,
     detector_execution_mode: str | None = None,
     show_advanced_diagnostics: bool | None = None,
+    collect_temporal_artifacts: bool = False,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     measurement = _measurement_with_call_config(
         measurement,
@@ -96,6 +99,7 @@ def detect_frame_with_state(
             detector_name=str(detector.value),
             stability_state=state,
             generate_diagnostics=generate_diagnostics,
+            collect_temporal_artifacts=collect_temporal_artifacts,
         )
     if detector == DetectorType.BUNDLE_ENVELOPE:
         return _detect_wire_bundle_max_width(
@@ -106,6 +110,7 @@ def detect_frame_with_state(
             detector_name=str(detector.value),
             stability_state=state,
             generate_diagnostics=generate_diagnostics,
+            collect_temporal_artifacts=collect_temporal_artifacts,
         )
     return _invalid(frame_index, "UNKNOWN_DETECTOR"), state
 
@@ -139,6 +144,7 @@ def _detect_mesh_envelope_max_width(
     detector_name: str,
     stability_state: CandidateSelectionState,
     generate_diagnostics: bool,
+    collect_temporal_artifacts: bool,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     detector_start = time.perf_counter()
     execution_mode = _detector_execution_mode(config)
@@ -299,6 +305,7 @@ def _detect_mesh_envelope_max_width(
         },
         diagnostic_masks=diagnostic_extra_masks,
         generate_diagnostics=diagnostic_images_enabled,
+        collect_temporal_artifacts=collect_temporal_artifacts,
     )
     total_runtime_ms = _elapsed_ms(detector_start)
     result.debug_artifacts["detector_runtime_ms"] = total_runtime_ms
@@ -315,6 +322,7 @@ def _detect_wire_bundle_max_width(
     detector_name: str,
     stability_state: CandidateSelectionState,
     generate_diagnostics: bool,
+    collect_temporal_artifacts: bool,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     detector_start = time.perf_counter()
     execution_mode = _detector_execution_mode(config)
@@ -385,6 +393,7 @@ def _detect_wire_bundle_max_width(
             "diagnostics_coordinate_space": "roi_local_full_res",
         },
         generate_diagnostics=diagnostic_images_enabled,
+        collect_temporal_artifacts=collect_temporal_artifacts,
     )
     total_runtime_ms = _elapsed_ms(detector_start)
     result.debug_artifacts["detector_runtime_ms"] = total_runtime_ms
@@ -406,6 +415,7 @@ def _finish_candidate_detection(
     extra_debug: dict[str, Any] | None = None,
     diagnostic_masks: dict[str, dict[str, Any]] | None = None,
     generate_diagnostics: bool = True,
+    collect_temporal_artifacts: bool = False,
 ) -> tuple[DetectionResult, CandidateSelectionState]:
     processed_target_pixels = int(np.count_nonzero(target))
     coverage = float(processed_target_pixels) / float(target.size)
@@ -493,6 +503,23 @@ def _finish_candidate_detection(
     debug_artifacts.update(selected.metadata.get("debug_artifacts", {}))
     if extra_debug:
         debug_artifacts.update(extra_debug)
+    if collect_temporal_artifacts:
+        raw_mask = np.asarray(image_target, dtype=bool)
+        raw_contour = _outer_envelope_contour(raw_mask, config)
+        debug_artifacts.update(
+            {
+                "_raw_mask_array": raw_mask,
+                "_raw_contour_array": raw_contour,
+                "raw_mask_shape": [int(raw_mask.shape[0]), int(raw_mask.shape[1])],
+                "raw_mask_pixel_count": int(np.count_nonzero(raw_mask)),
+                "raw_contour_pixel_count": int(np.count_nonzero(raw_contour)),
+                "raw_distance_px": float(selected.width_px),
+                "raw_ab_points": {
+                    "a": selected.a.model_dump(mode="json"),
+                    "b": selected.b.model_dump(mode="json"),
+                },
+            }
+        )
     if diagnostic_images is not None:
         debug_artifacts["diagnostic_images"] = diagnostic_images
 
@@ -663,7 +690,9 @@ def _scaled_detector_config(config: DetectorConfig, scale: float) -> DetectorCon
         "wire_min_component_area_px": _scale_area(config.wire_min_component_area_px, scale),
         "wire_min_length_px": _scale_float_length(config.wire_min_length_px, scale),
         "wire_box_padding_px": _scale_float_length(config.wire_box_padding_px, scale),
+        "contour_close_kernel": _scale_kernel(_contour_close_kernel_px(config), scale),
         "contour_close_kernel_px": _scale_kernel(config.contour_close_kernel_px, scale),
+        "contour_smooth_window": _scale_kernel(config.contour_smooth_window, scale),
         "contour_box_padding_px": _scale_float_length(config.contour_box_padding_px, scale),
         "roi_edge_guard_px": _scale_float_length(config.roi_edge_guard_px, scale),
         "detection_roi_padding_px": _scale_float_length(config.detection_roi_padding_px, scale),
@@ -2255,12 +2284,29 @@ def _diagnostic_images(
 def _outer_envelope_contour(mask: np.ndarray, config: DetectorConfig) -> np.ndarray:
     if mask.size == 0 or not np.any(mask):
         return np.zeros_like(mask, dtype=bool)
-    closed = ndimage.binary_closing(mask, structure=_kernel(config.contour_close_kernel_px))
+    closed = ndimage.binary_closing(mask, structure=_kernel(_contour_close_kernel_px(config)))
     filled = ndimage.binary_fill_holes(closed)
     main = _main_component(filled, min_area=1)
     envelope = np.asarray(main if main is not None else filled, dtype=bool)
+    envelope = _smooth_envelope_mask(envelope, config)
     eroded = ndimage.binary_erosion(envelope, structure=np.ones((3, 3), dtype=bool), border_value=0)
     return envelope & ~eroded
+
+
+def _contour_close_kernel_px(config: DetectorConfig) -> int:
+    value = config.contour_close_kernel if config.contour_close_kernel is not None else config.contour_close_kernel_px
+    return max(1, int(value))
+
+
+def _smooth_envelope_mask(mask: np.ndarray, config: DetectorConfig) -> np.ndarray:
+    window = max(1, int(config.contour_smooth_window))
+    if window <= 1 or mask.size == 0:
+        return mask
+    sigma = max(0.5, float(window) / 6.0)
+    smoothed = ndimage.gaussian_filter(mask.astype(float), sigma=sigma) >= 0.5
+    filled = ndimage.binary_fill_holes(smoothed)
+    main = _main_component(filled, min_area=1)
+    return np.asarray(main if main is not None else filled, dtype=bool)
 
 
 def _binary_mask_png_data_url(mask: np.ndarray) -> str:

@@ -137,6 +137,8 @@ type LiveRunState = {
   analysis: AnalysisResult;
 };
 
+type DetectionResultSource = "stabilized" | "raw";
+
 type CameraPreviewError = {
   camera_status: string;
   message: string;
@@ -157,6 +159,8 @@ const DEFAULT_CONFIG = {
   envelope_step_px: 2,
   min_window_pixels: 8,
   window_width_keep_ratio: 0.2,
+  contour_close_kernel: 21,
+  contour_smooth_window: 7,
   mask_open_kernel_px: 3,
   mask_close_kernel_px: 11,
   mask_dilate_kernel_px: 1,
@@ -172,6 +176,8 @@ const DEFAULT_CONFIG = {
   distance_jump_limit_px: 18,
   distance_jump_hold_frames: 2,
   distance_jump_policy: "hold_previous" as const,
+  temporal_stabilization_enabled: false,
+  temporal_stabilization_strength: "medium" as const,
   contour_box_mode: "component_bbox" as const,
   contour_box_padding_px: 8,
   contour_box_quantile: 0,
@@ -259,8 +265,57 @@ const DETECTOR_OPTIONS = [
   { value: "ReservedObjectDetector", label: "ReservedObjectDetector" }
 ];
 
+const DETECTOR_PRESETS = [
+  {
+    id: "fast_afas_run",
+    label: "Fast AF/As Run",
+    patch: {
+      processing_scale_enabled: true,
+      processing_scale: 0.5,
+      run_detector_mode: "fast" as const,
+      run_diagnostics_mode: "off" as const,
+      run_enhanced_detector_on_suspicious: false,
+      show_advanced_diagnostics: false
+    }
+  },
+  {
+    id: "balanced_afas_run",
+    label: "Balanced AF/As Run",
+    patch: {
+      processing_scale_enabled: true,
+      processing_scale: 0.5,
+      run_detector_mode: "fast" as const,
+      run_diagnostics_mode: "off" as const,
+      run_enhanced_detector_on_suspicious: true,
+      run_enhanced_detector_policy: "rerun_worthy_only" as const,
+      show_advanced_diagnostics: false
+    }
+  },
+  {
+    id: "diagnostics_tuning",
+    label: "Diagnostics / Tuning",
+    patch: {
+      detector_execution_mode: "diagnostics" as const,
+      run_detector_mode: "diagnostics" as const,
+      run_diagnostics_mode: "every_frame" as const,
+      run_enhanced_detector_on_suspicious: true,
+      run_enhanced_detector_policy: "all_suspicious" as const,
+      show_advanced_diagnostics: true
+    }
+  }
+] satisfies Array<{ id: string; label: string; patch: Partial<DetectorConfig> }>;
+
+const BASIC_DETECTOR_PARAMETER_KEYS = new Set<keyof DetectorConfig>([
+  "contour_close_kernel",
+  "contour_smooth_window",
+  "temporal_stabilization_enabled",
+  "temporal_stabilization_strength"
+]);
+
 type DetectorConfig = MeasurementDefinition["detector_config"];
 type DetectorParameterGroup =
+  | "Spatial contour repair"
+  | "Contour smoothing"
   | "Image processing / Scale"
   | "Mask"
   | "Threshold"
@@ -289,6 +344,14 @@ type DetectorParameterDef = {
 };
 
 const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
+  { key: "contour_close_kernel", label: "contour_close_kernel", type: "int", min: 1, max: 101, step: 2, group: "Spatial contour repair", title: "Connects broken contour regions within one frame; larger values also increase artifact adhesion risk." },
+  { key: "contour_smooth_window", label: "contour_smooth_window", type: "int", min: 1, max: 51, step: 2, group: "Contour smoothing", title: "Smooths single-frame contour points to reduce jagged edges; it does not decide temporal noise." },
+  { key: "temporal_stabilization_enabled", label: "temporal_stabilization_enabled", type: "bool", group: "Temporal stability", title: "Uses neighboring-frame mask support to remove contours that appear in too few frames before extracting the displayed contour." },
+  { key: "temporal_stabilization_strength", label: "temporal_stabilization_strength", type: "select", group: "Temporal stability", options: [
+    { value: "weak", label: "Weak" },
+    { value: "medium", label: "Medium" },
+    { value: "strong", label: "Strong" }
+  ], title: "Controls temporal support radius and overlap threshold." },
   { key: "processing_scale_enabled", label: "Processing scale", type: "bool", group: "Image processing / Scale", title: "Runs detector masking and envelope selection on a downsampled ROI while preserving source-pixel outputs." },
   { key: "processing_scale", label: "Processing scale factor", type: "float", min: 0.25, max: 1, step: 0.05, group: "Image processing / Scale", title: "ROI-local processing scale; A/B and distance are restored to source pixels." },
   { key: "processing_scale_mode", label: "Scale mode", type: "select", group: "Image processing / Scale", options: [
@@ -1516,6 +1579,17 @@ function DetectorSetupControls({
     });
   }
 
+  function applyDetectorPreset(patch: Partial<DetectorConfig>) {
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        ...patch
+      }
+    });
+    onPreviewAffectingChange?.({ kind: "detector_config", key: "preset" });
+  }
+
   function commitDetectorConfig(key: string) {
     onPreviewAffectingChange?.({ kind: "detector_config", key });
   }
@@ -1545,43 +1619,50 @@ function DetectorSetupControls({
           ))}
         </select>
       </label>
-      <label className="field">
-        <span>Detector</span>
-        <select
-          onChange={(event) => patchMeasurement({ detector: event.target.value }, { kind: "detector" })}
-          value={measurement.detector}
-        >
-          {DETECTOR_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span>Width mode</span>
-        <select
-          onChange={(event) =>
-            patchMeasurement({ width_mode: event.target.value as MeasurementDefinition["width_mode"] }, { kind: "width_mode" })
-          }
-          value={measurement.width_mode}
-        >
-          <option value="max_width">max_width</option>
-          <option disabled={measurement.object_class !== "D_RESERVED_OBJECT"} value="min_width">
-            min_width
-          </option>
-        </select>
-      </label>
+      <div className="detectorPresetGroup">
+        {DETECTOR_PRESETS.map((preset) => (
+          <button className="secondaryButton compactButton" key={preset.id} onClick={() => applyDetectorPreset(preset.patch)} type="button">
+            {preset.label}
+          </button>
+        ))}
+      </div>
       <DetectorParameterGroups
-        definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => !definition.advanced)}
+        definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => BASIC_DETECTOR_PARAMETER_KEYS.has(definition.key))}
         detectorConfig={measurement.detector_config}
         onChange={patchDetectorConfig}
         onCommit={commitDetectorConfig}
       />
       <details className="advancedDetectorParameters">
         <summary>Advanced</summary>
+        <label className="field">
+          <span>Detector</span>
+          <select
+            onChange={(event) => patchMeasurement({ detector: event.target.value }, { kind: "detector" })}
+            value={measurement.detector}
+          >
+            {DETECTOR_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Width mode</span>
+          <select
+            onChange={(event) =>
+              patchMeasurement({ width_mode: event.target.value as MeasurementDefinition["width_mode"] }, { kind: "width_mode" })
+            }
+            value={measurement.width_mode}
+          >
+            <option value="max_width">max_width</option>
+            <option disabled={measurement.object_class !== "D_RESERVED_OBJECT"} value="min_width">
+              min_width
+            </option>
+          </select>
+        </label>
         <DetectorParameterGroups
-          definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => definition.advanced)}
+          definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => !BASIC_DETECTOR_PARAMETER_KEYS.has(definition.key))}
           detectorConfig={measurement.detector_config}
           onChange={patchDetectorConfig}
           onCommit={commitDetectorConfig}
@@ -2516,6 +2597,7 @@ function RunPage({
   onStopRun: () => void;
   onStartRealCameraRun: () => void;
 }) {
+  const [resultSource, setResultSource] = useState<DetectionResultSource>("stabilized");
   const displayedLiveRun = setupSource === "offline_dataset" ? liveRun : null;
   const displayedRunResult =
     runResult && runResultMatchesSetupSource(setupSource, dataset.id, runResult.run_manifest.dataset_id)
@@ -2523,6 +2605,7 @@ function RunPage({
       : null;
   const manifest = displayedRunResult?.run_manifest ?? null;
   const analysis = displayedLiveRun?.analysis ?? displayedRunResult?.analysis_result ?? null;
+  const displayedAnalysis = analysis ? analysisForResultSource(analysis, resultSource) : null;
   const runMode = runModeForSetupSource(setupSource);
   const setupSummary = buildRunSetupSummary(setupSource, dataset.id, measurement);
   const latestRunMode = manifest?.dataset_id === "real_camera" ? "Real camera run" : "Live offline run";
@@ -2593,7 +2676,7 @@ function RunPage({
               }
             />
             <Metric label="Current frame" value={displayedLiveRun?.frameIndex.toLocaleString() ?? "None"} />
-            <Metric label="Distance" value={formatDistance(latestDetection)} />
+            <Metric label="Distance" value={formatDistance(latestDetection, resultSource)} />
             <Metric label="Temperature" value={formatTemperature(latestDetection)} />
             <Metric label="Sync" value={latestDetection?.temperature_sync_status ?? "None"} />
           </dl>
@@ -2628,8 +2711,9 @@ function RunPage({
               {displayedLiveRun?.status === "running" ? "Current run so far" : "Full run"}
             </div>
           </div>
+          <ResultSourceToggle source={resultSource} onSource={setResultSource} />
           <RunTrendChart
-            analysis={analysis}
+            analysis={displayedAnalysis ?? analysis}
             runId={displayedLiveRun?.runId ?? manifest?.run_id ?? null}
             isRunning={displayedLiveRun?.status === "running"}
             targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
@@ -2643,7 +2727,7 @@ function RunPage({
               imageUrl={latestFrameUrl}
               sourceShape={latestSourceShape}
               roi={measurement.roi}
-              abPoints={latestDetection.ab_points}
+              abPoints={abPointsForResultSource(latestDetection, resultSource)}
               debugArtifacts={latestDetection.debug_artifacts}
               readOnly
             />
@@ -2664,10 +2748,12 @@ function AnalysisPage({
   runResult: RunResponse | null;
   liveRun: LiveRunState | null;
 }) {
+  const [resultSource, setResultSource] = useState<DetectionResultSource>("stabilized");
   const baseAnalysis = runResult?.analysis_result ?? (liveRun?.status === "stopped" ? liveRun.analysis : null);
   const selectedRunId = runResult?.run_manifest.run_id ?? (liveRun?.status === "stopped" ? liveRun.runId : null);
   const [analysisOverride, setAnalysisOverride] = useState<AnalysisResult | null>(null);
   const analysis = analysisOverride ?? baseAnalysis;
+  const displayedAnalysis = analysis ? analysisForResultSource(analysis, resultSource) : null;
   const [artifacts, setArtifacts] = useState<ExportArtifact[]>(analysis?.export_artifacts ?? []);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -2700,8 +2786,8 @@ function AnalysisPage({
         <h2>Analysis / Export</h2>
         <dl className="metricGrid compact">
           <Metric label="Run" value={selectedRunId ?? "No run selected"} />
-          <Metric label="Latest probe" value={probe?.detection_result.distance_px ? `${probe.detection_result.distance_px.toFixed(2)} px` : "None"} />
-          <Metric label="Formal temp-distance points" value={analysis?.temperature_distance.length ?? 0} />
+          <Metric label="Latest probe" value={formatDistance(probe?.detection_result ?? null, resultSource)} />
+          <Metric label="Formal temp-distance points" value={displayedAnalysis?.temperature_distance.length ?? 0} />
           <Metric label="AFAS status" value={readAfasStatus(analysis)} />
         </dl>
         <button
@@ -2727,7 +2813,8 @@ function AnalysisPage({
       {analysis ? (
         <section className="toolPanel analysisMainPanel">
           <h2>{selectedRunId ? `Analysis · ${selectedRunId}` : "Analysis"}</h2>
-          <AnalysisAfasChart analysis={analysis} />
+          <ResultSourceToggle source={resultSource} onSource={setResultSource} />
+          <AnalysisAfasChart analysis={displayedAnalysis ?? analysis} />
           <details className="analysisParameterDisclosure">
             <summary>
               <Settings size={15} aria-hidden="true" />
@@ -2741,6 +2828,25 @@ function AnalysisPage({
           </details>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+function ResultSourceToggle({
+  source,
+  onSource
+}: {
+  source: DetectionResultSource;
+  onSource: (source: DetectionResultSource) => void;
+}) {
+  return (
+    <div className="segmented wide resultSourceToggle" aria-label="Detection result source">
+      <button className={source === "stabilized" ? "active" : ""} onClick={() => onSource("stabilized")} type="button">
+        Stabilized
+      </button>
+      <button className={source === "raw" ? "active" : ""} onClick={() => onSource("raw")} type="button">
+        Raw
+      </button>
     </div>
   );
 }
@@ -4093,8 +4199,12 @@ function emptyAnalysis(runId: string): AnalysisResult {
     run_id: runId,
     all_frames: [],
     distance_time: [],
+    raw_distance_time: [],
+    stabilized_distance_time: [],
     temperature_time: [],
     temperature_distance: [],
+    raw_temperature_distance: [],
+    stabilized_temperature_distance: [],
     afas_preprocessing: {},
     afas_analysis: {},
     export_artifacts: [],
@@ -4116,8 +4226,12 @@ function appendLiveAnalysis(
     analysis_id: `${runId}-live-preview`,
     all_frames: [...analysis.all_frames, detection],
     distance_time: appendCurvePoint(analysis.distance_time, curvePoints.distance_time),
+    raw_distance_time: appendCurvePoint(analysis.raw_distance_time ?? [], curvePoints.raw_distance_time ?? liveRawDistancePoint(detection)),
+    stabilized_distance_time: appendCurvePoint(analysis.stabilized_distance_time ?? [], curvePoints.stabilized_distance_time ?? liveStabilizedDistancePoint(detection)),
     temperature_time: appendCurvePoint(analysis.temperature_time, curvePoints.temperature_time),
     temperature_distance: appendCurvePoint(analysis.temperature_distance, curvePoints.temperature_distance),
+    raw_temperature_distance: appendCurvePoint(analysis.raw_temperature_distance ?? [], curvePoints.raw_temperature_distance ?? liveRawTemperatureDistancePoint(detection)),
+    stabilized_temperature_distance: appendCurvePoint(analysis.stabilized_temperature_distance ?? [], curvePoints.stabilized_temperature_distance ?? liveStabilizedTemperatureDistancePoint(detection)),
     afas_preprocessing: mergeLiveAfasPreprocessing(analysis.afas_preprocessing, afasPreprocessing),
     afas_analysis: afasAnalysis
   };
@@ -4125,6 +4239,91 @@ function appendLiveAnalysis(
 
 function appendCurvePoint(points: CurvePoint[], point: CurvePoint | null): CurvePoint[] {
   return point ? [...points, point] : points;
+}
+
+function analysisForResultSource(analysis: AnalysisResult, source: DetectionResultSource): AnalysisResult {
+  if (source === "raw") {
+    return {
+      ...analysis,
+      all_frames: framesForResultSource(analysis.all_frames, source),
+      distance_time: analysis.raw_distance_time?.length ? analysis.raw_distance_time : analysis.distance_time,
+      temperature_distance: analysis.raw_temperature_distance?.length
+        ? analysis.raw_temperature_distance
+        : analysis.temperature_distance
+    };
+  }
+  return {
+    ...analysis,
+    all_frames: framesForResultSource(analysis.all_frames, source),
+    distance_time: analysis.stabilized_distance_time?.length ? analysis.stabilized_distance_time : analysis.distance_time,
+    temperature_distance: analysis.stabilized_temperature_distance?.length
+      ? analysis.stabilized_temperature_distance
+      : analysis.temperature_distance
+  };
+}
+
+function framesForResultSource(frames: DetectionResult[], source: DetectionResultSource): DetectionResult[] {
+  return frames.map((frame) => ({
+    ...frame,
+    ab_points: abPointsForResultSource(frame, source),
+    distance_px: distanceForResultSource(frame, source)
+  }));
+}
+
+function abPointsForResultSource(
+  result: DetectionResult | null,
+  source: DetectionResultSource
+): { a: ABPoint; b: ABPoint } | null {
+  if (!result) return null;
+  if (source === "raw") return result.raw_ab_points ?? result.ab_points;
+  return result.stabilized_ab_points ?? result.ab_points;
+}
+
+function distanceForResultSource(result: DetectionResult | null, source: DetectionResultSource): number | null {
+  if (!result) return null;
+  if (source === "raw") return result.raw_distance_px ?? result.distance_px;
+  return result.stabilized_distance_px ?? result.distance_px;
+}
+
+function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
+  const distance = detection.raw_distance_px;
+  if (detection.detection_status !== "VALID" || distance == null) return null;
+  return {
+    x: detection.frame_timestamp_ms ?? detection.frame_index,
+    y: distance,
+    frame_index: detection.frame_index,
+    sync_status: detection.temperature_sync_status
+  };
+}
+
+function liveStabilizedDistancePoint(detection: DetectionResult): CurvePoint | null {
+  const distance = detection.stabilized_distance_px;
+  if (detection.detection_status !== "VALID" || distance == null) return null;
+  return {
+    x: detection.frame_timestamp_ms ?? detection.frame_index,
+    y: distance,
+    frame_index: detection.frame_index,
+    sync_status: detection.temperature_sync_status
+  };
+}
+
+function liveRawTemperatureDistancePoint(detection: DetectionResult): CurvePoint | null {
+  return liveTemperatureDistancePoint(detection, detection.raw_distance_px);
+}
+
+function liveStabilizedTemperatureDistancePoint(detection: DetectionResult): CurvePoint | null {
+  return liveTemperatureDistancePoint(detection, detection.stabilized_distance_px);
+}
+
+function liveTemperatureDistancePoint(detection: DetectionResult, distance: number | null): CurvePoint | null {
+  if (detection.detection_status !== "VALID" || distance == null || detection.temperature_celsius == null) return null;
+  if (!["TEMP_SYNC_OK", "TEMP_SYNC_INTERPOLATED"].includes(detection.temperature_sync_status)) return null;
+  return {
+    x: detection.temperature_celsius,
+    y: distance,
+    frame_index: detection.frame_index,
+    sync_status: detection.temperature_sync_status
+  };
 }
 
 function mergeLiveAfasPreprocessing(
@@ -4151,8 +4350,9 @@ function mergeLiveAfasPreprocessing(
   };
 }
 
-function formatDistance(result: DetectionResult | null): string {
-  return result?.distance_px == null ? "None" : `${result.distance_px.toFixed(2)} px`;
+function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized"): string {
+  const value = distanceForResultSource(result, source);
+  return value == null ? "None" : `${value.toFixed(2)} px`;
 }
 
 function formatTemperature(result: DetectionResult | null): string {

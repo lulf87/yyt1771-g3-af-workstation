@@ -33,6 +33,7 @@ from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureController, TemperatureReading
 from yyt1771_g3.vision.detectors import detect_frame_with_state
 from yyt1771_g3.vision.stability import CandidateSelectionState
+from yyt1771_g3.vision.temporal_stabilization import CausalTemporalStabilizer
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,10 @@ def run_real_camera(
     raw_dir.mkdir(parents=True, exist_ok=True)
     state = CandidateSelectionState()
     policy_state = RunDetectorPolicyState()
+    temporal_stabilizer = CausalTemporalStabilizer(
+        measurement,
+        artifact_dir=run_dir / "temporal_masks",
+    )
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -75,23 +80,25 @@ def run_real_camera(
             np.save(frame_path, frame.array, allow_pickle=False)
             run_measurement = measurement_for_detector_mode(measurement, measurement.detector_config.run_detector_mode)
             previous_state = state
-            detection, next_state = detect_frame_with_state(
+            detection, next_state = _detect_frame_for_run(
                 frame.array,
                 run_measurement,
                 frame_index=frame_index,
                 stability_state=previous_state,
                 generate_diagnostics=initial_run_diagnostics_enabled(measurement),
+                collect_temporal_artifacts=measurement.detector_config.temporal_stabilization_enabled,
             )
             suspicion = analyze_detection_suspicion(detection, measurement, policy_state)
             policy_state = suspicion.next_state
             if should_rerun_with_enhanced(detection, measurement, analysis=suspicion.analysis):
                 enhanced_measurement = measurement_for_detector_mode(measurement, "enhanced")
-                detection, next_state = detect_frame_with_state(
+                detection, next_state = _detect_frame_for_run(
                     frame.array,
                     enhanced_measurement,
                     frame_index=frame_index,
                     stability_state=previous_state,
                     generate_diagnostics=enhanced_rerun_diagnostics_enabled(measurement),
+                    collect_temporal_artifacts=measurement.detector_config.temporal_stabilization_enabled,
                 )
                 detection = annotate_run_detection(
                     detection,
@@ -109,6 +116,7 @@ def run_real_camera(
                 )
             state = next_state
             detection = _attach_temperature(detection, frame.timestamp_ms, temperature, temp_sync_target_ms)
+            detection = temporal_stabilizer.apply(detection)
             frame_records.append(
                 FrameRecord(
                     frame_index=frame_index,
@@ -144,6 +152,9 @@ def run_real_camera(
             "target_temperature_celsius": measurement.detector_config.target_temperature_celsius,
             "temperature_power_percent": measurement.detector_config.temperature_power_percent,
             "temp_sync_target_ms": temp_sync_target_ms,
+            "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
+            "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
+            "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
         },
         software={"package": "yyt1771_g3", "phase": "G3-M8"},
     )
@@ -277,3 +288,30 @@ def _temperature_delta_ms(frame_timestamp_ms: int | None, temperature_timestamp_
 def _new_run_id() -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     return f"run-real_camera-{re.sub(r'[^A-Za-z0-9_.-]+', '-', stamp)}"
+
+
+def _run_temporal_filter_mode(detection_results: list[DetectionResult]) -> str:
+    for result in detection_results:
+        mode = result.debug_artifacts.get("temporal_filter_mode")
+        if isinstance(mode, str):
+            return mode
+    return "disabled"
+
+
+def _detect_frame_for_run(
+    frame,  # noqa: ANN001
+    measurement: MeasurementDefinition,
+    *,
+    frame_index: int,
+    stability_state: CandidateSelectionState,
+    generate_diagnostics: bool,
+    collect_temporal_artifacts: bool,
+):
+    kwargs: dict[str, Any] = {
+        "frame_index": frame_index,
+        "stability_state": stability_state,
+        "generate_diagnostics": generate_diagnostics,
+    }
+    if collect_temporal_artifacts:
+        kwargs["collect_temporal_artifacts"] = True
+    return detect_frame_with_state(frame, measurement, **kwargs)
