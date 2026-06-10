@@ -31,12 +31,31 @@ input {
 .topBar {
   min-height: 68px;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto;
   gap: 16px;
   align-items: center;
   padding: 0 22px;
   border-bottom: 1px solid #cfd6dd;
   background: #fbfcfd;
+}
+
+.languageControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #455463;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.languageControl select {
+  min-height: 34px;
+  border: 1px solid #bcc7d1;
+  border-radius: 6px;
+  color: #243241;
+  background: #ffffff;
+  padding: 0 9px;
 }
 
 .brandBlock {
@@ -1850,12 +1869,23 @@ input {
 
 @media (max-width: 1050px) {
   .topBar {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
   }
 
   .tabs {
     grid-column: 1 / -1;
+    grid-row: 2;
     justify-self: start;
+  }
+
+  .languageControl {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .topBar > .iconButton {
+    grid-column: 3;
+    grid-row: 1;
   }
 
   .workspace,

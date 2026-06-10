@@ -138,7 +138,7 @@ class DetectorConfig(G3Model):
     suspicious_outlier_reject_count: int = 1
     max_frames_per_run: int = 160
     live_offline_fps: float = 8.0
-    setup_preview_fps: float = 1.0
+    setup_preview_fps: float = 0.0
     target_temperature_celsius: float | None = None
     temperature_power_percent: float = 100.0
     temperature_serial_port: str = ""
@@ -197,7 +197,7 @@ class DetectorConfig(G3Model):
     @field_validator("setup_preview_fps")
     @classmethod
     def _clamp_setup_preview_fps(cls, value: float) -> float:
-        return max(1.0, min(5.0, float(value)))
+        return max(0.0, float(value))
 
     @field_validator("temperature_serial_port")
     @classmethod

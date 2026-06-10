@@ -88,12 +88,13 @@ test("real camera measurement is derived from preview shape without changing det
   assert.equal(measurement.roi.angle_deg, -1.5);
 });
 
-test("preview refresh status labels distinguish auto refresh and unavailable hardware", async () => {
+test("real camera frame status labels do not expose preview semantics", async () => {
   const { previewRefreshStatusLabel } = await loadSetupSourcesModule();
 
-  assert.equal(previewRefreshStatusLabel("refreshing"), "Refreshing preview");
-  assert.equal(previewRefreshStatusLabel("ok"), "Preview refreshed");
+  assert.equal(previewRefreshStatusLabel("refreshing"), "Updating live frame");
+  assert.equal(previewRefreshStatusLabel("ok"), "Live frame updated");
   assert.equal(previewRefreshStatusLabel("unavailable"), "Camera unavailable");
+  assert.equal(previewRefreshStatusLabel("idle"), "No live frame yet");
 });
 
 test("run page mode is derived from setup source without a run preview action", async () => {
@@ -448,7 +449,7 @@ test("setup temperature summary exposes controller status without being preview-
   );
 });
 
-test("real camera setup preview fps is a low-frequency saved parameter", async () => {
+test("real camera setup live fps supports auto camera-paced mode and has no 5 Hz cap", async () => {
   const {
     createRealCameraMeasurementFromShape,
     normalizeSetupPreviewFps,
@@ -458,13 +459,16 @@ test("real camera setup preview fps is a low-frequency saved parameter", async (
 
   const measurement = createRealCameraMeasurementFromShape(null, [1364, 2048]);
 
-  assert.equal(measurement.detector_config.setup_preview_fps, 1);
-  assert.equal(normalizeSetupPreviewFps(null), 1);
-  assert.equal(normalizeSetupPreviewFps(0), 1);
+  assert.equal(measurement.detector_config.setup_preview_fps, 0);
+  assert.equal(normalizeSetupPreviewFps(null), 0);
+  assert.equal(normalizeSetupPreviewFps(0), 0);
   assert.equal(normalizeSetupPreviewFps(2.5), 2.5);
-  assert.equal(normalizeSetupPreviewFps(9), 5);
+  assert.equal(normalizeSetupPreviewFps(9), 9);
+  assert.equal(normalizeSetupPreviewFps(120), 120);
+  assert.equal(setupPreviewIntervalMs(0), 0);
   assert.equal(setupPreviewIntervalMs(1), 1000);
   assert.equal(setupPreviewIntervalMs(2.5), 400);
-  assert.equal(setupPreviewIntervalMs(5), 200);
-  assert.equal(setupPreviewFpsLabel(2.5), "2.5 fps UI preview");
+  assert.equal(setupPreviewIntervalMs(30), 33);
+  assert.equal(setupPreviewFpsLabel(0), "Auto (camera-paced)");
+  assert.equal(setupPreviewFpsLabel(2.5), "2.5 fps live display");
 });

@@ -7,6 +7,7 @@ import type {
 
 export type SetupSourceKind = "offline_dataset" | "real_camera";
 export type SetupPageKind = "setup" | "run" | "playback" | "analysis";
+type UiLanguage = "zh" | "en";
 
 export type SetupSourceOption = {
   kind: SetupSourceKind;
@@ -141,11 +142,56 @@ const DEFAULT_REAL_CAMERA_CONFIG = {
   mask_dilate_kernel_px: 1,
   max_frames_per_run: 160,
   live_offline_fps: 8,
-  setup_preview_fps: 1,
+  setup_preview_fps: 0,
   target_temperature_celsius: null,
   temperature_power_percent: 100,
   temperature_serial_port: ""
 };
+
+function uiText(language: UiLanguage, text: string): string {
+  if (language === "en") return text;
+  const zh: Record<string, string> = {
+    "Updating live frame": "正在更新实时画面",
+    "Live frame updated": "实时画面已更新",
+    "Camera unavailable": "相机不可用",
+    "No live frame yet": "尚未取得实时画面",
+    "Start real camera run": "开始真实相机测量",
+    "Start full offline run": "开始完整离线测量",
+    Running: "测量中",
+    "Real camera": "真实相机",
+    "Offline dataset": "离线数据集",
+    real_camera: "真实相机",
+    None: "无",
+    "Not read": "尚未读取",
+    unavailable: "不可用",
+    "A balloon envelope": "A 类球囊/网状结构整体外包络",
+    "C bundle envelope": "C 类多细支/多线束整体外包络",
+    "D reserved object": "D 类预留对象",
+    max_width: "整体最大宽度",
+    min_width: "整体最小宽度（预留）"
+  };
+  return zh[text] ?? text;
+}
+
+function uiNone(language: UiLanguage): string {
+  return uiText(language, "None");
+}
+
+function uiObjectClass(language: UiLanguage, value: string): string {
+  if (language === "en") return value;
+  if (value === "A_BALLOON_ENVELOPE") return uiText(language, "A balloon envelope");
+  if (value === "C_BUNDLE_ENVELOPE") return uiText(language, "C bundle envelope");
+  if (value === "D_RESERVED_OBJECT") return uiText(language, "D reserved object");
+  return value;
+}
+
+function uiStatus(language: UiLanguage, value: string): string {
+  return uiText(language, value);
+}
+
+function uiWidthMode(language: UiLanguage, value: string): string {
+  return uiText(language, value);
+}
 
 export const SETUP_SOURCE_OPTIONS: SetupSourceOption[] = [
   { kind: "offline_dataset", label: "Offline dataset" },
@@ -203,24 +249,30 @@ export function preserveRoiAcrossDisplayResize(
   return { ...roi };
 }
 
-export function previewRefreshStatusLabel(status: PreviewRefreshStatus): string {
-  if (status === "refreshing") return "Refreshing preview";
-  if (status === "ok") return "Preview refreshed";
-  if (status === "unavailable") return "Camera unavailable";
-  return "Not refreshed";
+export function previewRefreshStatusLabel(status: PreviewRefreshStatus, language: UiLanguage = "en"): string {
+  if (status === "refreshing") return uiText(language, "Updating live frame");
+  if (status === "ok") return uiText(language, "Live frame updated");
+  if (status === "unavailable") return uiText(language, "Camera unavailable");
+  return uiText(language, "No live frame yet");
 }
 
 export function normalizeSetupPreviewFps(value: number | null | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
-  return clamp(value, 1, 5);
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, value);
 }
 
 export function setupPreviewIntervalMs(fps: number | null | undefined): number {
-  return Math.round(1000 / normalizeSetupPreviewFps(fps));
+  const normalized = normalizeSetupPreviewFps(fps);
+  if (normalized <= 0) return 0;
+  return Math.max(0, Math.round(1000 / normalized));
 }
 
-export function setupPreviewFpsLabel(fps: number | null | undefined): string {
-  return `${formatRateNumber(normalizeSetupPreviewFps(fps))} fps UI preview`;
+export function setupPreviewFpsLabel(fps: number | null | undefined, language: UiLanguage = "en"): string {
+  if (normalizeSetupPreviewFps(fps) <= 0) {
+    return language === "zh" ? "自动（跟随相机）" : "Auto (camera-paced)";
+  }
+  if (language === "zh") return `${formatRateNumber(normalizeSetupPreviewFps(fps))} 帧/秒实时显示`;
+  return `${formatRateNumber(normalizeSetupPreviewFps(fps))} fps live display`;
 }
 
 export function selectSetupTemperatureSerialPort(
@@ -352,9 +404,13 @@ export function planRealCameraSetupFrameUpdate({
 export function frozenFrameSetupChangeMessage(
   page: SetupPageKind,
   source: SetupSourceKind,
-  state: RealCameraPreviewState | null
+  state: RealCameraPreviewState | null,
+  language: UiLanguage = "en"
 ): string {
   if (page === "setup" && source === "real_camera" && state?.mode === "frozen") {
+    if (language === "zh") {
+      return "当前使用冻结画面：测量区域和检测参数会作用在这张冻结图上。需要查看最新相机画面时，请采集新的配置画面或恢复实时显示。";
+    }
     return "Frozen frame: ROI and detector parameters update on the frozen image. Use Capture new setup frame or Resume live to view the latest camera frame.";
   }
   return "";
@@ -421,19 +477,19 @@ export function confirmPreviewRoi(state: RealCameraPreviewState | null, roi: Rot
   };
 }
 
-export function runModeForSetupSource(source: SetupSourceKind): SetupRunMode {
+export function runModeForSetupSource(source: SetupSourceKind, language: UiLanguage = "en"): SetupRunMode {
   if (source === "real_camera") {
     return {
       kind: "real_camera_run",
-      startLabel: "Start real camera run",
-      pendingLabel: "Running",
+      startLabel: uiText(language, "Start real camera run"),
+      pendingLabel: uiText(language, "Running"),
       allowsPreviewAction: false
     };
   }
   return {
     kind: "live_offline_run",
-    startLabel: "Start full offline run",
-    pendingLabel: "Running",
+    startLabel: uiText(language, "Start full offline run"),
+    pendingLabel: uiText(language, "Running"),
     allowsPreviewAction: false
   };
 }
@@ -441,22 +497,23 @@ export function runModeForSetupSource(source: SetupSourceKind): SetupRunMode {
 export function buildRunSetupSummary(
   source: SetupSourceKind,
   datasetId: string,
-  measurement: MeasurementDefinition
+  measurement: MeasurementDefinition,
+  language: UiLanguage = "en"
 ): RunSetupSummary {
   return {
-    sourceLabel: source === "real_camera" ? "Real camera" : "Offline dataset",
-    sourceId: source === "real_camera" ? "real_camera" : datasetId,
+    sourceLabel: source === "real_camera" ? uiText(language, "Real camera") : uiText(language, "Offline dataset"),
+    sourceId: source === "real_camera" ? uiText(language, "real_camera") : datasetId,
     roiCenter: `${formatNumber(measurement.roi.center_x)}, ${formatNumber(measurement.roi.center_y)}`,
     roiSize: `${formatNumber(measurement.roi.width)} × ${formatNumber(measurement.roi.height)}`,
     roiAngle: `${formatNumber(measurement.roi.angle_deg)}°`,
-    objectClass: measurement.object_class,
+    objectClass: uiObjectClass(language, measurement.object_class),
     detector: measurement.detector,
-    widthMode: measurement.width_mode,
+    widthMode: uiWidthMode(language, measurement.width_mode),
     maxFramesPerRun: formatNumber(measurement.detector_config.max_frames_per_run ?? 160, 0),
     targetFps: formatCompactNumber(measurement.detector_config.live_offline_fps ?? 8),
     targetTemperatureCelsius:
       measurement.detector_config.target_temperature_celsius == null
-        ? "None"
+        ? uiNone(language)
         : `${formatNumber(measurement.detector_config.target_temperature_celsius)} °C`,
     temperaturePowerPercent: `${formatNumber(measurement.detector_config.temperature_power_percent ?? 100, 0)} %`
   };
@@ -476,27 +533,28 @@ export function buildSetupTemperatureSummary(
   temperatureStatus: TemperatureStatusResponse | null,
   serialPorts: SerialPortInfo[],
   temperatureError: SetupTemperatureError | null,
-  fallbackTemperature: number | null = null
+  fallbackTemperature: number | null = null,
+  language: UiLanguage = "en"
 ): SetupTemperatureSummary {
   const currentTemperature = temperatureStatus?.reading.celsius ?? fallbackTemperature;
   const statusError = temperatureStatus?.reading.error || "";
   return {
-    status: temperatureStatus?.temperature_status ?? temperatureError?.temperature_status ?? "Not read",
-    currentTemperature: formatTemperatureValue(currentTemperature),
-    source: temperatureStatus?.reading.source || "None",
+    status: uiStatus(language, temperatureStatus?.temperature_status ?? temperatureError?.temperature_status ?? "Not read"),
+    currentTemperature: formatTemperatureValue(currentTemperature, language),
+    source: temperatureStatus?.reading.source || uiNone(language),
     timestamp:
       temperatureStatus?.reading.timestamp_ms == null
-        ? "None"
+        ? uiNone(language)
         : String(temperatureStatus.reading.timestamp_ms),
     targetTemperatureCelsius:
       measurement.detector_config.target_temperature_celsius == null
-        ? "None"
+        ? uiNone(language)
         : `${formatNumber(measurement.detector_config.target_temperature_celsius)} °C`,
     temperaturePowerPercent: `${formatNumber(measurement.detector_config.temperature_power_percent ?? 100, 0)} %`,
-    selectedPort: measurement.detector_config.temperature_serial_port?.trim() || "None",
-    ports: serialPorts.length ? serialPorts.map((port) => port.device || port.name).join(", ") : "None",
+    selectedPort: measurement.detector_config.temperature_serial_port?.trim() || uiNone(language),
+    ports: serialPorts.length ? serialPorts.map((port) => port.device || port.name).join(", ") : uiNone(language),
     portCount: String(serialPorts.length),
-    error: statusError || temperatureError?.message || "None"
+    error: statusError || temperatureError?.message || uiNone(language)
   };
 }
 
@@ -522,8 +580,8 @@ function formatNumber(value: number, digits = 2): string {
   return digits === 0 ? Math.round(value).toLocaleString() : value.toFixed(digits);
 }
 
-function formatTemperatureValue(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} °C` : "None";
+function formatTemperatureValue(value: number | null | undefined, language: UiLanguage = "en"): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)} °C` : uiNone(language);
 }
 
 function formatCompactNumber(value: number): string {

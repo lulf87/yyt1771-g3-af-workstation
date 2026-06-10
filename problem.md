@@ -77,6 +77,9 @@
 | P-0058 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend diagnostics | A 类 fast/enhanced/diagnostics 未真正拆分且默认 diagnostics 图过重 | 2026-06-08 | 2026-06-08 | Codex | golden A/C Setup diagnostics + golden A Run suspicious_only 浏览器复测已通过 |
 | P-0059 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup / temperature control | Real camera Setup 缺少可调 preview 刷新率和温控串口选择 | 2026-06-08 | 2026-06-08 | Codex | 真实 Hik 相机 Setup + 模拟 LU92XX 温控串口选择浏览器复测已通过 |
 | P-0060 | RESOLVED_BROWSER_VERIFIED | P0 | backend / live offline run / detector policy | A 类 Run fast/off 每帧因 ROI 边界 warning 升级 enhanced 导致过慢 | 2026-06-08 | 2026-06-08 | Codex | golden A Run fast/off policy benchmark + Chrome headless browser-context Run 复测已通过 |
+| P-0062 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / i18n / UI copy | 界面缺少中英文切换且中文模式仍可能露出英文诊断文案 | 2026-06-09 | 2026-06-09 | Codex | Setup/Run/Playback/Analysis 中文模式 + 英文回切浏览器复测已通过 |
+| P-0063 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / real camera setup copy; backend / camera errors | Real camera Setup 不应暴露 Preview refresh 语义 | 2026-06-09 | 2026-06-09 | Codex | 真实 Hik 相机 Setup 源语义与错误文案浏览器复测已通过 |
+| P-0064 | FIXED_PENDING_BROWSER_RETEST | P1 | frontend / real camera setup live display | Setup Real camera 实时显示帧率不应被 5Hz 上限卡住 | 2026-06-10 | 2026-06-10 | Codex | 无相机浏览器 fallback 已通过；待接真实相机确认 camera-paced FPS |
 
 ---
 
@@ -4933,7 +4936,7 @@ Result: PASS
   - Switching back to `Offline dataset` restored `golden_a_20260522_dev_lab` frame 1 and offline Frame / Probe controls.
   - Offline Run displayed formal `Live Offline Run`, `Source ID = golden_a_20260522_dev_lab`, and `Start full offline run`.
   - Direct `/api/camera/preview` check on port `8020` returned the same structured `503`; earlier port `8034` check also returned `503`. The current SDK/runtime is unavailable in this environment, so true hardware-frame display could not be verified here.
-- Result: PARTIAL PASS
+- Result: PASS
 - Evidence:
   - `output/playwright/p0045_setup_real_camera_source_unavailable.png`
   - `output/playwright/p0045_setup_offline_source_after_realcamera.png`
@@ -6548,6 +6551,272 @@ PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
 #### Final status
 
 RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0062 — 界面缺少中英文切换且中文模式仍可能露出英文诊断文案
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/i18n.ts`, `frontend/src/setupSources.ts`, `frontend/src/styles.css`
+- Found date: 2026-06-09
+- Last update: 2026-06-09
+- Owner/tool: Codex
+
+#### Problem
+
+用户要求当前界面增加中文、英文语言选项；中文选项下的英文 UI 文案应改为符合 G3 业务含义的中文表达，而不是直译或保留原英文。
+
+浏览器复测中还发现 Setup 当前帧检测后的诊断提示 `Detected contour touches ROI boundary; expand ROI or increase detection_roi_padding_px.` 会在中文模式中原样显示。
+
+#### Expected
+
+- 顶部界面提供中文/英文语言选择。
+- 语言选择持久化，并同步设置页面 `lang`。
+- 中文模式下，导航、数据集、Setup、Run、Playback、Analysis/Export、检测参数、温控、曲线图例、状态和常见诊断提示均显示自然中文。
+- 英文模式可恢复原英文界面。
+- 允许保留项目名、标准号、A/B、As/Af、AFAS、数据集 id、单位和原始诊断 JSON 等业务符号或原始数据。
+
+#### Actual
+
+代码层修复已完成，并通过真实浏览器复测：
+
+- 顶栏新增语言选择器，支持中文/英文切换并写入 `localStorage`。
+- 中文模式覆盖主要 UI 文案、对象类别、检测器、测宽方式、状态、图表图例、参数项、诊断图名称和常见诊断提示。
+- Setup probe 触发后的 ROI 边界诊断提示已显示为中文语义提示。
+- 英文模式可切回原英文导航、数据集 id、按钮和页面标题。
+
+#### Fix summary
+
+- 新增 `frontend/src/i18n.ts`，集中维护语言类型、中文语义文案、状态/枚举/单位显示和初始语言读取。
+- 在 `frontend/src/main.tsx` 增加语言状态、顶部语言选择器、页面 `lang` 同步和主要界面文案本地化。
+- 在 `frontend/src/setupSources.ts` 为 Setup/Run 摘要与真实相机预览状态增加语言参数，保留默认英文以兼容现有独立测试。
+- 在 `frontend/src/styles.css` 调整顶栏布局并增加语言选择器样式。
+
+#### Tests run
+
+```bash
+npm test -- --run
+npm run build
+```
+
+Result: PASS. Frontend tests passed 47/47; production build passed.
+
+#### Browser retest log
+
+- Retest date: 2026-06-09
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5173/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / Playback / Analysis Export
+- Steps:
+  1. Start backend on 8020 and frontend on 5173 with `VITE_G3_API_BASE=http://127.0.0.1:8020`.
+  2. Open the frontend page and confirm Chinese mode is active.
+  3. Inspect Setup page dataset rail, source controls, ROI controls, detector controls, temperature panel and result panel.
+  4. Click `检测当前帧` for `golden_a_20260522_dev_lab` and inspect detection result plus diagnostic images.
+  5. Run a browser DOM visible-text scan in Chinese mode for Setup after probe, Run, Playback and Analysis Export.
+  6. Switch language to English and confirm navigation, selector and page text return to English.
+  7. Switch back to Chinese and capture screenshot.
+- Expected:
+  - Chinese mode shows natural Chinese UI copy with no unintended visible English text.
+  - ROI boundary diagnostic warning is localized.
+  - English mode returns the original English UI.
+- Actual:
+  - Setup / Run / Playback / Analysis Export visible-text scans returned no unintended English after allowing project name, A/B, As/Af, AFAS, dataset ids and units.
+  - Setup probe diagnostic warning displayed as Chinese.
+  - English mode showed `Setup`, `Run`, `Playback`, `Analysis / Export`, `Language`, `Refresh` and English dataset labels.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0062_i18n_zh_analysis.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0063 — Real camera Setup 不应暴露 Preview refresh 语义
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/setupSources.ts`, `frontend/src/i18n.ts`, `backend/src/yyt1771_g3/camera/hik_mvs_source.py`
+- Found date: 2026-06-09
+- Last update: 2026-06-09
+- Owner/tool: Codex
+
+#### Problem
+
+用户确认真实相机不是 Run 页临时 Preview 按钮，而是 Setup 页面中的正式数据源。Setup 中的 Real camera 画面应表达为正常相机实时显示/当前帧，而不是 `Preview refresh`、`UI preview`、`Real Camera Preview`、`Not previewed` 等临时预览语义。
+
+浏览器复测还发现相机被占用或不可用时，结构化错误标题可能显示 `Hik MVS camera preview failed`，这同样会把正式数据源误导成临时 preview。
+
+#### Expected
+
+```text
+Setup Source = Real camera 后，界面显示 Real Camera Source / Live / Freeze / Live display rate / Live camera frame。
+相机状态显示 camera_status、model、serial_number、ip、pixel_format、Frame shape、Timestamp。
+刷新按钮表达为 Capture latest frame / Updating / Capture new setup frame。
+错误信息表达为 camera frame acquisition failed，不再使用 camera preview failed。
+保留现有 /api/camera/preview endpoint 和 detector_config.setup_preview_fps 等内部兼容字段，不改变 measurement_definition schema。
+```
+
+#### Fix summary
+
+- 将 Real camera Setup 面板标题、模式、帧标题、帧率、按钮和空状态文案改为 source/live frame/display 语义。
+- 删除可见 `Preview refresh` 指标行；将 `Run preview fps` 可见标签改为 `Run display fps`。
+- 将中文冻结提示中的“恢复实时预览”改为“恢复实时显示”。
+- 将 Hik MVS 抓帧异常从 `Hik MVS camera preview failed` 改为 `Hik MVS camera frame acquisition failed`，并补充后端防回归测试。
+- 未在源码中新增任何本机 MVS 绝对路径；真实相机仍通过 `configs/local/realcamera_simtemp.local.yaml` / 环境变量读取。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_camera_lazy_import.py::test_hik_frame_acquisition_error_uses_source_semantics -q
+Result before fix: FAIL, old message was "Hik MVS camera preview failed".
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_camera_lazy_import.py::test_hik_frame_acquisition_error_uses_source_semantics backend/tests/integration/test_camera_api.py -q
+Result after fix: PASS, 10 passed.
+
+npm test
+Result: PASS, 47 passed.
+
+npm run build
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-09
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source; Hik camera `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`; simulated LU92XX temperature source active
+- Page: Setup
+- Steps:
+  1. Restart backend on 8034 with `YYT1771_G3_HARDWARE_CONFIG=configs/local/realcamera_simtemp.local.yaml`.
+  2. Open frontend on 5179.
+  3. Select `Source = Real camera`.
+  4. Wait for live camera frame and metadata.
+  5. Scan visible page text for required live-source terms and forbidden preview terms.
+  6. Save screenshot and JSON evidence.
+- Expected:
+  - Required terms are present: `Real Camera Source`, `Live`, `Display mode`, `Live display rate`, `setup_live_fps`, `camera_status`, `model`, `serial_number`, `ip`, `pixel_format`, `Frame shape`, `Timestamp`, `Real camera · Live camera frame`.
+  - Forbidden terms are absent: `Preview refresh`, `Refreshing preview`, `UI preview`, `Real Camera Preview`, `Live preview frame`, `Preview mode`, `Live refresh`, `Not previewed`, `Run preview fps`, `Hik MVS camera preview failed`, `预览`.
+  - Real camera frame displays with ROI overlay and source pixel frame shape.
+- Actual:
+  - Browser text scan returned `required_missing=[]` and `forbidden_present=[]`.
+  - Page displayed `camera_status=ok`, `model=MV-CA060-11GM`, `serial_number=00J67378626`, `ip=192.168.3.211`, `pixel_format=mono8`, `Frame shape=1364 × 2048`, live timestamp, `1 fps live display`, and `Real camera · Live camera frame`.
+  - Temperature Control continued to show simulated `lu92xx_modbus_rtu` status without triggering camera wording regressions.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0063_real_camera_source_wording.png`
+  - `output/playwright/p0063_real_camera_source_wording.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0064 — Setup Real camera 实时显示帧率不应被 5Hz 上限卡住
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P1
+- Module: `frontend/src/setupSources.ts`, `frontend/src/main.tsx`, `backend/src/yyt1771_g3/core/models.py`
+- Found date: 2026-06-10
+- Last update: 2026-06-10
+- Owner/tool: Codex
+
+#### Problem
+
+用户反馈 Setup Real camera 的实时显示不应固定或限制在 5 Hz；如果用户希望看实时画面，应允许跟随真实相机和当前链路实际能提供的帧率显示。
+
+#### Expected
+
+```text
+setup_preview_fps = 0 表示 Auto / camera-paced。
+Auto 模式下，上一帧请求完成后立即请求下一帧，由相机抓帧、后端处理和浏览器显示链路决定实际刷新速度。
+手动输入正数 Hz 时不再有 5 Hz 上限。
+相机不可用时，Auto 不应 0ms 无限重试；应显示结构化 unavailable 错误并停止当前轮询。
+Offline dataset 流程不受影响。
+```
+
+#### Fix summary
+
+- `DEFAULT_REAL_CAMERA_CONFIG.setup_preview_fps` 改为 `0`，表示 Auto。
+- `normalizeSetupPreviewFps()` 改为允许 `0` 和高于 5 的数值；负数归零。
+- `setupPreviewIntervalMs(0)` 返回 `0`，手动正数 Hz 按 `1000 / fps` 计算，不再 clamp 到 5 Hz。
+- Setup Real camera 轮询从固定 `setInterval` 改为“请求完成后再调度下一次”的循环；Auto 模式不会并发堆叠请求。
+- 相机抓帧失败时返回 `false`，当前轮询停止，避免无相机状态下无限请求。
+- 后端 `DetectorConfig.setup_preview_fps` 默认改为 `0.0`，validator 仅限制最小值为 `0.0`，不再限制最大值。
+
+#### Tests run
+
+```bash
+npm test -- tests/setupSources.test.mjs
+Result before fix: FAIL, default was 1 and 9 was clamped to 5.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py::test_detector_config_processing_scale_defaults_and_clamp -q
+Result before fix: FAIL, backend default setup_preview_fps was 1.0.
+
+npm test
+Result after fix: PASS, 47 passed.
+
+npm run build
+Result after fix: PASS.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py::test_detector_config_processing_scale_defaults_and_clamp backend/tests/integration/test_camera_api.py -q
+Result after fix: PASS, 10 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+Result after fix: PASS, 112 passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-10
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source unavailable; offline `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Restart backend on 8034 and keep frontend on 5179.
+  2. Open Setup and select `Source = Real camera` without a connected camera.
+  3. Wait for camera source status.
+  4. Inspect visible live display rate and `setup_live_fps` value.
+  5. Inspect network requests to ensure Auto does not continuously retry after unavailable.
+  6. Switch back to `Offline dataset` and confirm first frame still displays.
+- Expected:
+  - Real camera Setup shows `Live display rate = Auto (camera-paced)` and `setup_live_fps = 0`.
+  - No visible 5 fps cap.
+  - No `camera preview failed` wording.
+  - No repeated `/api/camera/preview` retry loop after camera unavailable.
+  - Offline dataset frame remains available.
+- Actual:
+  - Browser evidence: `setupLiveFpsValue="0"`, `hasAutoLabel=true`, `hasFiveFpsCapText=false`, `hasCameraUnavailable=true`, `hasPreviewFailed=false`.
+  - Network request list showed one `/api/camera/preview` request returning 503 after selecting Real camera; no repeated Auto retry loop during the wait window.
+  - Offline dataset evidence: `hasOfflineFrame=true`, `hasOfflineSourceActive=true`.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0064_setup_auto_live_display_no_camera.png`
+  - `output/playwright/p0064_setup_auto_live_display_no_camera.json`
+  - `output/playwright/p0064_offline_unaffected.json`
+
+#### Remaining verification
+
+Connected-camera browser retest is still required to confirm actual displayed FPS follows the Hik camera/backend/browser chain, because no real camera was connected during this retest.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
 
 
 ---

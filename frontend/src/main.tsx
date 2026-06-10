@@ -120,9 +120,35 @@ import {
   type RunTrendYAxisRange,
   type CurveSpec
 } from "./curves";
+import {
+  UI_LANGUAGE_OPTIONS,
+  UI_LANGUAGE_STORAGE_KEY,
+  readInitialUiLanguage,
+  uiDatasetLabel,
+  uiDetector,
+  uiNone,
+  uiNumberSuffix,
+  uiObjectClass,
+  uiStatus,
+  uiText,
+  uiValue,
+  uiWidthMode,
+  type UiLanguage
+} from "./i18n";
 import "./styles.css";
 
 type Page = "setup" | "run" | "playback" | "analysis";
+
+const UiLanguageContext = React.createContext<UiLanguage>("en");
+
+function useUiLanguage(): UiLanguage {
+  return React.useContext(UiLanguageContext);
+}
+
+function useUiText(): (text: string) => string {
+  const language = useUiLanguage();
+  return (text: string) => uiText(language, text);
+}
 
 type LiveRunState = {
   runId: string;
@@ -436,7 +462,7 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
     { value: "suspicious_only", label: "Suspicious only" },
     { value: "every_frame", label: "Every frame" }
   ], title: "Controls when Run streams large diagnostic images." },
-  { key: "run_preview_fps", label: "Run preview fps", type: "int", min: 1, max: 30, step: 1, group: "Run performance", title: "Limits image/overlay refresh rate during streaming Run." },
+  { key: "run_preview_fps", label: "Run display fps", type: "int", min: 1, max: 30, step: 1, group: "Run performance", title: "Limits image/overlay display rate during streaming Run." },
   { key: "run_result_batch_size", label: "Run result batch", type: "int", min: 1, max: 100, step: 1, group: "Run performance", title: "Batches Run curve/state updates by processed frames." },
   { key: "run_enhanced_detector_on_suspicious", label: "Enhanced on suspicious", type: "bool", group: "Run performance", advanced: true, title: "Allows suspicious frames to rerun with diagnostics enabled." },
   { key: "run_enhanced_detector_policy", label: "Enhanced rerun policy", type: "select", group: "Run performance", advanced: true, options: [
@@ -450,6 +476,7 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
 
 function App() {
   const [page, setPage] = useState<Page>("setup");
+  const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
   const [setupSource, setSetupSource] = useState<SetupSourceKind>("offline_dataset");
   const [datasets, setDatasets] = useState<OfflineDatasetListItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -487,6 +514,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, language);
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+  }, [language]);
+
+  useEffect(() => {
     measurementRef.current = measurement;
   }, [measurement]);
 
@@ -502,12 +534,21 @@ function App() {
 
   useEffect(() => {
     if (!shouldPollRealCameraPreview(page, setupSource, cameraPreviewState)) return;
-    const previewIntervalMs = setupPreviewIntervalMs(measurement?.detector_config.setup_preview_fps);
-    void previewRealCameraFrame("live");
-    const timer = window.setInterval(() => {
-      void previewRealCameraFrame("live");
-    }, previewIntervalMs);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | null = null;
+    const pollLiveFrame = async () => {
+      const shouldContinue = await previewRealCameraFrame("live");
+      if (cancelled || !shouldContinue) return;
+      const previewIntervalMs = setupPreviewIntervalMs(measurementRef.current?.detector_config.setup_preview_fps);
+      timer = window.setTimeout(() => {
+        void pollLiveFrame();
+      }, previewIntervalMs);
+    };
+    void pollLiveFrame();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
   }, [
     page,
     setupSource,
@@ -769,9 +810,9 @@ function App() {
   async function previewRealCameraFrame(
     mode: RealCameraPreviewMode = cameraPreviewState?.mode ?? "live",
     options: { clearProbe?: boolean } = {}
-  ) {
+  ): Promise<boolean> {
     const clearProbe = options.clearProbe ?? true;
-    if (cameraPreviewRequestInFlightRef.current) return;
+    if (cameraPreviewRequestInFlightRef.current) return false;
     cameraPreviewRequestInFlightRef.current = true;
     setPreviewingCamera(true);
     setCameraPreviewRefreshStatus("refreshing");
@@ -779,7 +820,7 @@ function App() {
     try {
       const response = await previewRealCamera();
       if (mode === "live" && cameraPreviewModeRef.current === "frozen") {
-        return;
+        return false;
       }
       const nextMeasurement = createRealCameraMeasurementFromShape(measurementRef.current, response.shape);
       const effectiveMode = mode === "frozen" ? "frozen" : cameraPreviewModeRef.current;
@@ -791,9 +832,10 @@ function App() {
       );
       applyMeasurement(nextMeasurement);
       setCameraPreviewRefreshStatus("ok");
+      return true;
     } catch (err) {
       if (mode === "live" && cameraPreviewModeRef.current === "frozen") {
-        return;
+        return false;
       }
       setCameraPreviewError(cameraPreviewErrorFromUnknown(err));
       setCameraPreviewRefreshStatus("unavailable");
@@ -809,6 +851,7 @@ function App() {
           mode === "frozen" ? "frozen" : cameraPreviewModeRef.current
         )
       );
+      return false;
     } finally {
       cameraPreviewRequestInFlightRef.current = false;
       setPreviewingCamera(false);
@@ -917,37 +960,50 @@ function App() {
         ? frameImageUrl(selectedId, "last")
         : frameIndexImageUrl(selectedId, frameIndex);
 
+  const t = (text: string) => uiText(language, text);
+
   return (
+    <UiLanguageContext.Provider value={language}>
     <main className="appShell">
       <header className="topBar">
         <div className="brandBlock">
           <Database size={22} aria-hidden="true" />
           <div>
             <h1>YY/T 1771 G3</h1>
-            <span>AF envelope workstation</span>
+            <span>{t("AF envelope workstation")}</span>
           </div>
         </div>
-        <nav className="tabs" aria-label="Primary">
+        <nav className="tabs" aria-label={t("Primary")}>
           <TabButton page="setup" current={page} onSelect={setPage} icon={<Settings size={16} />}>
-            Setup
+            {t("Setup")}
           </TabButton>
           <TabButton page="run" current={page} onSelect={setPage} icon={<Activity size={16} />}>
-            Run
+            {t("Run")}
           </TabButton>
           <TabButton page="playback" current={page} onSelect={setPage} icon={<Play size={16} />}>
-            Playback
+            {t("Playback")}
           </TabButton>
           <TabButton page="analysis" current={page} onSelect={setPage} icon={<BarChart3 size={16} />}>
-            Analysis / Export
+            {t("Analysis / Export")}
           </TabButton>
         </nav>
-        <button className="iconButton" onClick={refreshDatasets} type="button" title="Refresh">
+        <label className="languageControl">
+          <span>{t("Language")}</span>
+          <select onChange={(event) => setLanguage(event.target.value as UiLanguage)} value={language}>
+            {UI_LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {language === "zh" ? (option.value === "zh" ? "中文" : "英文") : option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
           <RefreshCcw size={17} aria-hidden="true" />
         </button>
       </header>
 
       <section className="workspace">
-        <aside className="datasetRail" aria-label="Offline datasets">
+        <aside className="datasetRail" aria-label={t("Offline datasets")}>
           {datasets.map((dataset) => (
             <button
               className={dataset.id === selectedId ? "datasetItem selected" : "datasetItem"}
@@ -958,12 +1014,12 @@ function App() {
               }}
               type="button"
             >
-              <span className="datasetId">{dataset.id}</span>
+              <span className="datasetId">{uiDatasetLabel(language, dataset)}</span>
               <span className="datasetMeta">
-                {dataset.object_class} · {dataset.frame_count.toLocaleString()} frames
+                {uiObjectClass(language, dataset.object_class)} · {dataset.frame_count.toLocaleString()} {t("frames")}
               </span>
               <span className="datasetMeta">
-                {dataset.default_detector} · {dataset.default_width_mode}
+                {uiDetector(language, dataset.default_detector)} · {uiWidthMode(language, dataset.default_width_mode)}
               </span>
             </button>
           ))}
@@ -971,8 +1027,8 @@ function App() {
 
         <section className="panelArea">
           {error ? <div className="statusBlock error">{error}</div> : null}
-          {loading && !summary ? <div className="statusBlock">Loading</div> : null}
-          {!loading && !selectedDataset ? <div className="statusBlock">No datasets</div> : null}
+          {loading && !summary ? <div className="statusBlock">{t("Loading")}</div> : null}
+          {!loading && !selectedDataset ? <div className="statusBlock">{t("No datasets")}</div> : null}
           {selectedDataset && summary && measurement ? (
             <PageContent
               dataset={selectedDataset}
@@ -1018,6 +1074,7 @@ function App() {
         </section>
       </section>
     </main>
+    </UiLanguageContext.Provider>
   );
 }
 
@@ -1121,6 +1178,8 @@ function PageContent({
   onRefreshSerialPorts: () => void;
   page: Page;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const setupChangeRefreshTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -1163,12 +1222,12 @@ function PageContent({
   const isSetup = page === "setup";
   const isRealCameraSetup = isSetup && setupSource === "real_camera";
   const activeFrameTitle = isRealCameraSetup
-    ? `Real camera · ${cameraPreviewState?.mode === "frozen" ? "Frozen frame" : "Live preview frame"}`
-    : `${dataset.id} · frame ${frameIndex}`;
+    ? `${t("Real camera")} · ${cameraPreviewState?.mode === "frozen" ? t("Frozen frame") : t("Live camera frame")}`
+    : `${uiDatasetLabel(language, dataset)} · ${t("frame")} ${frameIndex}`;
   const activeFrameUrl = isRealCameraSetup ? cameraPreviewUrl : frameUrl;
   const activeSourceShape = isRealCameraSetup ? cameraPreview?.shape ?? cameraPreviewState?.shape ?? summary.first_frame.shape : summary.first_frame.shape;
   const shouldRefreshAfterRoiCommit = shouldRefreshRealCameraFrameAfterRoiCommit(page, setupSource, cameraPreviewState);
-  const frozenSetupMessage = frozenFrameSetupChangeMessage(page, setupSource, cameraPreviewState);
+  const frozenSetupMessage = frozenFrameSetupChangeMessage(page, setupSource, cameraPreviewState, language);
   const displayedProbe = isRealCameraSetup
     ? probe?.dataset_id === "real_camera"
       ? probe
@@ -1212,7 +1271,7 @@ function PageContent({
   return (
     <div className="pageGrid workGrid">
       <section className="toolPanel">
-        <h2>{page === "setup" ? "Setup" : "Playback"}</h2>
+        <h2>{page === "setup" ? t("Setup") : t("Playback")}</h2>
         {isSetup ? <SetupSourceControls source={setupSource} onSource={onSetupSource} /> : null}
         {isRealCameraSetup ? (
           <CameraSetupStatusPanel
@@ -1272,7 +1331,7 @@ function PageContent({
           onRefreshSerialPorts={onRefreshSerialPorts}
         />
         {isRealCameraSetup ? (
-          <SetupProbeStatus sourceLabel="Real camera setup probe" probe={displayedProbe} />
+          <SetupProbeStatus sourceLabel={language === "zh" ? "真实相机配置检测" : "Real camera setup probe"} probe={displayedProbe} />
         ) : (
           <DetectorStatus dataset={dataset} summary={summary} probe={displayedProbe} />
         )}
@@ -1312,10 +1371,12 @@ function SetupSourceControls({
   source: SetupSourceKind;
   onSource: (source: SetupSourceKind) => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   return (
     <div className="controlStack">
-      <h3>Source</h3>
-      <div className="segmented wide" aria-label="Setup source">
+      <h3>{t("Source")}</h3>
+      <div className="segmented wide" aria-label={t("Source")}>
         {SETUP_SOURCE_OPTIONS.map((option) => (
           <button
             className={source === option.kind ? "active" : ""}
@@ -1324,7 +1385,7 @@ function SetupSourceControls({
             type="button"
           >
             {option.kind === "offline_dataset" ? <Database size={15} aria-hidden="true" /> : <Camera size={15} aria-hidden="true" />}
-            {option.label}
+            {t(option.label)}
           </button>
         ))}
       </div>
@@ -1361,24 +1422,26 @@ function CameraSetupStatusPanel({
   onResume: () => void;
   onConfirmRoi: () => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const mode = previewState?.mode ?? "live";
   const isFrozen = mode === "frozen";
   return (
     <div className="controlStack">
-      <h3>Real Camera Preview</h3>
-      <div className="segmented wide" aria-label="Real camera preview mode">
+      <h3>{t("Real Camera Source")}</h3>
+      <div className="segmented wide" aria-label={t("Real Camera Source")}>
         <button className={!isFrozen ? "active" : ""} onClick={onResume} type="button">
           <Play size={15} aria-hidden="true" />
-          Live
+          {t("Live")}
         </button>
         <button className={isFrozen ? "active" : ""} disabled={!preview} onClick={onFreeze} type="button">
           <Square size={15} aria-hidden="true" />
-          Freeze
+          {t("Freeze")}
         </button>
       </div>
       <dl className="metricGrid compact">
-        <Metric label="Preview mode" value={isFrozen ? "Frozen frame" : "Live"} />
-        <Metric label="camera_status" value={preview?.camera_status ?? previewError?.camera_status ?? "Not previewed"} />
+        <Metric label="Display mode" value={isFrozen ? "Frozen frame" : "Live"} />
+        <Metric label="camera_status" value={preview?.camera_status ?? previewError?.camera_status ?? "No camera frame"} />
         <Metric label="model" value={previewValue(preview, "model")} />
         <Metric label="serial_number" value={previewValue(preview, "serial_number")} />
         <Metric label="ip" value={previewValue(preview, "ip")} />
@@ -1386,44 +1449,42 @@ function CameraSetupStatusPanel({
         <Metric label="Frame shape" value={preview ? preview.shape.join(" × ") : "None"} />
         <Metric label="Timestamp" value={preview?.timestamp_ms ?? "None"} />
         <Metric label="Frozen timestamp" value={previewState?.frozenTimestampMs ?? "None"} />
-        <Metric label="Live refresh" value={isFrozen ? "Paused" : setupPreviewFpsLabel(previewFps)} />
-        <Metric label="Preview refresh" value={previewRefreshStatusLabel(refreshStatus)} />
+        <Metric label="Live display rate" value={isFrozen ? "Paused" : setupPreviewFpsLabel(previewFps, language)} />
       </dl>
       <NumberField
-        label="setup_preview_fps"
-        max={5}
-        min={1}
+        label="setup_live_fps"
+        min={0}
         onChange={(value) => onPreviewFpsChange(normalizeSetupPreviewFps(value))}
-        step={0.5}
-        title="Real camera Setup UI preview refresh rate."
+        step={1}
+        title={t("Real camera Setup live display update rate.")}
         value={normalizeSetupPreviewFps(previewFps)}
       />
       <div className="buttonPair">
         <button className="secondaryButton" disabled={previewing} onClick={onRefresh} type="button">
           <RefreshCcw size={16} aria-hidden="true" />
-          {previewing ? "Refreshing" : isFrozen ? "Capture new setup frame" : "Refresh frame"}
+          {previewing ? t("Updating") : isFrozen ? t("Capture new setup frame") : t("Capture latest frame")}
         </button>
         <button className="primaryButton" disabled={probing || (!preview && isFrozen)} onClick={onProbe} type="button">
           <SquareDashedMousePointer size={16} aria-hidden="true" />
-          {probing ? "Probing" : "Probe current frame"}
+          {probing ? t("Probing") : t("Probe current frame")}
         </button>
       </div>
       {isFrozen ? (
         <button className="primaryButton" onClick={onResume} type="button">
           <Play size={16} aria-hidden="true" />
-          Resume live
+          {t("Resume live")}
         </button>
       ) : (
         <button className="secondaryButton" disabled={!preview} onClick={onFreeze} type="button">
           <Square size={16} aria-hidden="true" />
-          Freeze
+          {t("Freeze")}
         </button>
       )}
       {previewState?.roiNeedsReconfirm ? (
         <div className="inlineWarning">
-          <span>{previewState.shapeChangeMessage}</span>
+          <span>{localizeShapeChangeMessage(previewState.shapeChangeMessage, language)}</span>
           <button className="secondaryButton compactButton" onClick={onConfirmRoi} type="button">
-            Confirm ROI
+            {t("Confirm ROI")}
           </button>
         </div>
       ) : null}
@@ -1446,12 +1507,13 @@ function PreviewPlaceholder({
   refreshStatus: PreviewRefreshStatus;
   previewError: CameraPreviewError | null;
 }) {
+  const language = useUiLanguage();
   return (
     <figure className="frameCanvasFigure">
       <figcaption>{title}</figcaption>
       <div className="frameCanvas previewPlaceholder">
         <div className={previewError ? "frameCanvasStatus error" : "frameCanvasStatus"}>
-          {previewError ? previewError.message : previewRefreshStatusLabel(refreshStatus)}
+          {previewError ? previewError.message : previewRefreshStatusLabel(refreshStatus, language)}
         </div>
       </div>
     </figure>
@@ -1471,20 +1533,22 @@ function FrameControls({
   onProbe: (frameIndex?: number) => void;
   probing: boolean;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   return (
     <div className="controlStack">
       <div className="segmented wide">
         <button onClick={() => onFrameIndex(1)} type="button">
           <ImageIcon size={15} aria-hidden="true" />
-          First
+          {t("First")}
         </button>
         <button onClick={() => onFrameIndex(frameCount)} type="button">
           <ImageIcon size={15} aria-hidden="true" />
-          Last
+          {t("Last")}
         </button>
       </div>
       <label className="field">
-        <span>Frame</span>
+        <span>{t("Frame")}</span>
         <input
           max={frameCount}
           min={1}
@@ -1495,7 +1559,7 @@ function FrameControls({
       </label>
       <button className="primaryButton" disabled={probing} onClick={() => onProbe()} type="button">
         <SquareDashedMousePointer size={16} aria-hidden="true" />
-        {probing ? "Probing" : "Probe current frame"}
+        {probing ? t("Probing") : t("Probe current frame")}
       </button>
     </div>
   );
@@ -1512,6 +1576,8 @@ function MeasurementControls({
   onResetRoi?: () => void;
   onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   function patchRoi(patch: Partial<RotatedROI>) {
     onMeasurement({ ...measurement, roi: { ...measurement.roi, ...patch } });
   }
@@ -1522,7 +1588,7 @@ function MeasurementControls({
 
   return (
     <div className="controlStack">
-      <h3>Measurement ROI</h3>
+      <h3>{t("Measurement ROI")}</h3>
       <div className="twoColumnControls">
         <NumberField label="Center X" value={measurement.roi.center_x} onChange={(v) => patchRoi({ center_x: v })} onCommit={commitRoiField} />
         <NumberField label="Center Y" value={measurement.roi.center_y} onChange={(v) => patchRoi({ center_y: v })} onCommit={commitRoiField} />
@@ -1532,7 +1598,7 @@ function MeasurementControls({
       <label className="field">
         <span>
           <RotateCw size={14} aria-hidden="true" />
-          Angle
+          {t("Angle")}
         </span>
         <input
           onChange={(event) => patchRoi({ angle_deg: Number(event.target.value) })}
@@ -1548,7 +1614,7 @@ function MeasurementControls({
       {onResetRoi ? (
         <button className="secondaryButton" onClick={onResetRoi} type="button">
           <SquareDashedMousePointer size={16} aria-hidden="true" />
-          New / reset ROI
+          {t("New / reset ROI")}
         </button>
       ) : null}
     </div>
@@ -1564,6 +1630,8 @@ function DetectorSetupControls({
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   function patchMeasurement(patch: Partial<MeasurementDefinition>, change: RealCameraSetupChange) {
     onMeasurement({ ...measurement, ...patch });
     onPreviewAffectingChange?.(change);
@@ -1608,13 +1676,13 @@ function DetectorSetupControls({
 
   return (
     <div className="controlStack">
-      <h3>Detector Setup</h3>
+      <h3>{t("Detector Setup")}</h3>
       <label className="field">
-        <span>Object class</span>
+        <span>{t("Object class")}</span>
         <select onChange={(event) => changeObjectClass(event.target.value)} value={measurement.object_class}>
           {OBJECT_CLASS_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {uiObjectClass(language, option.value)}
             </option>
           ))}
         </select>
@@ -1622,7 +1690,7 @@ function DetectorSetupControls({
       <div className="detectorPresetGroup">
         {DETECTOR_PRESETS.map((preset) => (
           <button className="secondaryButton compactButton" key={preset.id} onClick={() => applyDetectorPreset(preset.patch)} type="button">
-            {preset.label}
+            {t(preset.label)}
           </button>
         ))}
       </div>
@@ -1633,31 +1701,31 @@ function DetectorSetupControls({
         onCommit={commitDetectorConfig}
       />
       <details className="advancedDetectorParameters">
-        <summary>Advanced</summary>
+        <summary>{t("Advanced")}</summary>
         <label className="field">
-          <span>Detector</span>
+          <span>{t("Detector")}</span>
           <select
             onChange={(event) => patchMeasurement({ detector: event.target.value }, { kind: "detector" })}
             value={measurement.detector}
           >
             {DETECTOR_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {uiDetector(language, option.value)}
               </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span>Width mode</span>
+          <span>{t("Width mode")}</span>
           <select
             onChange={(event) =>
               patchMeasurement({ width_mode: event.target.value as MeasurementDefinition["width_mode"] }, { kind: "width_mode" })
             }
             value={measurement.width_mode}
-          >
-            <option value="max_width">max_width</option>
+        >
+            <option value="max_width">{uiWidthMode(language, "max_width")}</option>
             <option disabled={measurement.object_class !== "D_RESERVED_OBJECT"} value="min_width">
-              min_width
+              {uiWidthMode(language, "min_width")}
             </option>
           </select>
         </label>
@@ -1683,12 +1751,14 @@ function DetectorParameterGroups({
   onChange: (key: keyof DetectorConfig, value: DetectorConfig[keyof DetectorConfig]) => void;
   onCommit: (key: string) => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const groups = Array.from(new Set(definitions.map((definition) => definition.group)));
   return (
     <>
       {groups.map((group) => (
         <div className="detectorParameterGroup" key={group}>
-          <h4>{group}</h4>
+          <h4>{t(group)}</h4>
           <div className="twoColumnControls">
             {definitions
               .filter((definition) => definition.group === group)
@@ -1719,11 +1789,13 @@ function DetectorParameterField({
   onChange: (key: keyof DetectorConfig, value: DetectorConfig[keyof DetectorConfig]) => void;
   onCommit: (key: string) => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const value = detectorConfig[definition.key] ?? (DEFAULT_CONFIG as DetectorConfig)[definition.key];
   if (definition.type === "bool") {
     return (
-      <label className="field checkboxField" title={definition.title}>
-        <span>{definition.label}</span>
+      <label className="field checkboxField" title={language === "zh" ? undefined : definition.title}>
+        <span>{t(definition.label)}</span>
         <input
           checked={Boolean(value)}
           onChange={(event) => {
@@ -1737,8 +1809,8 @@ function DetectorParameterField({
   }
   if (definition.type === "select") {
     return (
-      <label className="field" title={definition.title}>
-        <span>{definition.label}</span>
+      <label className="field" title={language === "zh" ? undefined : definition.title}>
+        <span>{t(definition.label)}</span>
         <select
           onChange={(event) => {
             onChange(definition.key, event.target.value as DetectorConfig[keyof DetectorConfig]);
@@ -1748,7 +1820,7 @@ function DetectorParameterField({
         >
           {(definition.options ?? []).map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {uiValue(language, option.label)}
             </option>
           ))}
         </select>
@@ -1757,11 +1829,11 @@ function DetectorParameterField({
   }
   return (
     <NumberField
-      label={definition.label}
+      label={t(definition.label)}
       max={definition.max}
       min={definition.min}
       step={definition.step}
-      title={definition.title}
+      title={language === "zh" ? undefined : definition.title}
       value={typeof value === "number" ? value : Number(definition.min ?? 0)}
       onChange={(nextValue) => {
         onChange(definition.key, normalizeDetectorNumber(definition, nextValue));
@@ -1808,12 +1880,15 @@ function TemperatureControlPanel({
   onReadCurrentTemperature: () => void;
   onRefreshSerialPorts: () => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const summary = buildSetupTemperatureSummary(
     measurement,
     temperatureStatus,
     serialPorts,
     temperatureError,
-    fallbackTemperature
+    fallbackTemperature,
+    language
   );
   const selectedPort = measurement.detector_config.temperature_serial_port?.trim() ?? "";
   const serialPortOptions = uniqueStrings([
@@ -1833,7 +1908,7 @@ function TemperatureControlPanel({
 
   return (
     <div className="controlStack">
-      <h3>Temperature Control</h3>
+      <h3>{t("Temperature Control")}</h3>
       <dl className="metricGrid compact">
         <Metric label="Current" value={summary.currentTemperature} />
         <Metric label="Status" value={summary.status} />
@@ -1859,12 +1934,12 @@ function TemperatureControlPanel({
         />
       </div>
       <label className="field">
-        <span>temperature_serial_port</span>
+        <span>{t("temperature_serial_port")}</span>
         <select
           onChange={(event) => onMeasurement(selectSetupTemperatureSerialPort(measurement, event.target.value))}
           value={selectedPort}
         >
-          <option value="">Configured/default</option>
+          <option value="">{t("Configured/default")}</option>
           {serialPortOptions.map((port) => (
             <option key={port} value={port}>
               {port}
@@ -1875,11 +1950,11 @@ function TemperatureControlPanel({
       <div className="buttonPair">
         <button className="secondaryButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
           <Thermometer size={16} aria-hidden="true" />
-          {checkingTemperature ? "Reading" : "Read temp"}
+          {checkingTemperature ? t("Reading") : t("Read temp")}
         </button>
         <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
           <Usb size={16} aria-hidden="true" />
-          {loadingSerialPorts ? "Scanning" : "Ports"}
+          {loadingSerialPorts ? t("Scanning") : t("Ports")}
         </button>
       </div>
       {temperatureError ? (
@@ -1911,9 +1986,11 @@ function NumberField({
   step?: number;
   title?: string;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   return (
     <label className="field" title={title}>
-      <span>{label}</span>
+      <span>{t(label)}</span>
       <input
         max={max}
         min={min}
@@ -1943,16 +2020,18 @@ function NullableNumberField({
   onChange: (value: number | null) => void;
   step?: number;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   return (
     <label className="field">
-      <span>{label}</span>
+      <span>{t(label)}</span>
       <input
         min={min}
         onChange={(event) => {
           const raw = event.target.value.trim();
           onChange(raw === "" ? null : Number(raw));
         }}
-        placeholder="None"
+        placeholder={t("None")}
         step={step}
         type="number"
         value={value == null ? "" : roundForInput(value)}
@@ -1970,13 +2049,15 @@ function DetectorStatus({
   summary: OfflineDatasetSummary;
   probe: ProbeResponse | null;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const result = probe?.detection_result ?? null;
   return (
     <div className="diagnostics">
-      <h3>Result</h3>
+      <h3>{t("Result")}</h3>
       <dl className="metricGrid compact">
-        <Metric label="Dataset" value={dataset.id} />
-        <Metric label="Detector" value={dataset.default_detector} />
+        <Metric label="Dataset" value={uiDatasetLabel(language, dataset)} />
+        <Metric label="Detector" value={uiDetector(language, dataset.default_detector)} />
         <Metric label="Frames" value={dataset.frame_count.toLocaleString()} />
         <Metric label="Temperature rows" value={summary.temperature.row_count.toLocaleString()} />
         <Metric label="Status" value={result?.detection_status ?? "Not probed"} />
@@ -1987,7 +2068,7 @@ function DetectorStatus({
       </dl>
       {result ? (
         <details>
-          <summary>Diagnostics</summary>
+          <summary>{t("Diagnostics")}</summary>
           <pre>{JSON.stringify(result, null, 2)}</pre>
         </details>
       ) : null}
@@ -2002,10 +2083,11 @@ function SetupProbeStatus({
   sourceLabel: string;
   probe: ProbeResponse | null;
 }) {
+  const t = useUiText();
   const result = probe?.detection_result ?? null;
   return (
     <div className="diagnostics">
-      <h3>Probe Result</h3>
+      <h3>{t("Probe Result")}</h3>
       <dl className="metricGrid compact">
         <Metric label="Source" value={sourceLabel} />
         <Metric label="Frame timestamp" value={probe?.frame.timestamp_ms ?? "Not probed"} />
@@ -2016,7 +2098,7 @@ function SetupProbeStatus({
       </dl>
       {probe ? (
         <details>
-          <summary>Diagnostics</summary>
+          <summary>{t("Diagnostics")}</summary>
           <pre>{JSON.stringify(probe, null, 2)}</pre>
         </details>
       ) : null}
@@ -2031,6 +2113,8 @@ function DetectionDiagnosticImages({
   debugArtifacts?: Record<string, unknown> | null;
   roi?: RotatedROI | null;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const images = readDiagnosticImages(debugArtifacts);
   if (!images) return null;
   const roiWarning =
@@ -2039,12 +2123,12 @@ function DetectionDiagnosticImages({
       ? debugArtifacts.roi_edge_warning
       : null;
   return (
-    <section className="diagnosticImagePanel" aria-label="Detection diagnostic images">
+    <section className="diagnosticImagePanel" aria-label={t("Detection Diagnostics")}>
       <div className="diagnosticImageHeader">
-        <h3>Detection Diagnostics</h3>
-        <span>{images[0]?.coordinates ?? "roi_local_pixel"}</span>
+        <h3>{t("Detection Diagnostics")}</h3>
+        <span>{uiValue(language, images[0]?.coordinates ?? "roi_local_pixel")}</span>
       </div>
-      {roiWarning ? <div className="diagnosticWarning">{roiWarning}</div> : null}
+      {roiWarning ? <div className="diagnosticWarning">{localizeDisplayString(roiWarning, language)}</div> : null}
       <div className="diagnosticImageGrid">
         {images.map((image) => (
           <DiagnosticImageFigure debugArtifacts={debugArtifacts ?? null} image={image} key={image.label} roi={roi ?? null} />
@@ -2063,16 +2147,17 @@ function DiagnosticImageFigure({
   image: DiagnosticImages[number];
   roi: RotatedROI | null;
 }) {
+  const t = useUiText();
   const sizeLabel = image.width && image.height ? `${image.width} × ${image.height}` : "";
   const overlay = diagnosticOverlayModel(debugArtifacts, roi, image);
   return (
     <figure className="diagnosticImageFigure">
       <figcaption>
-        <span>{image.label}</span>
+        <span>{t(image.label)}</span>
         {sizeLabel ? <span>{sizeLabel}</span> : null}
       </figcaption>
       <div className="diagnosticImageCanvas">
-        <img src={image.src} alt={image.label} />
+        <img src={image.src} alt={t(image.label)} />
         {overlay ? (
           <svg className="diagnosticImageOverlay" preserveAspectRatio="xMidYMid meet" viewBox={`0 0 ${overlay.width} ${overlay.height}`}>
             {overlay.fullBox.length === 4 ? (
@@ -2082,7 +2167,7 @@ function DiagnosticImageFigure({
               <>
                 <polygon className="diagnosticBandBox" points={overlay.bandBox.map((point) => `${point.x},${point.y}`).join(" ")} />
                 <text className="diagnosticBandLabel" x={overlay.bandBox[0].x + 8} y={overlay.bandBox[0].y + 18}>
-                  Measurement band
+                  {t("Measurement band")}
                 </text>
               </>
             ) : null}
@@ -2183,6 +2268,7 @@ function FrameCanvas({
   onRoiCommit?: (roi: RotatedROI) => void;
   readOnly?: boolean;
 }) {
+  const t = useUiText();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [rect, setRect] = useState({ width: 800, height: 520 });
@@ -2260,10 +2346,10 @@ function FrameCanvas({
         {stableImage.displayedUrl ? (
           <img className="frameCanvasImage" src={stableImage.displayedUrl} alt={title} />
         ) : (
-          <div className="frameCanvasStatus">Loading frame...</div>
+          <div className="frameCanvasStatus">{t("Loading frame...")}</div>
         )}
         {stableImage.status === "error" && stableImage.errorUrl ? (
-          <div className="frameCanvasStatus error">Frame image unavailable</div>
+          <div className="frameCanvasStatus error">{t("Frame image unavailable")}</div>
         ) : null}
         <svg
           className={editable ? "overlaySvg" : "overlaySvg readOnly"}
@@ -2529,6 +2615,8 @@ function ContourProjectionOverlay({
   debugArtifacts: Record<string, unknown>;
   transform: FrameDisplayTransform;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const fullBox = readPointArray(debugArtifacts.contour_full_box);
   const projectionBox = readPointArray(debugArtifacts.contour_projection_box);
   const box = fullBox.length === 4 ? fullBox : projectionBox;
@@ -2541,9 +2629,13 @@ function ContourProjectionOverlay({
   const theta = numberFromUnknown(debugArtifacts.contour_theta_deg);
   const length = numberFromUnknown(debugArtifacts.contour_length_px);
   const showBand = debugArtifacts.show_measurement_band_box !== false;
-  const label = `Full detected contour region  ${theta == null ? "theta=?" : `theta=${theta.toFixed(1)} deg`}  ${
-    length == null ? "L=?" : `L=${length.toFixed(1)}px`
-  }`;
+  const label = language === "zh"
+    ? `${t("Full detected contour region")}  ${theta == null ? "角度=?" : `角度=${theta.toFixed(1)}°`}  ${
+        length == null ? "长度=?" : `长度=${length.toFixed(1)} 像素`
+      }`
+    : `Full detected contour region  ${theta == null ? "theta=?" : `theta=${theta.toFixed(1)} deg`}  ${
+        length == null ? "L=?" : `L=${length.toFixed(1)}px`
+      }`;
   return (
     <g className="contourProjectionOverlay">
       {displayBox.length === 4 ? (
@@ -2553,7 +2645,7 @@ function ContourProjectionOverlay({
         <>
           <polygon className="contourMeasurementBandBox" points={displayBandBox.map((point) => `${point.x},${point.y}`).join(" ")} />
           <text className="contourMeasurementBandLabel" x={displayBandBox[0].x + 8} y={displayBandBox[0].y + 18}>
-            Measurement band
+            {t("Measurement band")}
           </text>
         </>
       ) : null}
@@ -2597,6 +2689,8 @@ function RunPage({
   onStopRun: () => void;
   onStartRealCameraRun: () => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const [resultSource, setResultSource] = useState<DetectionResultSource>("stabilized");
   const displayedLiveRun = setupSource === "offline_dataset" ? liveRun : null;
   const displayedRunResult =
@@ -2606,9 +2700,9 @@ function RunPage({
   const manifest = displayedRunResult?.run_manifest ?? null;
   const analysis = displayedLiveRun?.analysis ?? displayedRunResult?.analysis_result ?? null;
   const displayedAnalysis = analysis ? analysisForResultSource(analysis, resultSource) : null;
-  const runMode = runModeForSetupSource(setupSource);
-  const setupSummary = buildRunSetupSummary(setupSource, dataset.id, measurement);
-  const latestRunMode = manifest?.dataset_id === "real_camera" ? "Real camera run" : "Live offline run";
+  const runMode = runModeForSetupSource(setupSource, language);
+  const setupSummary = buildRunSetupSummary(setupSource, uiDatasetLabel(language, dataset), measurement, language);
+  const latestRunMode = manifest?.dataset_id === "real_camera" ? t("Real camera run") : t("Live offline run");
   const isDisplayedRealCameraRun = displayedLiveRun == null && manifest?.dataset_id === "real_camera";
   const remainingFrames =
     runMode.kind === "real_camera_run"
@@ -2632,9 +2726,9 @@ function RunPage({
       : "");
   const latestFrameTitle =
     latestDetection && isDisplayedRealCameraRun && manifest
-      ? `Real camera run · ${manifest.run_id} · frame ${latestDetection.frame_index}`
+      ? `${t("Real camera run")} · ${manifest.run_id} · ${t("frame")} ${latestDetection.frame_index}`
       : latestDetection
-        ? `${dataset.id} · live frame ${latestDetection.frame_index}`
+        ? `${uiDatasetLabel(language, dataset)} · ${t("Live")} ${t("frame")} ${latestDetection.frame_index}`
         : "";
   const latestSourceShape =
     isDisplayedRealCameraRun
@@ -2643,13 +2737,13 @@ function RunPage({
   return (
     <div className="pageGrid runGrid">
       <section className="toolPanel">
-        <h2>Run</h2>
+        <h2>{t("Run")}</h2>
         <div className="controlStack">
-          <h3>Setup Summary</h3>
+          <h3>{t("Setup Summary")}</h3>
           <dl className="metricGrid compact">
             <Metric label="Source" value={setupSummary.sourceLabel} />
             <Metric label="Source ID" value={setupSummary.sourceId} />
-            <Metric label="Measurement" value={measurement.measurement_id} />
+            <Metric label="Measurement" value={language === "zh" ? "当前测量定义" : measurement.measurement_id} />
             <Metric label="ROI center" value={setupSummary.roiCenter} />
             <Metric label="ROI size" value={setupSummary.roiSize} />
             <Metric label="ROI angle" value={setupSummary.roiAngle} />
@@ -2663,7 +2757,7 @@ function RunPage({
           </dl>
         </div>
         <div className="controlStack">
-          <h3>{runMode.kind === "real_camera_run" ? "Real Camera Run" : "Live Offline Run"}</h3>
+          <h3>{runMode.kind === "real_camera_run" ? t("Real Camera Run") : t("Live Offline Run")}</h3>
           <dl className="metricGrid compact">
             <Metric label="Start frame" value={runMode.kind === "real_camera_run" ? "Live" : startFrame.toLocaleString()} />
             <Metric label="Frame budget" value={remainingFrames.toLocaleString()} />
@@ -2692,7 +2786,7 @@ function RunPage({
             </button>
             <button className="secondaryButton" disabled={runMode.kind === "real_camera_run" || !running} onClick={onStopRun} type="button">
               <Square size={16} aria-hidden="true" />
-              Stop
+              {t("Stop")}
             </button>
           </div>
         </div>
@@ -2702,13 +2796,13 @@ function RunPage({
         <section className="toolPanel">
           <div className="runTrendHeader">
             <div>
-              <h2>{liveRun?.status === "running" ? "Live Trend" : "Run Trend"}</h2>
+              <h2>{liveRun?.status === "running" ? t("Live Trend") : t("Run Trend")}</h2>
               <p>
-                {displayedLiveRun ? "Live offline run" : latestRunMode} · {displayedLiveRun?.runId ?? manifest?.run_id ?? "no run id"}
+                {displayedLiveRun ? t("Live offline run") : latestRunMode} · {displayedLiveRun?.runId ?? manifest?.run_id ?? t("no run id")}
               </p>
             </div>
-            <div className="runTrendStatusLabel" aria-label="Run trend scope">
-              {displayedLiveRun?.status === "running" ? "Current run so far" : "Full run"}
+            <div className="runTrendStatusLabel" aria-label={t("Run trend scope")}>
+              {displayedLiveRun?.status === "running" ? t("Current run so far") : t("Full run")}
             </div>
           </div>
           <ResultSourceToggle source={resultSource} onSource={setResultSource} />
@@ -2748,6 +2842,8 @@ function AnalysisPage({
   runResult: RunResponse | null;
   liveRun: LiveRunState | null;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const [resultSource, setResultSource] = useState<DetectionResultSource>("stabilized");
   const baseAnalysis = runResult?.analysis_result ?? (liveRun?.status === "stopped" ? liveRun.analysis : null);
   const selectedRunId = runResult?.run_manifest.run_id ?? (liveRun?.status === "stopped" ? liveRun.runId : null);
@@ -2783,7 +2879,7 @@ function AnalysisPage({
   return (
     <div className="pageGrid runGrid analysisPageGrid">
       <section className="toolPanel analysisExportPanel">
-        <h2>Analysis / Export</h2>
+        <h2>{t("Analysis / Export")}</h2>
         <dl className="metricGrid compact">
           <Metric label="Run" value={selectedRunId ?? "No run selected"} />
           <Metric label="Latest probe" value={formatDistance(probe?.detection_result ?? null, resultSource)} />
@@ -2797,14 +2893,14 @@ function AnalysisPage({
           type="button"
         >
           <Download size={16} aria-hidden="true" />
-          {exporting ? "Exporting" : "Export"}
+          {exporting ? t("Exporting") : t("Export")}
         </button>
         {exportError ? <div className="inlineError">{exportError}</div> : null}
         {artifacts.length ? (
           <div className="artifactList">
             {artifacts.map((artifact) => (
               <a href={artifactDownloadUrl(artifact)} key={artifact.artifact_id}>
-                {artifact.artifact_type}
+                {localizeArtifactType(artifact.artifact_type, language)}
               </a>
             ))}
           </div>
@@ -2812,13 +2908,13 @@ function AnalysisPage({
       </section>
       {analysis ? (
         <section className="toolPanel analysisMainPanel">
-          <h2>{selectedRunId ? `Analysis · ${selectedRunId}` : "Analysis"}</h2>
+          <h2>{selectedRunId ? `${t("Analysis")} · ${selectedRunId}` : t("Analysis")}</h2>
           <ResultSourceToggle source={resultSource} onSource={setResultSource} />
           <AnalysisAfasChart analysis={displayedAnalysis ?? analysis} />
           <details className="analysisParameterDisclosure">
             <summary>
               <Settings size={15} aria-hidden="true" />
-              AFAS parameters
+              {t("AFAS parameters")}
             </summary>
             <AfasParameterPanel
               analysis={analysis}
@@ -2839,34 +2935,36 @@ function ResultSourceToggle({
   source: DetectionResultSource;
   onSource: (source: DetectionResultSource) => void;
 }) {
+  const t = useUiText();
   return (
-    <div className="segmented wide resultSourceToggle" aria-label="Detection result source">
+    <div className="segmented wide resultSourceToggle" aria-label={t("Detection result source")}>
       <button className={source === "stabilized" ? "active" : ""} onClick={() => onSource("stabilized")} type="button">
-        Stabilized
+        {t("Stabilized")}
       </button>
       <button className={source === "raw" ? "active" : ""} onClick={() => onSource("raw")} type="button">
-        Raw
+        {t("Raw")}
       </button>
     </div>
   );
 }
 
 function AfasResultPanel({ analysis }: { analysis: AnalysisResult }) {
+  const language = useUiLanguage();
   const afas = analysis.afas_analysis ?? {};
   const result = readRecord(afas.result);
   const fit = readRecord(afas.fit);
-  const status = typeof afas.result_status === "string" ? afas.result_status : "unavailable";
+  const status = typeof afas.result_status === "string" ? uiStatus(language, afas.result_status) : uiText(language, "unavailable");
   return (
     <dl className="metricGrid compact afasResultGrid">
       <Metric label="Status" value={status} />
-      <Metric label="As" value={formatOptionalNumber(result.As, " °C")} />
-      <Metric label="Af-tan" value={formatOptionalNumber(result.Af_tan, " °C")} />
-      <Metric label="ΔT" value={formatDeltaT(result.As, result.Af_tan)} />
-      <Metric label="Max slope" value={formatOptionalNumber(result.max_slope_temp, " °C")} />
-      <Metric label="Outliers" value={typeof afas.outlier_count === "number" ? afas.outlier_count : "None"} />
+      <Metric label="As" value={formatOptionalNumber(result.As, " °C", language)} />
+      <Metric label="Af-tan" value={formatOptionalNumber(result.Af_tan, " °C", language)} />
+      <Metric label="ΔT" value={formatDeltaT(result.As, result.Af_tan, language)} />
+      <Metric label="Max slope" value={formatOptionalNumber(result.max_slope_temp, " °C", language)} />
+      <Metric label="Outliers" value={typeof afas.outlier_count === "number" ? afas.outlier_count : uiNone(language)} />
       <Metric label="Low range" value={formatRange(readRecord(afas.parameters).resolved_low_range_celsius)} />
       <Metric label="High range" value={formatRange(readRecord(afas.parameters).resolved_high_range_celsius)} />
-      <Metric label="Tangent slope" value={formatOptionalNumber(readRecord(fit.tangent).slope, " px/°C")} />
+      <Metric label="Tangent slope" value={formatOptionalNumber(readRecord(fit.tangent).slope, uiNumberSuffix(language, " px/°C"), language)} />
     </dl>
   );
 }
@@ -2880,6 +2978,8 @@ function AfasParameterPanel({
   runId: string | null;
   onAnalysisUpdated: (analysis: AnalysisResult) => void;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const [preprocessing, setPreprocessing] = useState<AfasPreprocessingParameters>(() =>
     readAfasPreprocessingParameters(analysis)
   );
@@ -2937,7 +3037,7 @@ function AfasParameterPanel({
       <div className="analysisParameterHeader">
         <h3>
           <Settings size={15} aria-hidden="true" />
-          AFAS Parameters
+          {t("AFAS Parameters")}
         </h3>
         <button
           className="secondaryButton analysisRecalculateButton"
@@ -2946,19 +3046,19 @@ function AfasParameterPanel({
           type="button"
         >
           <RefreshCcw size={15} aria-hidden="true" />
-          {recalculating ? "Recalculating" : "Recalculate"}
+          {recalculating ? t("Recalculating") : t("Recalculate")}
         </button>
       </div>
       <div className="analysisControlGrid">
         <fieldset>
-          <legend>Preprocessing</legend>
+          <legend>{t("Preprocessing")}</legend>
           <label className="field checkboxField">
             <input
               checked={preprocessing.group_by_temperature}
               onChange={(event) => patchPreprocessing({ group_by_temperature: event.target.checked })}
               type="checkbox"
             />
-            <span>Group by temperature</span>
+            <span>{t("Group by temperature")}</span>
           </label>
           <div className="twoColumnControls">
             <NumberField
@@ -2995,7 +3095,7 @@ function AfasParameterPanel({
           </div>
         </fieldset>
         <fieldset>
-          <legend>Tangent</legend>
+          <legend>{t("Tangent")}</legend>
           <div className="twoColumnControls">
             <NullableNumberField
               label="Low start °C"
@@ -3037,7 +3137,7 @@ function AfasParameterPanel({
       {warnings.length ? (
         <ul className="analysisWarningList">
           {warnings.map((warning, index) => (
-            <li key={`${warning}-${index}`}>{warning}</li>
+            <li key={`${warning}-${index}`}>{localizeDisplayString(warning, language)}</li>
           ))}
         </ul>
       ) : null}
@@ -3092,6 +3192,7 @@ function IndustrialCurveView({
   underlay?: React.ReactNode;
   variant: IndustrialCurveViewVariant;
 }) {
+  const t = useUiText();
   const frame = buildIndustrialCurveFrameModel({
     variant,
     width: model.width,
@@ -3099,8 +3200,8 @@ function IndustrialCurveView({
     plot: model.plot,
     xTicks: model.xTicks,
     yTicks: model.yTicks,
-    xAxisLabel: model.xAxisLabel,
-    yAxisLabel: model.yAxisLabel
+    xAxisLabel: t(model.xAxisLabel),
+    yAxisLabel: t(model.yAxisLabel)
   });
   return (
     <svg
@@ -3205,6 +3306,7 @@ function IndustrialCurveView({
 }
 
 function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
+  const t = useUiText();
   const [layers, setLayers] = useState<AnalysisAfasLayerState>({ raw: false, fit: true, markers: true });
   const [xDomain, setXDomain] = useState<[number, number] | null>(null);
   const [hoverTarget, setHoverTarget] = useState<AnalysisAfasHoverTarget | null>(null);
@@ -3273,20 +3375,20 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
     <div className="analysisAfasShell">
       <AnalysisAfasSummaryStrip model={model} />
       <div className="analysisAfasToolbar">
-        <div className="analysisAfasLayerGroup" aria-label="AFAS chart layers">
+        <div className="analysisAfasLayerGroup" aria-label={t("AFAS chart layers")}>
           <AnalysisLayerToggle
             checked={layers.raw}
-            label="Raw"
+            label={t("Raw")}
             onChange={(checked) => patchLayer("raw", checked)}
           />
           <AnalysisLayerToggle
             checked={layers.fit}
-            label="Fit"
+            label={t("Fit")}
             onChange={(checked) => patchLayer("fit", checked)}
           />
           <AnalysisLayerToggle
             checked={layers.markers}
-            label="Markers"
+            label={t("Markers")}
             onChange={(checked) => patchLayer("markers", checked)}
           />
         </div>
@@ -3297,17 +3399,17 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
           type="button"
         >
           <RefreshCcw size={15} aria-hidden="true" />
-          Reset zoom
+          {t("Reset zoom")}
         </button>
       </div>
       <figure className="analysisAfasFigure">
         <figcaption>
-          <span>AFAS temperature-distance review</span>
-          <span>{xDomain ? `${model.xRange.min.toFixed(2)}-${model.xRange.max.toFixed(2)} °C` : "Full analysis range"}</span>
+          <span>{t("AFAS temperature-distance review")}</span>
+          <span>{xDomain ? `${model.xRange.min.toFixed(2)}-${model.xRange.max.toFixed(2)} °C` : t("Full analysis range")}</span>
         </figcaption>
         <IndustrialCurveView
           className="analysisAfasSvg"
-          ariaLabel="AFAS temperature-distance review chart"
+          ariaLabel={t("AFAS temperature-distance review chart")}
           model={model}
           onMouseDown={handleMouseDown}
           onMouseLeave={() => {
@@ -3357,7 +3459,7 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
               <g className={`analysisAfasFitLineGroup analysisAfasFitLineGroup--${line.kind}`} key={`fit-${line.kind}`}>
                 <line className={`analysisAfasFitLine analysisAfasFitLine--${line.kind}`} x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
                 <text className="analysisAfasInlineLabel" x={line.labelX} y={line.labelY - 8} textAnchor="middle">
-                  {line.label}
+                  {t(line.label)}
                 </text>
               </g>
             ))}
@@ -3367,13 +3469,13 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
               <g className="analysisAfasFitLineGroup analysisAfasFitLineGroup--tangent" key="fit-tangent">
                 <line className="analysisAfasFitLine analysisAfasFitLine--tangent" x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
                 <text className="analysisAfasInlineLabel analysisAfasInlineLabel--tangent" x={line.labelX} y={line.labelY - 10} textAnchor="middle">
-                  Tangent
+                  {t("Tangent")}
                 </text>
               </g>
             ))}
           {model.constructionGuides.map((guide) => (
             <line
-              aria-label={`${guide.label}; ${guide.role}`}
+              aria-label={`${t(guide.label)}; ${t(guide.role)}`}
               className={`analysisAfasConstructionGuide analysisAfasConstructionGuide--${guide.kind}`}
               key={`guide-${guide.kind}`}
               x1={guide.x1}
@@ -3387,7 +3489,7 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
           ) : null}
           {model.smoothedPoints.length ? (
             <text className="analysisAfasSmoothedLabel" x={smoothedLabelX(model)} y={smoothedLabelY(model)}>
-              Smoothed curve
+              {t("Smoothed curve")}
             </text>
           ) : null}
           {model.markers.map((marker) => (
@@ -3409,17 +3511,17 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
           {hoverTarget ? <AnalysisAfasTooltip target={hoverTarget} plot={model.plot} /> : null}
           {!model.hasPoints ? (
             <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
-              No AFAS temperature-distance points
+              {t("No AFAS temperature-distance points")}
             </text>
           ) : null}
         </IndustrialCurveView>
-        <div className="analysisAfasLegend" aria-label="AFAS chart legend">
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--smooth">Smoothed curve</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--construction">As/Af guides</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--fit">Baseline fit</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--tangent">Tangent</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--raw">Raw diagnostic</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--marker">As / Af / Max slope</span>
+        <div className="analysisAfasLegend" aria-label={t("AFAS chart legend")}>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--smooth">{t("Smoothed curve")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--construction">{t("As/Af guides")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--fit">{t("Baseline fit")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--tangent">{t("Tangent")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--raw">{t("Raw diagnostic")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--marker">{t("As / Af / Max slope")}</span>
         </div>
       </figure>
     </div>
@@ -3427,24 +3529,26 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
 }
 
 function AnalysisAfasSummaryStrip({ model }: { model: AnalysisAfasModel }) {
+  const language = useUiLanguage();
   return (
     <dl className="analysisAfasSummaryStrip">
-      <AnalysisAfasSummaryValue label="AFAS status" value={model.summary.status} />
-      <AnalysisAfasSummaryValue label="As" value={model.summary.asLabel} />
-      <AnalysisAfasSummaryValue label="Af-tan" value={model.summary.afTanLabel} />
-      <AnalysisAfasSummaryValue label="ΔT" value={model.summary.deltaLabel} />
-      <AnalysisAfasSummaryValue label="Max slope" value={model.summary.maxSlopeLabel} />
+      <AnalysisAfasSummaryValue label="AFAS status" value={uiStatus(language, model.summary.status)} />
+      <AnalysisAfasSummaryValue label="As" value={localizeDisplayString(model.summary.asLabel, language)} />
+      <AnalysisAfasSummaryValue label="Af-tan" value={localizeDisplayString(model.summary.afTanLabel, language)} />
+      <AnalysisAfasSummaryValue label="ΔT" value={localizeDisplayString(model.summary.deltaLabel, language)} />
+      <AnalysisAfasSummaryValue label="Max slope" value={localizeDisplayString(model.summary.maxSlopeLabel, language)} />
       <AnalysisAfasSummaryValue label="Raw points" value={model.summary.rawCountLabel} />
       <AnalysisAfasSummaryValue label="Smoothed points" value={model.summary.smoothedCountLabel} />
-      <AnalysisAfasSummaryValue label="Outliers" value={model.summary.outlierLabel} />
+      <AnalysisAfasSummaryValue label="Outliers" value={localizeDisplayString(model.summary.outlierLabel, language)} />
     </dl>
   );
 }
 
 function AnalysisAfasSummaryValue({ label, value }: { label: string; value: React.ReactNode }) {
+  const t = useUiText();
   return (
     <div>
-      <dt>{label}</dt>
+      <dt>{t(label)}</dt>
       <dd>{value}</dd>
     </div>
   );
@@ -3474,6 +3578,7 @@ function AfasReferenceMarker({
   marker: AnalysisAfasMarker;
   plot: AnalysisAfasModel["plot"];
 }) {
+  const t = useUiText();
   const badgeWidth = marker.kind === "af_tan" ? 104 : 86;
   const x = clamp(marker.x - badgeWidth / 2, plot.left + 4, plot.right - badgeWidth - 4);
   const badgeY = plot.top + (marker.kind === "af_tan" ? 38 : 10);
@@ -3483,7 +3588,7 @@ function AfasReferenceMarker({
       <circle cx={marker.x} cy={marker.y} r={4.6} />
       <rect x={x} y={badgeY} width={badgeWidth} height={24} rx={4} />
       <text x={x + badgeWidth / 2} y={badgeY + 16} textAnchor="middle">
-        {marker.label} {marker.temperature.toFixed(2)}°C
+        {t(marker.label)} {marker.temperature.toFixed(2)}°C
       </text>
     </g>
   );
@@ -3496,6 +3601,7 @@ function MaxSlopeMarker({
   marker: AnalysisAfasMarker;
   plot: AnalysisAfasModel["plot"];
 }) {
+  const t = useUiText();
   const labelX = marker.x > plot.right - 110 ? marker.x - 13 : marker.x + 13;
   const labelY = marker.y < plot.top + 28 ? marker.y + 30 : marker.y - 14;
   const textAnchor = labelX < marker.x ? "end" : "start";
@@ -3503,7 +3609,7 @@ function MaxSlopeMarker({
     <g className="analysisAfasMaxSlopeMarker">
       <polygon points={`${marker.x},${marker.y - 8} ${marker.x + 8},${marker.y} ${marker.x},${marker.y + 8} ${marker.x - 8},${marker.y}`} />
       <text x={labelX} y={labelY} textAnchor={textAnchor}>
-        Max slope
+        {t("Max slope")}
       </text>
     </g>
   );
@@ -3516,13 +3622,22 @@ function AnalysisAfasTooltip({
   target: AnalysisAfasHoverTarget;
   plot: AnalysisAfasModel["plot"];
 }) {
-  const seriesLabel = target.source === "construction" ? "AFAS construction guide" : target.label;
-  const lines = [
-    `series: ${seriesLabel}`,
-    `temperature: ${target.temperature.toFixed(2)} °C`,
-    `distance: ${target.distance.toFixed(2)} px`,
-    `frame_index: ${target.frameIndex ?? "None"}`
-  ];
+  const language = useUiLanguage();
+  const t = useUiText();
+  const seriesLabel = target.source === "construction" ? t("AFAS construction guide") : t(target.label);
+  const lines = language === "zh"
+    ? [
+        `序列：${seriesLabel}`,
+        `温度：${target.temperature.toFixed(2)} °C`,
+        `距离：${target.distance.toFixed(2)} 像素`,
+        `帧序号：${target.frameIndex ?? t("None")}`
+      ]
+    : [
+        `series: ${seriesLabel}`,
+        `temperature: ${target.temperature.toFixed(2)} °C`,
+        `distance: ${target.distance.toFixed(2)} px`,
+        `frame_index: ${target.frameIndex ?? "None"}`
+      ];
   const width = 238;
   const height = 76;
   const x = target.x > plot.right - width - 14 ? target.x - width - 12 : target.x + 12;
@@ -3656,6 +3771,8 @@ function RunTrendChart({
   isRunning: boolean;
   targetTemperature: number | null;
 }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   const width = 900;
   const height = 420;
   const stickyYAxisEnabled = isRunning;
@@ -3721,12 +3838,12 @@ function RunTrendChart({
       <RunValueStrip valueStrip={model.valueStrip} />
       <figure className="runTrendFigure">
         <figcaption>
-          <span>{model.sourceLabel}</span>
-          <span>{isRunning ? "Current run so far" : "Full run"}</span>
+          <span>{t(model.sourceLabel)}</span>
+          <span>{isRunning ? t("Current run so far") : t("Full run")}</span>
         </figcaption>
         <IndustrialCurveView
           className="runTrendSvg"
-          ariaLabel="Run temperature-distance trend chart"
+          ariaLabel={t("Run temperature-distance trend chart")}
           model={model}
           onMouseLeave={() => setHoverPoint(null)}
           onMouseMove={handleMouseMove}
@@ -3737,7 +3854,7 @@ function RunTrendChart({
               <rect x={targetX - 9} y={model.plot.top} width={18} height={model.plot.bottom - model.plot.top} />
               <line x1={targetX} x2={targetX} y1={model.plot.top} y2={model.plot.bottom} />
               <text x={targetX + 12} y={model.plot.top + 18}>
-                Target {targetTemperature?.toFixed(2)}°C
+                {t("Target")} {targetTemperature?.toFixed(2)}°C
               </text>
             </g>
           ) : null}
@@ -3777,7 +3894,7 @@ function RunTrendChart({
                 </g>
               ))}
               <text x={model.plot.left} y={model.plot.bottom + 49}>
-                status rug: INVALID / stale / missing frames
+                {t("status rug: INVALID / stale / missing frames")}
               </text>
             </g>
           ) : null}
@@ -3791,7 +3908,7 @@ function RunTrendChart({
                 y={model.latestPoint.y < model.plot.top + 26 ? model.latestPoint.y + 30 : model.latestPoint.y - 14}
                 textAnchor={model.latestPoint.x > model.plot.right - 250 ? "end" : "start"}
               >
-                {formatRunTrendPointLabel(model.latestPoint)}
+                {formatRunTrendPointLabel(model.latestPoint, language)}
               </text>
             </g>
           ) : null}
@@ -3801,13 +3918,13 @@ function RunTrendChart({
               x={runTrendLineLabelPoint(model).x}
               y={runTrendLineLabelPoint(model).y}
             >
-              {runTrendLineLabel(model.source)}
+              {runTrendLineLabel(model.source, language)}
             </text>
           ) : null}
           {activePoint ? <RunTrendTooltip point={activePoint} plot={model.plot} /> : null}
           {!model.hasPoints ? (
             <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
-              No formal temperature-distance points
+              {t("No formal temperature-distance points")}
             </text>
           ) : null}
         </IndustrialCurveView>
@@ -3828,22 +3945,24 @@ function sameYAxisRange(
 }
 
 function RunValueStrip({ valueStrip }: { valueStrip: ReturnType<typeof buildRunTrendModel>["valueStrip"] }) {
+  const language = useUiLanguage();
   return (
     <dl className="runValueStrip">
-      <RunValue label="Current distance" value={formatNullableNumber(valueStrip.currentDistance, " px", 1)} />
-      <RunValue label="Current temperature" value={formatNullableNumber(valueStrip.currentTemperature, " °C", 2)} />
-      <RunValue label="Frame" value={valueStrip.currentFrame?.toLocaleString() ?? "None"} />
-      <RunValue label="Sync status" value={shortStatus(valueStrip.syncStatus)} tone={statusTone(valueStrip.syncStatus, "sync")} />
-      <RunValue label="Valid / Invalid" value={shortStatus(valueStrip.detectionStatus)} tone={statusTone(valueStrip.detectionStatus, "detection")} />
+      <RunValue label="Current distance" value={formatNullableNumber(valueStrip.currentDistance, uiNumberSuffix(language, " px"), 1, language)} />
+      <RunValue label="Current temperature" value={formatNullableNumber(valueStrip.currentTemperature, " °C", 2, language)} />
+      <RunValue label="Frame" value={valueStrip.currentFrame?.toLocaleString() ?? uiNone(language)} />
+      <RunValue label="Sync status" value={shortStatus(valueStrip.syncStatus, language)} tone={statusTone(valueStrip.syncStatus, "sync")} />
+      <RunValue label="Valid / Invalid" value={shortStatus(valueStrip.detectionStatus, language)} tone={statusTone(valueStrip.detectionStatus, "detection")} />
       <RunValue label="Temp-distance points" value={valueStrip.points.toLocaleString()} />
     </dl>
   );
 }
 
 function RunValue({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "ok" | "warn" | "bad" }) {
+  const t = useUiText();
   return (
     <div className={tone ? `runValue runValue--${tone}` : "runValue"}>
-      <dt>{label}</dt>
+      <dt>{t(label)}</dt>
       <dd>{value}</dd>
     </div>
   );
@@ -3856,14 +3975,25 @@ function RunTrendTooltip({
   point: RunTrendPoint;
   plot: { left: number; right: number; top: number; bottom: number };
 }) {
-  const lines = [
-    `frame_index: ${point.frameIndex ?? "None"}`,
-    `temperature: ${point.temperature.toFixed(2)} °C`,
-    `distance: ${point.distance.toFixed(2)} px`,
-    `sync status: ${point.syncStatus ?? "None"}`,
-    `detection status: ${point.detectionStatus ?? "VALID"}`,
-    `series: ${point.source}`
-  ];
+  const language = useUiLanguage();
+  const t = useUiText();
+  const lines = language === "zh"
+    ? [
+        `帧序号：${point.frameIndex ?? t("None")}`,
+        `温度：${point.temperature.toFixed(2)} °C`,
+        `距离：${point.distance.toFixed(2)} 像素`,
+        `同步状态：${shortStatus(point.syncStatus, language)}`,
+        `检测状态：${shortStatus(point.detectionStatus ?? "VALID", language)}`,
+        `序列：${runTrendLineLabel(point.source, language)}`
+      ]
+    : [
+        `frame_index: ${point.frameIndex ?? "None"}`,
+        `temperature: ${point.temperature.toFixed(2)} °C`,
+        `distance: ${point.distance.toFixed(2)} px`,
+        `sync status: ${point.syncStatus ?? "None"}`,
+        `detection status: ${point.detectionStatus ?? "VALID"}`,
+        `series: ${point.source}`
+      ];
   const width = 258;
   const height = 106;
   const x = point.x > plot.right - width - 14 ? point.x - width - 12 : point.x + 12;
@@ -3885,15 +4015,20 @@ function scaleValue(value: number, min: number, max: number, outMin: number, out
   return outMin + ((value - min) * (outMax - outMin)) / (max - min);
 }
 
-function formatRunTrendPointLabel(point: RunTrendPoint): string {
-  const prefix = point.frameIndex === null ? "curve point" : `frame ${point.frameIndex}`;
-  return `${prefix} · ${point.temperature.toFixed(2)}°C · ${point.distance.toFixed(1)}px`;
+function formatRunTrendPointLabel(point: RunTrendPoint, language: UiLanguage = "en"): string {
+  const prefix = point.frameIndex === null
+    ? uiText(language, "curve point")
+    : language === "zh"
+      ? `${uiText(language, "frame")} ${point.frameIndex}`
+      : `frame ${point.frameIndex}`;
+  const distanceSuffix = language === "zh" ? "像素" : "px";
+  return `${prefix} · ${point.temperature.toFixed(2)}°C · ${point.distance.toFixed(1)}${distanceSuffix}`;
 }
 
-function runTrendLineLabel(source: RunTrendPoint["source"]): string {
-  if (source === "smoothed") return "backend smoothed curve";
-  if (source === "grouped") return "backend binned curve";
-  return "raw scatter";
+function runTrendLineLabel(source: RunTrendPoint["source"], language: UiLanguage = "en"): string {
+  if (source === "smoothed") return uiText(language, "backend smoothed curve");
+  if (source === "grouped") return uiText(language, "backend binned curve");
+  return uiText(language, "raw scatter");
 }
 
 function runTrendLineLabelPoint(model: ReturnType<typeof buildRunTrendModel>): { x: number; y: number } {
@@ -3905,12 +4040,13 @@ function runTrendLineLabelPoint(model: ReturnType<typeof buildRunTrendModel>): {
   };
 }
 
-function formatNullableNumber(value: number | null, suffix: string, digits: number): string {
-  return value === null || !Number.isFinite(value) ? "None" : `${value.toFixed(digits)}${suffix}`;
+function formatNullableNumber(value: number | null, suffix: string, digits: number, language: UiLanguage = "en"): string {
+  return value === null || !Number.isFinite(value) ? uiNone(language) : `${value.toFixed(digits)}${suffix}`;
 }
 
-function shortStatus(status: string | null): string {
-  if (!status) return "None";
+function shortStatus(status: string | null, language: UiLanguage = "en"): string {
+  if (!status) return uiNone(language);
+  if (language === "zh") return uiStatus(language, status);
   return status.replace(/^TEMP_SYNC_/, "").replace(/^INVALID_/, "INVALID ");
 }
 
@@ -3935,13 +4071,26 @@ function CurveGrid({ analysis, variant }: { analysis: AnalysisResult; variant: "
 }
 
 function CurveView({ spec }: { spec: CurveSpec }) {
+  const t = useUiText();
   const width = 360;
   const height = 220;
-  const model = buildCurveViewModel(spec, width, height);
+  const localizedSpec = {
+    ...spec,
+    title: t(spec.title),
+    xAxisLabel: t(spec.xAxisLabel),
+    yAxisLabel: t(spec.yAxisLabel),
+    overlays: spec.overlays
+      ? {
+          lines: spec.overlays.lines.map((line) => ({ ...line, label: t(line.label) })),
+          markers: spec.overlays.markers.map((marker) => ({ ...marker, label: t(marker.label) }))
+        }
+      : undefined
+  };
+  const model = buildCurveViewModel(localizedSpec, width, height);
   const titleId = `curve-title-${spec.key}`;
   return (
     <figure className="curveView">
-      <figcaption id={titleId}>{spec.title}</figcaption>
+      <figcaption id={titleId}>{localizedSpec.title}</figcaption>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby={titleId}>
         <rect className="curveFrame" x={0} y={0} width={width} height={height} rx={6} />
         {model.xTicks.map((tick, index) => (
@@ -4017,7 +4166,7 @@ function CurveView({ spec }: { spec: CurveSpec }) {
           <polyline className="curveLine" points={model.polyline} style={{ stroke: spec.color }} />
         ) : (
           <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
-            No data
+            {t("No data")}
           </text>
         )}
         {model.overlayMarkers.map((marker) => {
@@ -4036,8 +4185,8 @@ function CurveView({ spec }: { spec: CurveSpec }) {
       </svg>
       {model.referencePoints.length || model.overlayLines.length || model.overlayMarkers.length ? (
         <div className="curveLegend">
-          {model.referencePoints.length ? <span className="curveLegendItem curveLegendItem--raw">Raw</span> : null}
-          <span className="curveLegendItem curveLegendItem--smooth">Smoothed</span>
+          {model.referencePoints.length ? <span className="curveLegendItem curveLegendItem--raw">{t("Raw")}</span> : null}
+          <span className="curveLegendItem curveLegendItem--smooth">{t("Smoothed")}</span>
           {model.overlayLines.map((line) => (
             <span className={`curveLegendItem curveLegendItem--${line.kind}`} key={`legend-${line.kind}`}>
               {line.label}
@@ -4050,12 +4199,47 @@ function CurveView({ spec }: { spec: CurveSpec }) {
 }
 
 function Metric({ label, value }: { label: string; value: React.ReactNode }) {
+  const language = useUiLanguage();
+  const t = useUiText();
   return (
     <div>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dt>{t(label)}</dt>
+      <dd>{typeof value === "string" ? localizeDisplayString(value, language) : value}</dd>
     </div>
   );
+}
+
+function localizeDisplayString(value: string, language: UiLanguage): string {
+  if (language === "en") return value;
+  if (/^-?\d+(\.\d+)? px$/.test(value)) return value.replace(/ px$/, " 像素");
+  if (/^-?\d+(\.\d+)? px\/°C$/.test(value)) return value.replace(/ px\/°C$/, " 像素/°C");
+  if (/^\d+ frames$/.test(value)) return value.replace(" frames", " 帧");
+  if (value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
+    return uiObjectClass(language, value);
+  }
+  if (value === "BalloonEnvelopeDetector" || value === "BundleEnvelopeDetector" || value === "ReservedObjectDetector") {
+    return uiDetector(language, value);
+  }
+  if (value === "max_width" || value === "min_width") return uiWidthMode(language, value);
+  return uiValue(language, value);
+}
+
+function localizeShapeChangeMessage(message: string, language: UiLanguage): string {
+  if (language === "en") return message;
+  const match = /^Frame shape changed from (.+) to (.+); confirm ROI before formal run\.$/.exec(message);
+  if (match) return `画面尺寸由 ${match[1]} 变为 ${match[2]}；正式测量前请确认测量区域。`;
+  return uiValue(language, message);
+}
+
+function localizeArtifactType(value: string, language: UiLanguage): string {
+  if (language === "en") return value;
+  const normalized = value.toLowerCase();
+  if (normalized === "csv") return "CSV 表格";
+  if (normalized === "json") return "JSON 记录";
+  if (normalized === "png") return "PNG 图像";
+  if (normalized.includes("overlay")) return "叠加图";
+  if (normalized.includes("curve")) return "曲线图";
+  return value;
 }
 
 function previewValue(preview: CameraPreviewResponse | null, key: "model" | "serial_number" | "ip" | "pixel_format"): string {
@@ -4350,17 +4534,17 @@ function mergeLiveAfasPreprocessing(
   };
 }
 
-function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized"): string {
+function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized", language: UiLanguage = "en"): string {
   const value = distanceForResultSource(result, source);
-  return value == null ? "None" : `${value.toFixed(2)} px`;
+  return value == null ? uiNone(language) : `${value.toFixed(2)}${uiNumberSuffix(language, " px")}`;
 }
 
-function formatTemperature(result: DetectionResult | null): string {
-  return result?.temperature_celsius == null ? "None" : `${result.temperature_celsius.toFixed(2)} °C`;
+function formatTemperature(result: DetectionResult | null, language: UiLanguage = "en"): string {
+  return result?.temperature_celsius == null ? uiNone(language) : `${result.temperature_celsius.toFixed(2)} °C`;
 }
 
-function formatTemperatureValue(value: number | null): string {
-  return value == null || !Number.isFinite(value) ? "None" : `${value.toFixed(2)} °C`;
+function formatTemperatureValue(value: number | null, language: UiLanguage = "en"): string {
+  return value == null || !Number.isFinite(value) ? uiNone(language) : `${value.toFixed(2)} °C`;
 }
 
 function formatTemperatureStatus(status: TemperatureStatusResponse | null): string {
@@ -4491,8 +4675,8 @@ function readRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function formatOptionalNumber(value: unknown, suffix = ""): string {
-  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}${suffix}` : "None";
+function formatOptionalNumber(value: unknown, suffix = "", language: UiLanguage = "en"): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}${suffix}` : uiNone(language);
 }
 
 function formatOptionalInteger(value: unknown): string {
@@ -4503,9 +4687,9 @@ function formatArrayCount(value: unknown): string {
   return Array.isArray(value) ? value.length.toLocaleString() : "0";
 }
 
-function formatDeltaT(start: unknown, end: unknown): string {
-  if (typeof start !== "number" || typeof end !== "number") return "None";
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "None";
+function formatDeltaT(start: unknown, end: unknown, language: UiLanguage = "en"): string {
+  if (typeof start !== "number" || typeof end !== "number") return uiNone(language);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return uiNone(language);
   return `${(end - start).toFixed(2)} °C`;
 }
 
