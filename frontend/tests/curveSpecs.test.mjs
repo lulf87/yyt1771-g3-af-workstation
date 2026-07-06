@@ -186,7 +186,7 @@ function sampleAnalysisWithYAxisStress() {
   };
 }
 
-test("analysis AFAS model separates review layers and keeps baselines clipped to fit ranges", async () => {
+test("analysis AFAS model separates review layers and extends baselines to AS and AF", async () => {
   const { buildAnalysisAfasModel } = await loadCurveModule();
 
   const model = buildAnalysisAfasModel(sampleAnalysisWithTangentOverlay(), {
@@ -204,15 +204,15 @@ test("analysis AFAS model separates review layers and keeps baselines clipped to
   assert.deepEqual(
     model.fitLines.map((line) => [line.kind, line.label]),
     [
-      ["low_baseline", "Low baseline"],
-      ["high_baseline", "High baseline"],
-      ["tangent", "Tangent"]
+      ["low_baseline", "AS baseline / Low baseline"],
+      ["high_baseline", "AF baseline / High baseline"],
+      ["tangent", "Maximum slope tangent"]
     ]
   );
   const lowBaseline = model.fitLines.find((line) => line.kind === "low_baseline");
   const highBaseline = model.fitLines.find((line) => line.kind === "high_baseline");
-  assert.deepEqual(lowBaseline?.dataRange, [20, 28]);
-  assert.deepEqual(highBaseline?.dataRange, [40, 48]);
+  assert.deepEqual(lowBaseline?.dataRange, [20, 24]);
+  assert.deepEqual(highBaseline?.dataRange, [42, 48]);
   assert.ok(model.fitLines.every((line) => Number.isFinite(line.x1) && Number.isFinite(line.y1)));
   assert.deepEqual(
     model.markers.map((marker) => marker.kind),
@@ -224,6 +224,93 @@ test("analysis AFAS model separates review layers and keeps baselines clipped to
   assert.ok(model.xRange.max >= 48);
   assert.ok(model.xTicks.length >= 4);
   assert.ok(model.yTicks.length >= 4);
+});
+
+test("analysis AFAS model exposes AS and AF construction semantics with user-facing labels", async () => {
+  const { buildAnalysisAfasModel } = await loadCurveModule();
+
+  const model = buildAnalysisAfasModel(sampleAnalysisWithTangentOverlay(), {
+    width: 980,
+    height: 540,
+    layers: { raw: true, fit: true, markers: true }
+  });
+
+  assert.deepEqual(
+    model.fitLines.map((line) => [line.kind, line.label, line.dataRange]),
+    [
+      ["low_baseline", "AS baseline / Low baseline", [20, 24]],
+      ["high_baseline", "AF baseline / High baseline", [42, 48]],
+      ["tangent", "Maximum slope tangent", null]
+    ]
+  );
+  assert.deepEqual(
+    model.constructionGuides.map((guide) => [guide.kind, guide.label]),
+    [
+      ["as_vertical", "AS"],
+      ["af_vertical", "AF"],
+      ["max_slope_vertical", "Max slope point"]
+    ]
+  );
+  const asMarker = model.markers.find((marker) => marker.kind === "as");
+  const afMarker = model.markers.find((marker) => marker.kind === "af_tan");
+  const maxSlopeMarker = model.markers.find((marker) => marker.kind === "max_slope");
+  assert.equal(asMarker?.label, "AS");
+  assert.equal(asMarker?.valueLabel, "AS 24.00°C");
+  assert.equal(afMarker?.label, "AF");
+  assert.equal(afMarker?.valueLabel, "AF 42.00°C");
+  assert.equal(maxSlopeMarker?.label, "Max slope point");
+  assert.equal(asMarker?.distance, 0.2 * 24 + 121);
+  assert.equal(afMarker?.distance, 0.2 * 42 + 121);
+  assert.equal(model.constructionNote, "AS = maximum slope tangent × low-temperature baseline; AF = maximum slope tangent × high-temperature baseline. Low/high baselines come from linear fits in their temperature ranges.");
+});
+
+test("analysis AFAS marker labels reserve padded backgrounds and avoid AS AF overlap", async () => {
+  const { buildAnalysisAfasModel } = await loadCurveModule();
+  const analysis = {
+    ...sampleAnalysisWithTangentOverlay(),
+    afas_analysis: {
+      ...sampleAnalysisWithTangentOverlay().afas_analysis,
+      result: {
+        As: 24.0,
+        Af_tan: 24.12,
+        max_slope_temp: 24.06
+      },
+      fit: {
+        ...sampleAnalysisWithTangentOverlay().afas_analysis.fit,
+        max_slope_temperature_celsius: 24.06,
+        max_slope_value: 125.812
+      }
+    }
+  };
+
+  const model = buildAnalysisAfasModel(analysis, {
+    width: 420,
+    height: 300,
+    layers: { raw: false, fit: true, markers: true }
+  });
+  const asBox = model.markers.find((marker) => marker.kind === "as")?.labelBox;
+  const afBox = model.markers.find((marker) => marker.kind === "af_tan")?.labelBox;
+
+  assert.ok(asBox);
+  assert.ok(afBox);
+  assert.equal(asBox.clipPath, null);
+  assert.equal(afBox.clipPath, null);
+  assert.equal(asBox.fillOpacity, 1);
+  assert.equal(afBox.fillOpacity, 1);
+  assert.ok(asBox.width >= asBox.textWidth + asBox.paddingX * 2);
+  assert.ok(afBox.width >= afBox.textWidth + afBox.paddingX * 2);
+  assert.ok(asBox.x >= 0 && asBox.x + asBox.width <= model.width);
+  assert.ok(afBox.x >= 0 && afBox.x + afBox.width <= model.width);
+  const overlapX = Math.max(0, Math.min(asBox.x + asBox.width, afBox.x + afBox.width) - Math.max(asBox.x, afBox.x));
+  const overlapY = Math.max(0, Math.min(asBox.y + asBox.height, afBox.y + afBox.height) - Math.max(asBox.y, afBox.y));
+  assert.equal(overlapX * overlapY, 0);
+});
+
+test("analysis AFAS UI source does not expose Af-tan as a user label", () => {
+  const source = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
+
+  assert.doesNotMatch(source, /label="Af-tan"/);
+  assert.doesNotMatch(source, /t\("Af-tan"\)/);
 });
 
 test("analysis AFAS model honors layer toggles and zoom domain without recalculating data", async () => {
@@ -389,7 +476,7 @@ test("analysis AFAS model explains stale frames when saved formal curve is empty
   assert.equal(model.emptyState?.tempSyncTargetMs, 10);
 });
 
-test("analysis AFAS shows As and Af-tan construction guides without stretching y axis", async () => {
+test("analysis AFAS shows AS, AF, and max slope vertical guides without stretching y axis", async () => {
   const { buildAnalysisAfasModel } = await loadCurveModule();
 
   const model = buildAnalysisAfasModel(sampleAnalysisWithTangentOverlay(), {
@@ -400,7 +487,7 @@ test("analysis AFAS shows As and Af-tan construction guides without stretching y
 
   assert.deepEqual(
     model.constructionGuides.map((guide) => guide.kind),
-    ["as_guide", "af_tan_guide"]
+    ["as_vertical", "af_vertical", "max_slope_vertical"]
   );
   assert.ok(model.constructionGuides.every((guide) => guide.role === "AFAS construction guide"));
   assert.ok(model.constructionGuides.every((guide) => guide.x1 >= model.plot.left && guide.x1 <= model.plot.right));

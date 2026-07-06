@@ -56,6 +56,28 @@ def test_hik_preview_uses_lazy_sdk_frame_source(monkeypatch: pytest.MonkeyPatch)
     assert captured.camera_meta["pixel_format"] == "mono8"
 
 
+def test_hik_frame_acquisition_error_uses_source_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingCamera:
+        def preview_frame(self) -> CameraFrame:
+            raise RuntimeError("device busy")
+
+    fake_sdk = SimpleNamespace(create_camera=lambda profile=None: FailingCamera())
+
+    def fake_import(name: str):  # noqa: ANN202
+        if name == "MvCameraControl_class":
+            return fake_sdk
+        raise AssertionError(f"unexpected import: {name}")
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+    source = HikMvsCameraSource(profile={"pixel_format": "mono8"})
+
+    with pytest.raises(CameraUnavailableError) as exc_info:
+        source.preview_frame()
+
+    assert "frame acquisition failed" in str(exc_info.value)
+    assert "preview failed" not in str(exc_info.value).lower()
+
+
 def test_hik_sdk_loader_uses_profile_library_path_override_for_official_binding(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

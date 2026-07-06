@@ -4,6 +4,7 @@ import base64
 import binascii
 import io
 import json
+import logging
 import os
 import threading
 from contextlib import asynccontextmanager, contextmanager
@@ -38,7 +39,7 @@ from yyt1771_g3.services.live_offline_run_service import (
 )
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
-from yyt1771_g3.services.export_service import export_run
+from yyt1771_g3.services.export_service import export_run, export_run_bundle
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
 from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
@@ -52,6 +53,8 @@ async def _lifespan(app: FastAPI):  # noqa: ANN202, ARG001
         with _camera_preview_lock:
             _reset_preview_camera_source()
 
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="YY/T 1771 G3 Backend", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(
@@ -807,11 +810,50 @@ def build_temperature_controller(config: HardwareConfig):  # noqa: ANN201
 
 @app.post("/api/runs/{run_id}/exports")
 def create_run_exports(run_id: str) -> dict[str, Any]:
+    logger.info("creating export artifacts for run_id=%s", run_id)
     try:
         artifacts = export_run(_run_store(), run_id)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}") from exc
+        logger.warning("export artifacts failed at read_run for run_id=%s", run_id)
+        raise HTTPException(
+            status_code=404,
+            detail={"message": f"Run not found: {run_id}", "stage": "read_run"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("export artifacts failed for run_id=%s", run_id)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Export failed: file generation failed; check backend logs",
+                "stage": "create_artifacts",
+                "error": str(exc),
+            },
+        ) from exc
     return {"artifacts": [_artifact_payload(run_id, artifact) for artifact in artifacts]}
+
+
+@app.post("/api/runs/{run_id}/exports/download")
+def download_run_export_bundle(run_id: str) -> FileResponse:
+    logger.info("creating export bundle for run_id=%s", run_id)
+    try:
+        bundle_path = export_run_bundle(_run_store(), run_id)
+    except FileNotFoundError as exc:
+        logger.warning("export bundle failed at read_run for run_id=%s: %s", run_id, exc)
+        raise HTTPException(
+            status_code=404,
+            detail={"message": f"Run not found: {run_id}", "stage": "read_run"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("export bundle failed for run_id=%s", run_id)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Export failed: file generation failed; check backend logs",
+                "stage": "zip_bundle",
+                "error": str(exc),
+            },
+        ) from exc
+    return FileResponse(bundle_path, media_type="application/zip", filename=bundle_path.name)
 
 
 @app.get("/api/exports/{run_id}/{filename}")

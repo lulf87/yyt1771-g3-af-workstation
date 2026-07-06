@@ -268,7 +268,7 @@ export type AnalysisAfasFitLine = {
 };
 
 export type AnalysisAfasConstructionGuide = {
-  kind: "as_guide" | "af_tan_guide";
+  kind: "as_vertical" | "af_vertical" | "max_slope_vertical";
   label: string;
   role: "AFAS construction guide";
   temperature: number;
@@ -281,6 +281,21 @@ export type AnalysisAfasConstructionGuide = {
   labelY: number;
 };
 
+export type AnalysisAfasLabelBox = {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  textX: number;
+  textY: number;
+  textWidth: number;
+  paddingX: number;
+  paddingY: number;
+  fillOpacity: number;
+  clipPath: null;
+};
+
 export type AnalysisAfasMarker = {
   kind: CurveOverlayMarkerSpec["kind"];
   label: string;
@@ -290,11 +305,13 @@ export type AnalysisAfasMarker = {
   x: number;
   y: number;
   yClipped: boolean;
+  labelBox: AnalysisAfasLabelBox | null;
 };
 
 export type AnalysisAfasSummary = {
   status: string;
   asLabel: string;
+  afLabel: string;
   afTanLabel: string;
   deltaLabel: string;
   maxSlopeLabel: string;
@@ -323,6 +340,7 @@ export type AnalysisAfasModel = {
   xRange: { min: number; max: number };
   yRange: { min: number; max: number };
   summary: AnalysisAfasSummary;
+  constructionNote: string | null;
   emptyState: TrendEmptyState | null;
   hasPoints: boolean;
 };
@@ -334,6 +352,10 @@ const DEFAULT_RUN_TREND_Y_AXIS_EXPAND_FACTOR = 1.5;
 const DEFAULT_ANALYSIS_AFAS_Y_AXIS_MIN_SPAN_PX = 20;
 const DISPLAY_Y_AXIS_OUTLIER_MIN_DEVIATION_PX = 8;
 const DISPLAY_Y_AXIS_OUTLIER_MAD_MULTIPLIER = 8;
+const AFAS_MARKER_LABEL_FONT_PX = 12;
+const AFAS_MARKER_LABEL_PADDING_X = 8;
+const AFAS_MARKER_LABEL_PADDING_Y = 4;
+const AFAS_MARKER_LABEL_HEIGHT = 24;
 const DEFAULT_ANALYSIS_AFAS_LAYERS: AnalysisAfasLayerState = {
   raw: false,
   fit: true,
@@ -962,9 +984,7 @@ export function buildAnalysisAfasModel(
     ? buildAnalysisAfasConstructionGuides(markerData, overlays.lines, xRange, yRange, plot)
     : [];
   const markers = layers.markers
-    ? markerData
-      .filter((marker) => valueInRange(marker.temperature, xRange))
-      .map((marker) => scaleAfasMarker(marker, xRange, yRange, plot))
+    ? buildAnalysisAfasMarkers(markerData, xRange, yRange, plot, width)
     : [];
   const xTicks = buildTicks(xRange.min, xRange.max, 5).map((value) => ({
     value,
@@ -998,6 +1018,7 @@ export function buildAnalysisAfasModel(
     xRange,
     yRange,
     summary: buildAnalysisAfasSummary(analysis, rawData.length, smoothedData.length),
+    constructionNote: buildAnalysisAfasConstructionNote(analysis),
     emptyState: hasPoints ? null : buildAnalysisEmptyState(analysis),
     hasPoints
   };
@@ -1100,7 +1121,7 @@ function readAfasMarkerData(markers: CurveOverlayMarkerSpec[]): AnalysisAfasMark
     return [{
       kind: marker.kind,
       label: marker.label,
-      valueLabel: marker.kind === "max_slope" ? "Max slope" : `${marker.label} ${marker.x.toFixed(2)}°C`,
+      valueLabel: marker.kind === "max_slope" ? "Max slope point" : `${marker.label} ${marker.x.toFixed(2)}°C`,
       temperature: marker.x,
       distance: marker.y
     }];
@@ -1185,52 +1206,75 @@ function buildAnalysisAfasConstructionGuides(
   yRange: { min: number; max: number },
   plot: AnalysisAfasModel["plot"]
 ): AnalysisAfasConstructionGuide[] {
-  const tangent = lines.find((line) => line.kind === "tangent");
-  if (!tangent) return [];
+  void lines;
+  void yRange;
   return markers
-    .filter((marker) => marker.kind === "as" || marker.kind === "af_tan")
+    .filter((marker) => marker.kind === "as" || marker.kind === "af_tan" || marker.kind === "max_slope")
     .filter((marker) => valueInRange(marker.temperature, xRange))
-    .flatMap((marker) => buildAnalysisAfasConstructionGuide(marker, tangent, xRange, yRange, plot));
+    .map((marker) => buildAnalysisAfasConstructionGuide(marker, xRange, plot));
 }
 
 function buildAnalysisAfasConstructionGuide(
   marker: AnalysisAfasMarkerData,
-  tangent: CurveOverlayLineSpec,
   xRange: { min: number; max: number },
-  yRange: { min: number; max: number },
   plot: AnalysisAfasModel["plot"]
-): AnalysisAfasConstructionGuide[] {
-  const span = Math.max(Math.abs(xRange.max - xRange.min), 1);
-  const halfWidth = Math.max(span * 0.055, 0.04);
-  const rawGuide = rawOverlayLineSegments([{
-    ...tangent,
-    range: [
-      Math.max(xRange.min, marker.temperature - halfWidth),
-      Math.min(xRange.max, marker.temperature + halfWidth)
-    ]
-  }], xRange)
-    .map((segment) => clipOverlayLineToYRange(segment, yRange))
-    .filter((segment): segment is RawOverlayLineSegment => segment !== null)[0];
-  if (!rawGuide) return [];
-
-  const x1 = scaleLinear(rawGuide.x1, xRange.min, xRange.max, plot.left, plot.right);
-  const y1 = scaleLinear(rawGuide.y1, yRange.min, yRange.max, plot.bottom, plot.top);
-  const x2 = scaleLinear(rawGuide.x2, xRange.min, xRange.max, plot.left, plot.right);
-  const y2 = scaleLinear(rawGuide.y2, yRange.min, yRange.max, plot.bottom, plot.top);
-  const kind = marker.kind === "as" ? "as_guide" : "af_tan_guide";
-  return [{
+): AnalysisAfasConstructionGuide {
+  const x = scaleLinear(marker.temperature, xRange.min, xRange.max, plot.left, plot.right);
+  const kind = marker.kind === "as"
+    ? "as_vertical"
+    : marker.kind === "af_tan"
+      ? "af_vertical"
+      : "max_slope_vertical";
+  const label = marker.kind === "as"
+    ? "AS"
+    : marker.kind === "af_tan"
+      ? "AF"
+      : "Max slope point";
+  return {
     kind,
-    label: marker.kind === "as" ? "As tangent guide" : "Af-tan tangent guide",
+    label,
     role: "AFAS construction guide",
     temperature: marker.temperature,
     distance: marker.distance,
-    x1,
-    y1,
-    x2,
-    y2,
-    labelX: (x1 + x2) / 2,
-    labelY: (y1 + y2) / 2
-  }];
+    x1: x,
+    y1: plot.top,
+    x2: x,
+    y2: plot.bottom,
+    labelX: x,
+    labelY: marker.kind === "max_slope" ? plot.top + 54 : plot.top + 28
+  };
+}
+
+function buildAnalysisAfasMarkers(
+  markers: AnalysisAfasMarkerData[],
+  xRange: { min: number; max: number },
+  yRange: { min: number; max: number },
+  plot: AnalysisAfasModel["plot"],
+  chartWidth: number
+): AnalysisAfasMarker[] {
+  const scaled = markers
+    .filter((marker) => valueInRange(marker.temperature, xRange))
+    .map((marker) => scaleAfasMarker(marker, xRange, yRange, plot));
+  const referenceMarkers = scaled.filter((marker) => marker.kind === "as" || marker.kind === "af_tan");
+  const labelBoxes = new Map<CurveOverlayMarkerSpec["kind"], AnalysisAfasLabelBox>();
+  for (const marker of referenceMarkers) {
+    const preferredRow = marker.kind === "as" ? 0 : 1;
+    labelBoxes.set(marker.kind, buildAfasMarkerLabelBox(marker, plot, chartWidth, preferredRow));
+  }
+  const asBox = labelBoxes.get("as");
+  const afBox = labelBoxes.get("af_tan");
+  if (asBox && afBox && boxesOverlap(asBox, afBox)) {
+    labelBoxes.set("af_tan", buildAfasMarkerLabelBox(
+      scaled.find((marker) => marker.kind === "af_tan") ?? referenceMarkers[0],
+      plot,
+      chartWidth,
+      2
+    ));
+  }
+  return scaled.map((marker) => ({
+    ...marker,
+    labelBox: labelBoxes.get(marker.kind) ?? null
+  }));
 }
 
 function scaleAfasMarker(
@@ -1250,8 +1294,53 @@ function scaleAfasMarker(
       plot.bottom,
       plot.top
     ),
-    yClipped
+    yClipped,
+    labelBox: null
   };
+}
+
+function buildAfasMarkerLabelBox(
+  marker: AnalysisAfasMarker,
+  plot: AnalysisAfasModel["plot"],
+  chartWidth: number,
+  row: number
+): AnalysisAfasLabelBox {
+  const textWidth = estimateSvgTextWidth(marker.valueLabel, AFAS_MARKER_LABEL_FONT_PX);
+  const width = Math.ceil(textWidth + AFAS_MARKER_LABEL_PADDING_X * 2);
+  const height = AFAS_MARKER_LABEL_HEIGHT;
+  const x = clampNumber(marker.x - width / 2, 4, Math.max(4, chartWidth - width - 4));
+  const y = Math.min(
+    plot.bottom - height - 4,
+    plot.top + 10 + Math.max(0, row) * (height + 6)
+  );
+  return {
+    text: marker.valueLabel,
+    x,
+    y,
+    width,
+    height,
+    textX: x + width / 2,
+    textY: y + height / 2 + 4,
+    textWidth,
+    paddingX: AFAS_MARKER_LABEL_PADDING_X,
+    paddingY: AFAS_MARKER_LABEL_PADDING_Y,
+    fillOpacity: 1,
+    clipPath: null
+  };
+}
+
+function estimateSvgTextWidth(text: string, fontSizePx: number): number {
+  let width = 0;
+  for (const character of text) {
+    width += /[A-Z0-9.°C]/.test(character) ? fontSizePx * 0.62 : fontSizePx * 0.5;
+  }
+  return Math.ceil(width);
+}
+
+function boxesOverlap(a: AnalysisAfasLabelBox, b: AnalysisAfasLabelBox): boolean {
+  const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return overlapX > 0 && overlapY > 0;
 }
 
 function buildAnalysisAfasSummary(
@@ -1263,13 +1352,14 @@ function buildAnalysisAfasSummary(
   const result = readRecord(afas.result);
   const fit = readRecord(afas.fit);
   const asValue = readFiniteNumber(result.As);
-  const afTan = readFiniteNumber(result.Af_tan);
+  const afTan = readAfasAfValue(result);
   const maxSlope = readFiniteNumber(result.max_slope_temp) ?? readFiniteNumber(fit.max_slope_temperature_celsius);
   const outlierCount = readFiniteNumber(afas.outlier_count) ??
     readFiniteNumber(readRecord(readRecord(analysis.afas_preprocessing).outlier_repair).outlier_count);
   return {
     status: readString(afas.result_status) ?? "unavailable",
     asLabel: formatAnalysisAfasTemperature(asValue),
+    afLabel: formatAnalysisAfasTemperature(afTan),
     afTanLabel: formatAnalysisAfasTemperature(afTan),
     deltaLabel: asValue !== null && afTan !== null ? `${(afTan - asValue).toFixed(2)} °C` : "None",
     maxSlopeLabel: formatAnalysisAfasTemperature(maxSlope),
@@ -1288,19 +1378,27 @@ function readAfasOverlays(analysis: AnalysisCurveSource): CurveOverlaySpec | und
   if (!afas || typeof afas !== "object") return undefined;
   const fit = readRecord((afas as { fit?: unknown }).fit);
   const result = readRecord((afas as { result?: unknown }).result);
-  const lowBaseline = readLine(fit.low_baseline, "low_baseline", "Low baseline");
-  const highBaseline = readLine(fit.high_baseline, "high_baseline", "High baseline");
-  const tangent = readLine(fit.tangent, "tangent", "Tangent");
+  const asValue = readFiniteNumber(result.As);
+  const afTan = readAfasAfValue(result);
+  const lowBaseline = extendBaselineToMarker(
+    readLine(fit.low_baseline, "low_baseline", "AS baseline / Low baseline"),
+    asValue,
+    "low"
+  );
+  const highBaseline = extendBaselineToMarker(
+    readLine(fit.high_baseline, "high_baseline", "AF baseline / High baseline"),
+    afTan,
+    "high"
+  );
+  const tangent = readLine(fit.tangent, "tangent", "Maximum slope tangent");
   const lines = [lowBaseline, highBaseline, tangent].filter((line): line is CurveOverlayLineSpec => line !== null);
   const tangentLine = tangent;
   const markers: CurveOverlayMarkerSpec[] = [];
   if (tangentLine) {
-    const asValue = readFiniteNumber(result.As);
-    const afTan = readFiniteNumber(result.Af_tan);
     if (asValue !== null) {
       markers.push({
         kind: "as",
-        label: "As",
+        label: "AS",
         x: asValue,
         y: tangentLine.slope * asValue + tangentLine.intercept
       });
@@ -1308,7 +1406,7 @@ function readAfasOverlays(analysis: AnalysisCurveSource): CurveOverlaySpec | und
     if (afTan !== null) {
       markers.push({
         kind: "af_tan",
-        label: "Af-tan",
+        label: "AF",
         x: afTan,
         y: tangentLine.slope * afTan + tangentLine.intercept
       });
@@ -1319,12 +1417,47 @@ function readAfasOverlays(analysis: AnalysisCurveSource): CurveOverlaySpec | und
   if (maxSlopeTemperature !== null && maxSlopeValue !== null) {
     markers.push({
       kind: "max_slope",
-      label: "Max slope",
+      label: "Max slope point",
       x: maxSlopeTemperature,
       y: maxSlopeValue
     });
   }
   return lines.length || markers.length ? { lines, markers } : undefined;
+}
+
+function buildAnalysisAfasConstructionNote(analysis: AnalysisCurveSource): string | null {
+  const afas = readRecord(analysis.afas_analysis);
+  const result = readRecord(afas.result);
+  const status = readString(afas.result_status);
+  const asValue = readFiniteNumber(result.As);
+  const afValue = readAfasAfValue(result);
+  if (status !== "ok" && (asValue === null || afValue === null)) return null;
+  return "AS = maximum slope tangent × low-temperature baseline; AF = maximum slope tangent × high-temperature baseline. Low/high baselines come from linear fits in their temperature ranges.";
+}
+
+function readAfasAfValue(result: Record<string, unknown>): number | null {
+  return readFiniteNumber(result.Af_tan) ??
+    readFiniteNumber(result.AF) ??
+    readFiniteNumber(result.Af) ??
+    readFiniteNumber(result.af_tan);
+}
+
+function extendBaselineToMarker(
+  line: CurveOverlayLineSpec | null,
+  markerTemperature: number | null,
+  side: "low" | "high"
+): CurveOverlayLineSpec | null {
+  if (!line || markerTemperature === null) return line;
+  const range = line.range;
+  if (!range) return line;
+  const low = Math.min(range[0], range[1]);
+  const high = Math.max(range[0], range[1]);
+  return {
+    ...line,
+    range: side === "low"
+      ? [Math.min(low, markerTemperature), Math.max(low, markerTemperature)]
+      : [Math.min(high, markerTemperature), Math.max(high, markerTemperature)]
+  };
 }
 
 function readLine(value: unknown, kind: CurveOverlayLineSpec["kind"], label: string): CurveOverlayLineSpec | null {

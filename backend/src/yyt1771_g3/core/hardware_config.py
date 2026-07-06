@@ -37,6 +37,9 @@ class CameraConfig:
     device_roi: DeviceRoiConfig = field(default_factory=DeviceRoiConfig)
     sdk_python_paths: list[str] = field(default_factory=list)
     sdk_library_path: str = ""
+    simulated_dataset_id: str = ""
+    simulated_start_frame: int = 1
+    simulated_loop: bool = True
 
     def to_profile(self) -> dict[str, Any]:
         return asdict(self)
@@ -165,6 +168,9 @@ def _camera_config(payload: dict[str, Any]) -> CameraConfig:
         ),
         sdk_python_paths=_string_list(payload.get("sdk_python_paths")),
         sdk_library_path=str(payload.get("sdk_library_path", "") or ""),
+        simulated_dataset_id=str(payload.get("simulated_dataset_id", "") or ""),
+        simulated_start_frame=int(payload.get("simulated_start_frame", 1) or 1),
+        simulated_loop=bool(payload.get("simulated_loop", True)),
     )
 
 

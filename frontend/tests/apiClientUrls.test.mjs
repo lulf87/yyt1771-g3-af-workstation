@@ -76,6 +76,105 @@ test("diagnostic image metadata exposes mask and contour display sources", async
   assert.equal(images.length, 2);
 });
 
+test("export bundle download parses Content-Disposition and triggers a blob download", async () => {
+  const { downloadRunExportBundle, parseContentDispositionFilename } = await loadApiClientModule();
+  assert.equal(
+    parseContentDispositionFilename("attachment; filename=\"yyt1771-g3-export-run-1.zip\""),
+    "yyt1771-g3-export-run-1.zip"
+  );
+  assert.equal(
+    parseContentDispositionFilename("attachment; filename*=UTF-8''yyt1771-g3-export-run-2.zip"),
+    "yyt1771-g3-export-run-2.zip"
+  );
+
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(new Blob(["zip-bytes"], { type: "application/zip" }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": "attachment; filename=\"bundle.zip\""
+      }
+    });
+  };
+  const clicks = [];
+  const removed = [];
+  const appended = [];
+  const fakeDocument = {
+    body: {
+      appendChild(node) {
+        appended.push(node);
+      }
+    },
+    createElement(tag) {
+      assert.equal(tag, "a");
+      return {
+        href: "",
+        download: "",
+        click() {
+          clicks.push(this.download);
+        },
+        remove() {
+          removed.push(this.download);
+        }
+      };
+    }
+  };
+  const objectUrls = [];
+  const revoked = [];
+  const fakeUrl = {
+    createObjectURL(blob) {
+      objectUrls.push(blob);
+      return "blob:export";
+    },
+    revokeObjectURL(url) {
+      revoked.push(url);
+    }
+  };
+
+  try {
+    const result = await downloadRunExportBundle("run-1", {
+      document: fakeDocument,
+      url: fakeUrl
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/runs\/run-1\/exports\/download$/);
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(result.filename, "bundle.zip");
+    assert.equal(result.size, 9);
+    assert.equal(appended.length, 1);
+    assert.deepEqual(clicks, ["bundle.zip"]);
+    assert.deepEqual(removed, ["bundle.zip"]);
+    assert.deepEqual(revoked, ["blob:export"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("export bundle download surfaces structured backend errors", async () => {
+  const { downloadRunExportBundle } = await loadApiClientModule();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ detail: { message: "文件生成失败，请查看后端日志", stage: "zip_bundle" } }),
+    { status: 500, headers: { "Content-Type": "application/json" } }
+  );
+
+  try {
+    await assert.rejects(
+      () => downloadRunExportBundle("run-bad", {
+        document: { body: { appendChild() {} }, createElement() { return { click() {}, remove() {} }; } },
+        url: { createObjectURL() { return "blob:bad"; }, revokeObjectURL() {} }
+      }),
+      /文件生成失败，请查看后端日志/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
   const { probeRealCameraSetupFrame } = await loadApiClientModule();
   const measurement = {

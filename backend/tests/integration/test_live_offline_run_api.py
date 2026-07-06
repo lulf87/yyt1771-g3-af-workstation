@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import base64
-import io
 import json
 from pathlib import Path
 
 import numpy as np
 from fastapi.testclient import TestClient
-from PIL import Image
 
 
 def _write_dataset(root: Path) -> None:
@@ -231,7 +228,12 @@ def test_live_offline_run_stream_api_emits_frame_events_and_final_run(tmp_path: 
                 "height": 40.0,
                 "angle_deg": 0.0,
             },
-            "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 1},
+            "detector_config": {
+                "min_component_area_px": 20,
+                "max_frames_per_run": 1,
+                "contour_box_padding_px": 0.0,
+                "roi_edge_guard_px": 0.0,
+            },
         },
     }
 
@@ -243,11 +245,9 @@ def test_live_offline_run_stream_api_emits_frame_events_and_final_run(tmp_path: 
     complete_events = [event for event in events if event["event"] == "complete"]
     assert [event["frame_index"] for event in frame_events] == [1, 2]
     assert all(event["detection_result"]["detection_status"] == "VALID" for event in frame_events)
-    diagnostic_images = frame_events[0]["detection_result"]["debug_artifacts"]["diagnostic_images"]
-    assert diagnostic_images["mask"]["data_url"].startswith("data:image/png;base64,")
-    assert diagnostic_images["contour"]["data_url"].startswith("data:image/png;base64,")
-    _assert_diagnostic_image_has_envelope_box(diagnostic_images["mask"])
-    _assert_diagnostic_image_has_envelope_box(diagnostic_images["contour"])
+    debug_artifacts = frame_events[0]["detection_result"]["debug_artifacts"]
+    assert debug_artifacts["diagnostics_generated"] is False
+    assert "diagnostic_images" not in debug_artifacts
     assert frame_events[0]["curve_points"]["distance_time"]["frame_index"] == 1
     assert len(complete_events) == 1
     assert len(complete_events[0]["run_manifest"]["detection_results"]) == 2
@@ -256,21 +256,3 @@ def test_live_offline_run_stream_api_emits_frame_events_and_final_run(tmp_path: 
     read_response = client.get(f"/api/runs/{run_id}")
     assert read_response.status_code == 200
     assert read_response.json()["run_manifest"]["run_id"] == run_id
-
-
-def _assert_diagnostic_image_has_envelope_box(image_info: dict[str, object]) -> None:
-    overlay_box = image_info["overlay_box"]
-    assert overlay_box["source"] == "selected_candidate_local_projection_bounds"
-    assert overlay_box["stroke"] == "#ff4040"
-    assert overlay_box["stroke_width_px"] >= 5
-    assert 0 <= overlay_box["left"] <= overlay_box["right"] < image_info["width"]
-    assert 0 <= overlay_box["top"] <= overlay_box["bottom"] < image_info["height"]
-
-    data_url = image_info["data_url"]
-    _, encoded = data_url.split(",", 1)
-    image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
-    pixels = np.asarray(image)
-    red_overlay_pixels = np.count_nonzero(
-        (pixels[:, :, 0] >= 240) & (pixels[:, :, 1] <= 90) & (pixels[:, :, 2] <= 90)
-    )
-    assert red_overlay_pixels >= 20

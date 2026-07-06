@@ -88,12 +88,13 @@ test("real camera measurement is derived from preview shape without changing det
   assert.equal(measurement.roi.angle_deg, -1.5);
 });
 
-test("preview refresh status labels distinguish auto refresh and unavailable hardware", async () => {
+test("real camera frame status labels do not expose preview semantics", async () => {
   const { previewRefreshStatusLabel } = await loadSetupSourcesModule();
 
-  assert.equal(previewRefreshStatusLabel("refreshing"), "Refreshing preview");
-  assert.equal(previewRefreshStatusLabel("ok"), "Preview refreshed");
+  assert.equal(previewRefreshStatusLabel("refreshing"), "Updating live frame");
+  assert.equal(previewRefreshStatusLabel("ok"), "Live frame updated");
   assert.equal(previewRefreshStatusLabel("unavailable"), "Camera unavailable");
+  assert.equal(previewRefreshStatusLabel("idle"), "No live frame yet");
 });
 
 test("run page mode is derived from setup source without a run preview action", async () => {
@@ -147,7 +148,7 @@ test("run setup summary is derived from the saved setup measurement definition",
     objectClass: "C_BUNDLE_ENVELOPE",
     detector: "BundleEnvelopeDetector",
     widthMode: "max_width",
-    maxFramesPerRun: "77",
+    maxFramesPerRun: "No frame limit",
     targetFps: "4",
     targetTemperatureCelsius: "42.50 °C",
     temperaturePowerPercent: "55 %"
@@ -179,7 +180,9 @@ test("real camera setup preview controls live polling and frozen frames", async 
   const {
     freezePreview,
     shouldRefreshRealCameraFrameAfterRoiCommit,
+    setupPreviewPollingIntervalMs,
     shouldPollRealCameraPreview,
+    shouldReleaseRealCameraPreview,
     updateRealCameraPreviewState
   } = await loadSetupSourcesModule();
   const roi = {
@@ -202,14 +205,21 @@ test("real camera setup preview controls live polling and frozen frames", async 
   assert.equal(liveState.frozenTimestampMs, null);
   assert.equal(liveState.roiNeedsReconfirm, false);
   assert.equal(shouldPollRealCameraPreview("setup", "real_camera", liveState), true);
+  assert.equal(shouldReleaseRealCameraPreview("setup", "real_camera", "run", "real_camera"), true);
+  assert.equal(shouldReleaseRealCameraPreview("setup", "real_camera", "setup", "offline_dataset"), true);
+  assert.equal(shouldReleaseRealCameraPreview("setup", "real_camera", "setup", "real_camera"), false);
+  assert.equal(shouldReleaseRealCameraPreview("run", "real_camera", "setup", "real_camera"), false);
   assert.equal(shouldRefreshRealCameraFrameAfterRoiCommit("setup", "real_camera", liveState), true);
   assert.equal(
     shouldPollRealCameraPreview("setup", "real_camera", {
       ...liveState,
       cameraStatus: "unavailable"
     }),
-    false
+    true
   );
+  assert.equal(setupPreviewPollingIntervalMs("ok", 0), 200);
+  assert.equal(setupPreviewPollingIntervalMs("ok", 10), 100);
+  assert.equal(setupPreviewPollingIntervalMs("unavailable", 10), 2000);
 
   const frozenState = freezePreview(liveState);
 
@@ -327,6 +337,7 @@ test("real camera setup refreshes live frames only for preview-affecting changes
 test("setup temperature summary exposes controller status without being preview-affecting", async () => {
   const {
     buildSetupTemperatureSummary,
+    selectSetupTemperatureSerialPort,
     shouldRefreshRealCameraFrameAfterSetupChange,
     updateRealCameraPreviewState
   } = await loadSetupSourcesModule();
@@ -347,7 +358,8 @@ test("setup temperature summary exposes controller status without being preview-
     },
     detector_config: {
       target_temperature_celsius: 42.5,
-      temperature_power_percent: 55
+      temperature_power_percent: 55,
+      temperature_serial_port: "/dev/cu.usbserial-1210"
     }
   };
   const status = {
@@ -375,10 +387,17 @@ test("setup temperature summary exposes controller status without being preview-
     timestamp: "1779448000123",
     targetTemperatureCelsius: "42.50 °C",
     temperaturePowerPercent: "55 %",
+    selectedPort: "/dev/cu.usbserial-1210",
     ports: "/dev/cu.usbserial-1210",
     portCount: "1",
     error: "None"
   });
+
+  const selected = selectSetupTemperatureSerialPort(measurement, "/dev/ttys000");
+
+  assert.equal(selected.detector_config.temperature_serial_port, "/dev/ttys000");
+  assert.equal(selected.detector_config.target_temperature_celsius, 42.5);
+  assert.equal(selected.detector_config.temperature_power_percent, 55);
 
   assert.deepEqual(
     buildSetupTemperatureSummary(measurement, null, [], {
@@ -392,6 +411,7 @@ test("setup temperature summary exposes controller status without being preview-
       timestamp: "None",
       targetTemperatureCelsius: "42.50 °C",
       temperaturePowerPercent: "55 %",
+      selectedPort: "/dev/cu.usbserial-1210",
       ports: "None",
       portCount: "0",
       error: "/dev/cu.usbserial-1210 not found"
@@ -428,5 +448,54 @@ test("setup temperature summary exposes controller status without being preview-
       key: "temperature_power_percent"
     }),
     false
+  );
+  assert.equal(
+    shouldRefreshRealCameraFrameAfterSetupChange("setup", "real_camera", liveState, {
+      kind: "detector_config",
+      key: "temperature_serial_port"
+    }),
+    false
+  );
+});
+
+test("real camera setup live polling uses fast default interval, slow unavailable retry, and run fps profile", async () => {
+  const {
+    buildRealCameraRunCameraProfile,
+    createRealCameraMeasurementFromShape,
+    normalizeSetupPreviewFps,
+    setupPreviewFpsLabel,
+    setupPreviewIntervalMs,
+    setupPreviewPollingIntervalMs
+  } = await loadSetupSourcesModule();
+
+  const measurement = createRealCameraMeasurementFromShape(null, [1364, 2048]);
+
+  assert.equal(measurement.detector_config.setup_preview_fps, 0);
+  assert.equal(normalizeSetupPreviewFps(null), 0);
+  assert.equal(normalizeSetupPreviewFps(0), 0);
+  assert.equal(normalizeSetupPreviewFps(2.5), 2.5);
+  assert.equal(normalizeSetupPreviewFps(9), 9);
+  assert.equal(normalizeSetupPreviewFps(120), 120);
+  assert.equal(setupPreviewIntervalMs(0), 0);
+  assert.equal(setupPreviewIntervalMs(1), 1000);
+  assert.equal(setupPreviewIntervalMs(2.5), 400);
+  assert.equal(setupPreviewIntervalMs(30), 33);
+  assert.equal(setupPreviewFpsLabel(0), "Auto (5 fps default)");
+  assert.equal(setupPreviewFpsLabel(2.5), "2.5 fps live display");
+  assert.equal(setupPreviewPollingIntervalMs("ok", measurement.detector_config.setup_preview_fps), 200);
+  assert.equal(setupPreviewPollingIntervalMs("unavailable", measurement.detector_config.setup_preview_fps), 2000);
+  assert.deepEqual(buildRealCameraRunCameraProfile(measurement), {
+    pixel_format: "mono8",
+    target_frame_rate_hz: 8
+  });
+  assert.deepEqual(
+    buildRealCameraRunCameraProfile({
+      ...measurement,
+      detector_config: { ...measurement.detector_config, live_offline_fps: 12 }
+    }),
+    {
+      pixel_format: "mono8",
+      target_frame_rate_hz: 12
+    }
   );
 });

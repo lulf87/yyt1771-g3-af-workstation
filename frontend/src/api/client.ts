@@ -395,6 +395,35 @@ export type ApiErrorDetail = {
   issues?: Array<{ field: string; path: string; message: string }>;
 };
 
+export type ExportDownloadResult = {
+  filename: string;
+  size: number;
+};
+
+type BlobDownloadAnchor = {
+  href: string;
+  download: string;
+  click(): void;
+  remove(): void;
+};
+
+type BlobDownloadDocument = {
+  body: {
+    appendChild(node: BlobDownloadAnchor): unknown;
+  };
+  createElement(tagName: "a"): BlobDownloadAnchor;
+};
+
+type BlobDownloadUrlFactory = {
+  createObjectURL(blob: Blob): string;
+  revokeObjectURL(url: string): void;
+};
+
+export type ExportDownloadOptions = {
+  document?: BlobDownloadDocument;
+  url?: BlobDownloadUrlFactory;
+};
+
 export type SerialPortInfo = {
   device: string;
   name: string;
@@ -915,15 +944,95 @@ export async function createRunExports(runId: string): Promise<ExportArtifact[]>
     method: "POST"
   });
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    throw new Error(await readApiErrorMessage(response, `导出失败：后端返回 ${response.status}`));
   }
   const payload = (await response.json()) as { artifacts: ExportArtifact[] };
   return payload.artifacts;
+}
+
+export async function downloadRunExportBundle(
+  runId: string,
+  options: ExportDownloadOptions = {}
+): Promise<ExportDownloadResult> {
+  const response = await fetch(`${API_BASE}/api/runs/${runId}/exports/download`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `导出失败：后端返回 ${response.status}`));
+  }
+  const blob = await response.blob();
+  if (!blob.size) {
+    throw new Error("导出失败：后端返回空文件");
+  }
+  const filename = parseContentDispositionFilename(response.headers.get("Content-Disposition")) ??
+    `yyt1771-g3-export-${runId}.zip`;
+  triggerBlobDownload(blob, filename, options);
+  return { filename, size: blob.size };
+}
+
+export function parseContentDispositionFilename(value: string | null): string | null {
+  if (!value) return null;
+  const starMatch = /(?:^|;)\s*filename\*=([^;]+)/i.exec(value);
+  if (starMatch) {
+    const raw = starMatch[1].trim();
+    const encoded = raw.replace(/^UTF-8''/i, "").replace(/^"(.*)"$/, "$1");
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded || null;
+    }
+  }
+  const match = /(?:^|;)\s*filename=([^;]+)/i.exec(value);
+  if (!match) return null;
+  const filename = match[1].trim().replace(/^"(.*)"$/, "$1");
+  return filename || null;
 }
 
 export function artifactDownloadUrl(artifact: ExportArtifact): string {
   if (!artifact.download_url) return artifact.path;
   if (artifact.download_url.startsWith("http")) return artifact.download_url;
   return `${API_BASE}${artifact.download_url}`;
+}
+
+async function readApiErrorMessage(response: Response, fallback: string): Promise<string> {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = await response.json() as { detail?: unknown; message?: unknown };
+      const detail = payload.detail;
+      if (typeof detail === "string" && detail.trim()) return detail;
+      if (detail && typeof detail === "object") {
+        const message = (detail as { message?: unknown }).message;
+        if (typeof message === "string" && message.trim()) return message;
+      }
+      if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
+    } catch {
+      return fallback;
+    }
+  }
+  try {
+    const body = await response.text();
+    return body.trim() ? `${fallback}: ${body}` : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function triggerBlobDownload(blob: Blob, filename: string, options: ExportDownloadOptions): void {
+  const doc = (options.document ?? globalThis.document) as BlobDownloadDocument | undefined;
+  const urlFactory = options.url ?? globalThis.URL;
+  if (!doc || !urlFactory?.createObjectURL || !urlFactory?.revokeObjectURL) {
+    throw new Error("导出失败：当前浏览器不支持文件下载");
+  }
+  const url = urlFactory.createObjectURL(blob);
+  try {
+    const anchor = doc.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    doc.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    urlFactory.revokeObjectURL(url);
+  }
 }

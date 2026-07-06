@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+import re
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import matplotlib
 
@@ -40,12 +42,28 @@ def export_run(run_store: RunStore, run_id: str) -> list[ExportArtifact]:
     return artifacts
 
 
+def export_run_bundle(run_store: RunStore, run_id: str) -> Path:
+    artifacts = export_run(run_store, run_id)
+    export_dir = run_store.run_dir(run_id) / "exports"
+    bundle_path = export_dir / f"yyt1771-g3-export-{_safe_filename_part(run_id)}.zip"
+    with ZipFile(bundle_path, "w", compression=ZIP_DEFLATED) as archive:
+        for artifact in artifacts:
+            artifact_path = Path(artifact.path)
+            if not artifact_path.is_file():
+                raise FileNotFoundError(f"Export artifact missing: {artifact_path}")
+            archive.write(artifact_path, arcname=artifact_path.name)
+    return bundle_path
+
+
 def _write_csv(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
     path = export_dir / "frame_results.csv"
     fields = [
         "frame_index",
         "detection_status",
         "distance_px",
+        "raw_distance_px",
+        "stabilized_distance_px",
+        "result_display_source",
         "temperature_celsius",
         "temperature_sync_status",
         "frame_timestamp_ms",
@@ -62,6 +80,9 @@ def _write_csv(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
                     "frame_index": result.frame_index,
                     "detection_status": result.detection_status.value,
                     "distance_px": result.distance_px,
+                    "raw_distance_px": result.raw_distance_px,
+                    "stabilized_distance_px": result.stabilized_distance_px,
+                    "result_display_source": result.result_display_source,
                     "temperature_celsius": result.temperature_celsius,
                     "temperature_sync_status": result.temperature_sync_status.value,
                     "frame_timestamp_ms": result.frame_timestamp_ms,
@@ -167,3 +188,8 @@ def _artifact(artifact_type: str, path: Path, run_id: str) -> ExportArtifact:
 
 def _circle_box(x: float, y: float, *, radius: float) -> tuple[float, float, float, float]:
     return (x - radius, y - radius, x + radius, y + radius)
+
+
+def _safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-")
+    return cleaned or "run"

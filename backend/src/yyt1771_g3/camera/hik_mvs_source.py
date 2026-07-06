@@ -40,7 +40,7 @@ class HikMvsCameraSource:
             raise
         except Exception as exc:
             raise CameraUnavailableError(
-                "Hik MVS camera preview failed",
+                "Hik MVS camera frame acquisition failed",
                 details={"error": str(exc), "profile": self.profile},
             ) from exc
         meta = {
@@ -237,7 +237,7 @@ class _OfficialMvsCameraSession:
     def _configure_pixel_format(self) -> None:
         pixel_format = str(self.profile.get("pixel_format", "mono8") or "mono8").lower()
         if pixel_format != "mono8":
-            raise RuntimeError("G3 real camera preview currently supports only mono8")
+            raise RuntimeError("G3 real camera frame acquisition currently supports only mono8")
         setter = getattr(self.camera, "MV_CC_SetEnumValueByString", None)
         if callable(setter):
             int(setter("PixelFormat", "Mono8"))

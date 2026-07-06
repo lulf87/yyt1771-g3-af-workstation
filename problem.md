@@ -87,6 +87,7 @@
 | P-0069 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / dev server / browser retest | Vite dev server 可返回 HTML 但请求源码模块时挂起，阻塞真实浏览器复测 | 2026-07-06 | 2026-07-06 | Codex | 根因是 frontend/node_modules 中 Babel 文件为 macOS dataless 占位文件；重建 node_modules 后浏览器加载恢复 |
 | P-0070 | RESOLVED_BROWSER_VERIFIED | P0 | backend / temperature / real camera run safety | Real camera run 启动温控时 start_output 会覆盖 UI 设置的温控功率，可能把 0% 拉回 startup_power_percent | 2026-07-06 | 2026-07-06 | Codex | 已改为 power_nonzero 控制器不调用 start_output，0% 不启动输出；真实硬件读回 0% 并完成 Run→Stop 复测 |
 | P-0071 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera temperature sync | 真实相机 + 真实温控默认 10ms 同步容差导致全部 TEMP_SYNC_STALE，温度-距离曲线为空且状态标记易误解 | 2026-07-06 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX Run→Stop→Analysis 浏览器复测已通过，默认容差 1000ms，60/60 正式温度-距离点 |
+| P-0072 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart / export | Analysis 页 AS/AF 构造关系不清、AS/AF 标签可读性差且导出按钮不触发下载或明确错误 | 2026-07-06 | 2026-07-06 | Codex | golden A Analysis/Export 浏览器复测已通过，AS/AF 构造标注清晰且 ZIP 下载成功 |
 
 ---
 
@@ -272,6 +273,64 @@ run manifest config_snapshot 必须保存 temp_sync_target_ms。
 - Actual: Run `run-real_camera-20260706T131608408466Z` 中全部同步状态为 `TEMP_SYNC_OK`，Δt 范围 12-74ms，容差 1000ms；因当前 ROI/画面下 detector 未识别目标，VALID 帧 0、正式点 0；Run 和 Analysis 页显示“暂无正式温度-距离点”，并说明 x 轴下方为状态标记、不参与正式分析，同时显示同步状态、Δt 和容差。
 - Result: PASS for empty-state diagnostic behavior; detector ROI validity was not treated as this issue's root cause.
 - Evidence: `output/playwright/g3-real-camera-sync-tolerance-analysis-20260706.png`, `output/runs/run-real_camera-20260706T131608408466Z/run_manifest.json`, `output/runs/run-real_camera-20260706T131608408466Z/analysis_result.json`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0072 — Analysis 页 AS/AF 构造关系不清、AS/AF 标签可读性差且导出按钮不触发下载或明确错误
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/curves.ts`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/services/export_service.py`
+- Found date: 2026-07-06
+- Last update: 2026-07-06
+
+#### Problem
+
+用户反馈 Analysis 页“转变点温度-距离复核”图不能直观看出 AS/AF 来自最大斜率切线与低温/高温基线的交点；图中蓝色/红色标签背景没有完整覆盖文字、白字对比不足或被截断；点击“导出”后只有短暂 loading，没有触发文件下载，也没有明确失败提示。
+
+#### Expected
+
+```text
+AS = 最大斜率切线与低温基线的交点。
+AF = 最大斜率切线与高温基线的交点。
+图中必须单独显示 AS 基线/低温基线、AF 基线/高温基线、最大斜率切线、AS 点、AF 点、最大斜率点及对应竖向辅助线。
+UI 不暴露 Af_tan 作为用户文案，统一显示 AF。
+AS/AF 标签显示为 “AS xx.xx°C” / “AF xx.xx°C”，背景按文本尺寸和 padding 完整覆盖，并位于最上层。
+导出成功时浏览器下载非空文件；导出失败时显示明确错误，loading 必须恢复。
+AFAS 不可用但存在基础测量数据时仍可导出基础数据。
+```
+
+#### Resolution log
+
+- 2026-07-06: 初始登记，正在按 TDD 补 AFAS 图模型、标签和导出链路回归测试。
+- 2026-07-06: 后端新增 `/api/runs/{run_id}/exports/download` ZIP 下载端点，导出 CSV/JSON/PNG/overlay/parameters 基础 artifacts 后打包返回 `application/zip`；导出 artifact 创建和 ZIP 下载均返回结构化错误，日志记录失败阶段。
+- 2026-07-06: 前端导出按钮改为先下载 ZIP blob，再刷新 artifact 列表；成功时显示“导出成功：filename”，失败时显示明确错误并在 `finally` 恢复 loading。
+- 2026-07-06: Analysis AFAS 图模型改为显式展示 `AS 基线 / 低温基线`、`AF 基线 / 高温基线`、`最大斜率切线`、AS/AF/max slope 竖向辅助线和独立图例项；AS/AF marker 的 y 坐标由后端切线参数计算，UI 文案显示 `AS` / `AF`，不暴露 `Af-tan`。
+- 2026-07-06: AS/AF 浮动标签改为短标签 `AS xx.xx°C` / `AF xx.xx°C`，使用按文本估算宽度和 padding 生成不透明 label box，并在 AS/AF 靠近时错行避让。
+- 2026-07-06: 自动化验证通过：`./node_modules/.bin/tsc --noEmit`；`npm test -- curveSpecs.test.mjs apiClientUrls.test.mjs`（57 passed）；`PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_export_api.py -q`（3 passed）。
+
+#### Browser retest log
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5178/`
+- Backend URL: `http://127.0.0.1:8042/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run / Analysis / Export
+- Steps: 打开前端，选择 golden A；在 Run 页启动完整离线测量，运行到 4042/5807 帧、温度 10.80 °C、正式温度-距离点 4041 后点击 Stop；进入 Analysis/Export；在转变点分析参数中点击“重新计算”刷新 saved run AFAS；检查图中 AS/AF 标签、基线、最大斜率切线、竖向辅助线、图例和构造说明；点击“导出”按钮并等待浏览器下载。
+- Expected: Analysis 图显示 AS/AF 构造关系和短标签，不出现用户可见 `Af-tan`；导出按钮触发非空 ZIP 下载并显示成功，失败不静默。
+- Actual: 页面显示 `转变点分析状态=正常`、`AS=8.24 °C`、`AF=8.70 °C`；SVG 文本包含 `AS 8.24°C` 和 `AF 8.70°C`，不包含 `Af-tan/Af_tan`；图例包含 AS/AF 基线、最大斜率切线、AS 点、AF 点、最大斜率点和竖向辅助线；构造说明显示“AS = 最大斜率切线与低温基线的交点；AF = 最大斜率切线与高温基线的交点...”。点击导出后浏览器下载 `yyt1771-g3-export-run-golden_a_20260522_dev_lab-20260706T144926612189Z.zip`，保存证据 ZIP 为 16 MB，包含 `frame_results.csv`、`run_export.json`、`temperature_distance.png`、`roi_ab_overlay.png`、`parameters.json`，页面显示“导出成功”且无“导出失败”。
+- Result: PASS
+- Evidence: `output/playwright/p0072-analysis-afas-export-20260706.png`, `output/playwright/p0072-export-success-20260706.png`, `output/playwright/p0072-export-bundle-20260706.zip`, `output/dev/backend-8042-p0072.log`, `output/dev/frontend-5178-p0072.log`
+
+#### Retest note
+
+- 2026-07-06: Stop partial run 后页面一度保留 live preview 的 `pending` AFAS 状态；saved run 的 `analysis_result.json` 已为 `ok`，通过 Analysis 页“重新计算”可正常把 saved run AFAS 拉回图表。该现象属于既有 Stop/partial-run 状态同步问题，不影响本条 AS/AF 图展示和导出链路验收，后续可归入 live offline stop 状态问题继续跟踪。
 
 #### Current status
 

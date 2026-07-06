@@ -22,6 +22,7 @@ import {
   artifactDownloadUrl,
   createLiveOfflineRun,
   createRunExports,
+  downloadRunExportBundle,
   frameIndexImageUrl,
   frameImageUrl,
   getTemperatureStatus,
@@ -3016,6 +3017,7 @@ function AnalysisPage({
   const [artifacts, setArtifacts] = useState<ExportArtifact[]>(analysis?.export_artifacts ?? []);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [exportMessage, setExportMessage] = useState("");
 
   useEffect(() => {
     setAnalysisOverride(null);
@@ -3024,15 +3026,20 @@ function AnalysisPage({
   useEffect(() => {
     setArtifacts(analysis?.export_artifacts ?? []);
     setExportError("");
+    setExportMessage("");
   }, [analysis]);
 
   async function exportCurrentRun() {
     if (!selectedRunId) return;
     setExporting(true);
     setExportError("");
+    setExportMessage("");
     try {
+      const download = await downloadRunExportBundle(selectedRunId);
+      setExportMessage(`${t("Export complete")}: ${download.filename}`);
       setArtifacts(await createRunExports(selectedRunId));
     } catch (err) {
+      console.error("[export] failed", err);
       setExportError(err instanceof Error ? err.message : String(err));
     } finally {
       setExporting(false);
@@ -3059,6 +3066,7 @@ function AnalysisPage({
           {exporting ? t("Exporting") : t("Export")}
         </button>
         {exportError ? <div className="inlineError">{exportError}</div> : null}
+        {exportMessage ? <div className="inlineSuccess">{exportMessage}</div> : null}
         {artifacts.length ? (
           <div className="artifactList">
             {artifacts.map((artifact) => (
@@ -3116,13 +3124,14 @@ function AfasResultPanel({ analysis }: { analysis: AnalysisResult }) {
   const afas = analysis.afas_analysis ?? {};
   const result = readRecord(afas.result);
   const fit = readRecord(afas.fit);
+  const afValue = readAfasAfValue(result);
   const status = typeof afas.result_status === "string" ? uiStatus(language, afas.result_status) : uiText(language, "unavailable");
   return (
     <dl className="metricGrid compact afasResultGrid">
       <Metric label="Status" value={status} />
-      <Metric label="As" value={formatOptionalNumber(result.As, " °C", language)} />
-      <Metric label="Af-tan" value={formatOptionalNumber(result.Af_tan, " °C", language)} />
-      <Metric label="ΔT" value={formatDeltaT(result.As, result.Af_tan, language)} />
+      <Metric label="AS" value={formatOptionalNumber(result.As, " °C", language)} />
+      <Metric label="AF" value={formatOptionalNumber(afValue, " °C", language)} />
+      <Metric label="ΔT" value={formatDeltaT(result.As, afValue, language)} />
       <Metric label="Max slope" value={formatOptionalNumber(result.max_slope_temp, " °C", language)} />
       <Metric label="Outliers" value={typeof afas.outlier_count === "number" ? afas.outlier_count : uiNone(language)} />
       <Metric label="Low range" value={formatRange(readRecord(afas.parameters).resolved_low_range_celsius)} />
@@ -3130,6 +3139,13 @@ function AfasResultPanel({ analysis }: { analysis: AnalysisResult }) {
       <Metric label="Tangent slope" value={formatOptionalNumber(readRecord(fit.tangent).slope, uiNumberSuffix(language, " px/°C"), language)} />
     </dl>
   );
+}
+
+function readAfasAfValue(result: Record<string, unknown>): number | undefined {
+  for (const value of [result.Af_tan, result.AF, result.Af, result.af_tan]) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
 }
 
 function AfasParameterPanel({
@@ -3469,6 +3485,7 @@ function IndustrialCurveView({
 }
 
 function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
+  const language = useUiLanguage();
   const t = useUiText();
   const [layers, setLayers] = useState<AnalysisAfasLayerState>({ raw: false, fit: true, markers: true });
   const [xDomain, setXDomain] = useState<[number, number] | null>(null);
@@ -3632,7 +3649,7 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
               <g className="analysisAfasFitLineGroup analysisAfasFitLineGroup--tangent" key="fit-tangent">
                 <line className="analysisAfasFitLine analysisAfasFitLine--tangent" x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
                 <text className="analysisAfasInlineLabel analysisAfasInlineLabel--tangent" x={line.labelX} y={line.labelY - 10} textAnchor="middle">
-                  {t("Tangent")}
+                  {t(line.label)}
                 </text>
               </g>
             ))}
@@ -3683,12 +3700,21 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
         </IndustrialCurveView>
         <div className="analysisAfasLegend" aria-label={t("AFAS chart legend")}>
           <span className="analysisAfasLegendItem analysisAfasLegendItem--smooth">{t("Smoothed curve")}</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--construction">{t("As/Af guides")}</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--fit">{t("Baseline fit")}</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--tangent">{t("Tangent")}</span>
           <span className="analysisAfasLegendItem analysisAfasLegendItem--raw">{t("Raw diagnostic")}</span>
-          <span className="analysisAfasLegendItem analysisAfasLegendItem--marker">{t("As / Af / Max slope")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--lowBaseline">{t("AS baseline / Low baseline")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--highBaseline">{t("AF baseline / High baseline")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--tangent">{t("Maximum slope tangent")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--asMarker">{t("AS point")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--afMarker">{t("AF point")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--maxSlope">{t("Max slope point")}</span>
+          <span className="analysisAfasLegendItem analysisAfasLegendItem--construction">{t("Vertical guides")}</span>
         </div>
+        {model.constructionNote ? (
+          <p className="analysisAfasConstructionNote">{t(model.constructionNote)}</p>
+        ) : null}
+        {!model.constructionNote && !model.hasPoints && model.emptyState ? (
+          <p className="analysisAfasConstructionNote">{localizeDisplayString(model.emptyState.detail, language)}</p>
+        ) : null}
       </figure>
     </div>
   );
@@ -3699,8 +3725,8 @@ function AnalysisAfasSummaryStrip({ model }: { model: AnalysisAfasModel }) {
   return (
     <dl className="analysisAfasSummaryStrip">
       <AnalysisAfasSummaryValue label="AFAS status" value={uiStatus(language, model.summary.status)} />
-      <AnalysisAfasSummaryValue label="As" value={localizeDisplayString(model.summary.asLabel, language)} />
-      <AnalysisAfasSummaryValue label="Af-tan" value={localizeDisplayString(model.summary.afTanLabel, language)} />
+      <AnalysisAfasSummaryValue label="AS" value={localizeDisplayString(model.summary.asLabel, language)} />
+      <AnalysisAfasSummaryValue label="AF" value={localizeDisplayString(model.summary.afLabel, language)} />
       <AnalysisAfasSummaryValue label="ΔT" value={localizeDisplayString(model.summary.deltaLabel, language)} />
       <AnalysisAfasSummaryValue label="Max slope" value={localizeDisplayString(model.summary.maxSlopeLabel, language)} />
       <AnalysisAfasSummaryValue label="Raw points" value={model.summary.rawCountLabel} />
@@ -3744,18 +3770,26 @@ function AfasReferenceMarker({
   marker: AnalysisAfasMarker;
   plot: AnalysisAfasModel["plot"];
 }) {
-  const t = useUiText();
-  const badgeWidth = marker.kind === "af_tan" ? 104 : 86;
-  const x = clamp(marker.x - badgeWidth / 2, plot.left + 4, plot.right - badgeWidth - 4);
-  const badgeY = plot.top + (marker.kind === "af_tan" ? 38 : 10);
+  const language = useUiLanguage();
+  const labelBox = marker.labelBox;
   return (
     <g className={`analysisAfasReferenceMarker analysisAfasReferenceMarker--${marker.kind}`}>
       <line x1={marker.x} x2={marker.x} y1={plot.top} y2={plot.bottom} />
       <circle cx={marker.x} cy={marker.y} r={4.6} />
-      <rect x={x} y={badgeY} width={badgeWidth} height={24} rx={4} />
-      <text x={x + badgeWidth / 2} y={badgeY + 16} textAnchor="middle">
-        {t(marker.label)} {marker.temperature.toFixed(2)}°C
-      </text>
+      {labelBox ? (
+        <g className="analysisAfasReferenceMarkerLabel">
+          <rect
+            x={labelBox.x}
+            y={labelBox.y}
+            width={labelBox.width}
+            height={labelBox.height}
+            rx={5}
+          />
+          <text x={labelBox.textX} y={labelBox.textY} textAnchor="middle">
+            {localizeDisplayString(labelBox.text, language)}
+          </text>
+        </g>
+      ) : null}
     </g>
   );
 }
@@ -3775,7 +3809,7 @@ function MaxSlopeMarker({
     <g className="analysisAfasMaxSlopeMarker">
       <polygon points={`${marker.x},${marker.y - 8} ${marker.x + 8},${marker.y} ${marker.x},${marker.y + 8} ${marker.x - 8},${marker.y}`} />
       <text x={labelX} y={labelY} textAnchor={textAnchor}>
-        {t("Max slope")}
+        {t(marker.label)}
       </text>
     </g>
   );
