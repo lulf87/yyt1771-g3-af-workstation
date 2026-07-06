@@ -128,6 +128,27 @@ python3 -m pip check
 
 推荐固定使用 `8022` 端口：
 
+#### 3.2.1 真机 / 真实相机推荐启动方式
+
+如果要使用真实 Hik 相机或真实温控，后端固定使用已经验证过的 x86_64 Conda 环境：
+
+```bash
+cd /Users/lulingfeng/Documents/工作/开发/奥氏体2025.6.3
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m uvicorn yyt1771_g3.api.main:app --host 127.0.0.1 --port 8022
+```
+
+说明：
+
+```text
+1. 真实 Hik MVS 链路需要使用 yyt1771-mvs-x86 环境。
+2. 不要优先使用 .venv + --reload 启动真机后端；该环境可能与 Hik MVS runtime 或 Python 包读取状态冲突。
+3. Codex 后续收到“帮我启动 / 启动真机 / 真实相机启动”时，应直接使用本小节命令。
+```
+
+#### 3.2.2 普通开发 / 离线模式启动方式
+
+普通离线开发可使用 `.venv`：
+
 ```bash
 cd /Users/lulingfeng/Documents/工作/开发/奥氏体2025.6.3
 source .venv/bin/activate
@@ -172,7 +193,30 @@ http://127.0.0.1:5176
 3. 如果 5176 被占用，可以改成其他端口，例如 --port 5177。
 ```
 
-### 3.4 常用检查命令
+### 3.4 启动前后检查
+
+启动前先检查端口是否已有服务：
+
+```bash
+lsof -nP -iTCP:8022 -sTCP:LISTEN || true
+lsof -nP -iTCP:5176 -sTCP:LISTEN || true
+```
+
+如果端口已被本项目服务占用且健康检查通过，可以直接复用。启动后建议检查：
+
+```bash
+curl -sS http://127.0.0.1:8022/api/health
+curl -sS http://127.0.0.1:8022/api/offline-datasets
+curl -I -sS http://127.0.0.1:5176/
+```
+
+确认后打开：
+
+```bash
+open http://127.0.0.1:5176/
+```
+
+### 3.5 常用检查命令
 
 ```bash
 # backend 测试

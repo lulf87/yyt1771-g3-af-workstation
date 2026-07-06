@@ -344,6 +344,59 @@ Hik MVS SDK 不得在应用启动或普通 import 阶段强制加载。
 只有进入 Real camera preview/run 时才加载真实相机 adapter。
 ```
 
+### 6.4 真机启动固定规则
+
+当用户要求“帮我启动”“启动真机”“真实相机启动”“真实相机 + 真实温控启动”或类似操作时，Codex 必须优先使用以下固定流程，不得每次重新探索启动方式。
+
+标准后端端口：
+
+```text
+http://127.0.0.1:8022
+```
+
+真机后端必须使用已经验证过的 x86_64 Conda 环境，避免 `.venv` 中 arm64 / Python 3.14 环境与 Hik MVS runtime 或 Python 包读取问题冲突：
+
+```bash
+cd /Users/lulingfeng/Documents/工作/开发/奥氏体2025.6.3
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m uvicorn yyt1771_g3.api.main:app --host 127.0.0.1 --port 8022
+```
+
+标准前端端口：
+
+```text
+http://127.0.0.1:5176/
+```
+
+前端必须显式指向 8022 后端：
+
+```bash
+cd /Users/lulingfeng/Documents/工作/开发/奥氏体2025.6.3/frontend
+VITE_G3_API_BASE=http://127.0.0.1:8022 npm run dev -- --port 5176
+```
+
+启动前先检查端口：
+
+```bash
+lsof -nP -iTCP:8022 -sTCP:LISTEN || true
+lsof -nP -iTCP:5176 -sTCP:LISTEN || true
+```
+
+如果端口已被本项目服务占用且健康检查通过，应复用现有服务；如果被其他服务占用，使用相邻备用端口并明确告知用户实际地址。不要误杀无关进程。
+
+启动后必须快速验证：
+
+```bash
+curl -sS http://127.0.0.1:8022/api/health
+curl -sS http://127.0.0.1:8022/api/offline-datasets
+curl -I -sS http://127.0.0.1:5176/
+```
+
+验证通过后打开：
+
+```bash
+open http://127.0.0.1:5176/
+```
+
 ---
 
 ## 7. 提交前检查清单
