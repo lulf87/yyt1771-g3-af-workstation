@@ -43,7 +43,7 @@
 | P-0017 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / live offline run / frame display | C 类全帧 Run 时底图可能变黑，只剩 overlay 和曲线继续更新 | 2026-06-05 | 2026-06-05 | Codex | C 类 Run 页面真实浏览器复测已通过 |
 | P-0018 | RESOLVED_BROWSER_VERIFIED | P0 | analysis / run / setup / temperature control | Run/Analysis 应以 distance-temperature 和 AFAS As/Af 后处理为主，并补温控显示/设置 | 2026-06-05 | 2026-06-05 | Codex | Setup + Run + Analysis 浏览器复测已通过 |
 | P-0019 | RESOLVED_BROWSER_VERIFIED | P1 | backend / CORS / dev server | Vite 自动回退到 5177 时 backend CORS 未放行导致前端 Failed to fetch | 2026-06-05 | 2026-06-05 | Codex | Run 页面浏览器复测已通过 |
-| P-0020 | BLOCKED | P0 | camera / temperature / real run | G3 真实相机 + LU92XX 温控链路需接入并等待真实硬件复测 | 2026-06-05 | 2026-06-08 | Codex | 真实 Hik 相机 Setup→Run 完整浏览器复测 PASS；Setup 温控 unavailable 显示已复测；LU92XX `/dev/cu.usbserial-1210` 缺失，完整温控链路仍阻塞 |
+| P-0020 | RESOLVED_BROWSER_VERIFIED | P0 | camera / temperature / real run | G3 真实相机 + LU92XX 温控链路需接入并等待真实硬件复测 | 2026-06-05 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX `/dev/cu.usbserial-11210` Setup→Run→Stop 浏览器复测已通过，温控功率 0% 读回确认 |
 | P-0021 | RESOLVED_BROWSER_VERIFIED | P1 | backend / real camera run / temperature fallback | 本地 LU92XX 串口配置存在但未连接时会盖过相机 SDK 缺失错误 | 2026-06-05 | 2026-06-06 | Codex | no-hardware 浏览器 fallback 复测已通过；真实硬件见 P-0020 |
 | P-0022 | RESOLVED_BROWSER_VERIFIED | P0 | run curves / AFAS preprocessing | Run 实时 temperature-distance 曲线仍使用原始点，未采用 starter 平滑预处理 | 2026-06-06 | 2026-06-06 | Codex | A 类 Run + Analysis 真实浏览器复测已通过 |
 | P-0023 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / live offline run stop | 手动 Stop 后等待 partial run 落盘期间会产生短暂 404 网络日志 | 2026-06-06 | 2026-06-06 | Codex | Stop partial run 浏览器复测已通过，无 `/api/runs/{id}` 404 |
@@ -54,7 +54,7 @@
 | P-0028 | RESOLVED_BROWSER_VERIFIED | P1 | analysis / AFAS / live offline stream | 短 Run 结束保存 analysis 时 AFAS baseline 点数不足会导致 stream network error | 2026-06-06 | 2026-06-06 | Codex | C 类 Run 目标温度停止浏览器复测已通过 |
 | P-0029 | RESOLVED_BROWSER_VERIFIED | P1 | local env / archived scripts | 系统 Python 的 OpenCV wheel 与 NumPy 2.x ABI 不兼容，归档脚本无法 import cv2 | 2026-06-06 | 2026-06-06 | Codex | 环境类问题，浏览器复测不适用；cv2 导入和归档脚本合成图运行已通过 |
 | P-0030 | RESOLVED_BROWSER_VERIFIED | P0 | vision / live offline run / detector audit | A/C 图示 ROI 需采用归档前处理 + G3 稳定支撑列/同窗口 A/B 规则并全帧浏览器审计 | 2026-06-06 | 2026-06-06 | Codex | A/C 图示 ROI 真实浏览器全帧 run + manifest 审计已通过 |
-| P-0031 | OPEN | P1 | vision / setup overlay / archive comparison | A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全 | 2026-06-06 | 2026-06-06 | Codex | 待确认是否增加 outer_contour / filled_contour overlay 或调整说明 |
+| P-0031 | RESOLVED_BROWSER_VERIFIED | P1 | vision / setup overlay / archive comparison | A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全 | 2026-06-06 | 2026-06-08 | Codex | full contour box + measurement band 浏览器复测已通过 |
 | P-0032 | OPEN | P1 | vision / archive comparison / curve stability | A 类当前 ROI 下归档网格类跨 row 宽度也会产生尖峰，不宜直接替换 G3 正式 distance | 2026-06-06 | 2026-06-08 | Codex | 待确认是否仅作为诊断或引入额外稳定约束 |
 | P-0038 | OPEN | P1 | run curves / realtime AF | Run 结束时缺少独立实时结果链 As/Af/AF95，与 Analysis AFAS 后处理未形成两套分析 | 2026-06-07 | 2026-06-07 | Codex | 待实现后用 A/C Run + Analysis 浏览器复测 |
 | P-0039 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run trend chart | Run 页实时 temperature-distance 曲线过小且缺少监护式状态分层 | 2026-06-07 | 2026-06-07 | Codex | golden A Run 页真实浏览器复测已通过 |
@@ -63,17 +63,29 @@
 | P-0042 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / real camera run frame display | Real Camera Run 后帧画布仍显示当前离线 dataset frame，真实 run 底图来源不一致 | 2026-06-07 | 2026-06-07 | Codex | 真实 Hik 相机 Run 画布使用 run raw frame，浏览器复测已通过 |
 | P-0043 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / shared curve view | Run/Analysis 曲线需要共享 variant 化底层 CurveView 并保持工业曲线层级 | 2026-06-07 | 2026-06-07 | Codex | golden A Run + Analysis 浏览器复测已通过 |
 | P-0044 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis 曲线不应把重复温度 raw frame 点按帧顺序连成正式折线 | 2026-06-07 | 2026-06-07 | Codex | golden A Run + Analysis 浏览器复测已通过 |
-| P-0045 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Setup source / camera preview | Setup 页面需要统一 Source 入口并自动显示真实相机 preview | 2026-06-07 | 2026-06-08 | Codex | 真实 Hik 相机 Setup Live/Freeze/ROI/参数刷新/温控 no-refresh/formal Run measurement_definition 浏览器复测通过；LU92XX 完整闭环仍由 P-0020 跟踪 |
+| P-0045 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Setup source / camera preview | Setup 页面需要统一 Source 入口并自动显示真实相机 preview | 2026-06-07 | 2026-06-08 | Codex | 真实 Hik 相机 Setup Live/Freeze/ROI/参数刷新/温控 no-refresh/formal Run measurement_definition 浏览器复测通过；LU92XX 闭环已由 P-0020 于 2026-07-06 验证 |
 | P-0046 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run trend y-axis | Run Live Trend Y 轴按 latest window 局部 min/max 自动缩放，放大 1 px 检测抖动 | 2026-06-07 | 2026-06-08 | Codex | golden A Run 页 sticky y-axis 浏览器复测已通过 |
 | P-0047 | OPEN | P1 | frontend / live offline run stop | Playwright 复测中点击 Stop 后 Run 页面仍显示 Running | 2026-06-08 | 2026-06-08 | Codex | 待单独复现并修复后做 Stop partial run 浏览器复测 |
 | P-0048 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / API client / probe | Offline Probe 请求把前端 setup source 字段发给 backend，导致 422 extra_forbidden | 2026-06-08 | 2026-06-08 | Codex | golden A Setup Probe current frame 浏览器复测已通过 |
 | P-0049 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis temperature-distance X 轴不应使用 Latest window 或局部温度窗口 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis 浏览器复测已通过 |
 | P-0050 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis y-axis | Run/Analysis temperature-distance Y 轴需兼顾完整范围、最小细节跨度和 outlier 抑制 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis Y 轴浏览器复测已通过 |
-| P-0051 | OPEN | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | 待修复后用 Playback 1400/1460/1461 + Run 浏览器复测 |
+| P-0051 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / speck rejection | A 类 1461 帧右侧小黑点经前处理连入主体后扩大正式外包络 | 2026-06-08 | 2026-06-08 | Codex | Playback 1400/1460/1461 + Run 浏览器复测已通过 |
 | P-0052 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Analysis AFAS chart | Analysis 默认隐藏 raw 灰点并为 As/Af-tan 增加弱化构造线 | 2026-06-08 | 2026-06-08 | Codex | golden A Analysis/Export 浏览器复测已通过 |
 | P-0053 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | Setup 和 Run 页面缺少实时 mask / 外轮廓诊断图 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图浏览器复测已通过 |
-| P-0054 | RESOLVED_BROWSER_VERIFIED | P1 | vision / setup run diagnostics | Setup 和 Run 实时诊断图需要显示外包络矩形 | 2026-06-08 | 2026-06-08 | Codex | golden A Setup probe + Run 诊断图矩形浏览器复测已通过 |
-| P-0055 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup run diagnostics | 高 ROI 诊断图固定高度显示导致右侧像被截断 | 2026-06-08 | 2026-06-08 | Codex | golden A 用户截图 ROI Setup 诊断图浏览器复测已通过 |
+| P-0056 | RESOLVED_BROWSER_VERIFIED | P0 | vision / BalloonEnvelopeDetector / frontend diagnostics | A 类 frame 680 左下浅色气泡连入 Detected mask | 2026-06-08 | 2026-06-08 | Codex | golden A frame 680/800 Setup probe + 1400/1460/1461 回归浏览器复测已通过 |
+| P-0057 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend parameters | Detector processing scale 与 Run 快速诊断路径需支持原图坐标还原并降低 UI 卡顿 | 2026-06-08 | 2026-06-08 | Codex | golden A scale 0.5/1.0 Probe + Run 浏览器复测已通过；C 类 detector 回归已通过 |
+| P-0058 | RESOLVED_BROWSER_VERIFIED | P0 | vision / run performance / frontend diagnostics | A 类 fast/enhanced/diagnostics 未真正拆分且默认 diagnostics 图过重 | 2026-06-08 | 2026-06-08 | Codex | golden A/C Setup diagnostics + golden A Run suspicious_only 浏览器复测已通过 |
+| P-0059 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / setup / temperature control | Real camera Setup 缺少可调 preview 刷新率和温控串口选择 | 2026-06-08 | 2026-06-08 | Codex | 真实 Hik 相机 Setup + 模拟 LU92XX 温控串口选择浏览器复测已通过 |
+| P-0060 | RESOLVED_BROWSER_VERIFIED | P0 | backend / live offline run / detector policy | A 类 Run fast/off 每帧因 ROI 边界 warning 升级 enhanced 导致过慢 | 2026-06-08 | 2026-06-08 | Codex | golden A Run fast/off policy benchmark + Chrome headless browser-context Run 复测已通过 |
+| P-0062 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / i18n / UI copy | 界面缺少中英文切换且中文模式仍可能露出英文诊断文案 | 2026-06-09 | 2026-06-09 | Codex | Setup/Run/Playback/Analysis 中文模式 + 英文回切浏览器复测已通过 |
+| P-0063 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / real camera setup copy; backend / camera errors | Real camera Setup 不应暴露 Preview refresh 语义 | 2026-06-09 | 2026-06-09 | Codex | 真实 Hik 相机 Setup 源语义与错误文案浏览器复测已通过 |
+| P-0064 | FIXED_PENDING_BROWSER_RETEST | P1 | frontend / real camera setup live display | Setup Real camera 实时显示帧率不应被 5Hz 上限卡住 | 2026-06-10 | 2026-06-10 | Codex | 无相机浏览器 fallback 已通过；待接真实相机确认 camera-paced FPS |
+| P-0065 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera setup live display | Setup Real camera 冷启动后需自动显示并复用相机源提升实时显示 | 2026-06-11 | 2026-06-11 | Codex | 真实 Hik 相机 + 模拟 LU92XX Setup live 浏览器复测已通过 |
+| P-0066 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / real camera setup-run handoff | Setup Freeze 后启动 Real camera Run 可能与 Setup preview 抢占相机并导致取帧失败 | 2026-06-12 | 2026-06-12 | Codex | 自动化回归和无真机浏览器 fallback 已通过；待真实 Hik 相机 Setup Freeze → Run 复测 |
+| P-0067 | RESOLVED_BROWSER_VERIFIED | P0 | backend / camera / simulated run | camera_profile.backend=simulated 仍走 HikMVS，无法使用模拟相机 | 2026-06-23 | 2026-06-23 | Codex | 模拟相机 Preview / Setup / Run 浏览器复测已通过 |
+| P-0068 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera run | 真实相机实时测量使用同步请求且默认 160 帧上限，导致界面像卡住且无法手动停止 | 2026-07-06 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX Run 页无帧数上限、逐帧更新、手动 Stop 保存 partial run 浏览器复测已通过 |
+| P-0069 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / dev server / browser retest | Vite dev server 可返回 HTML 但请求源码模块时挂起，阻塞真实浏览器复测 | 2026-07-06 | 2026-07-06 | Codex | 根因是 frontend/node_modules 中 Babel 文件为 macOS dataless 占位文件；重建 node_modules 后浏览器加载恢复 |
+| P-0070 | RESOLVED_BROWSER_VERIFIED | P0 | backend / temperature / real camera run safety | Real camera run 启动温控时 start_output 会覆盖 UI 设置的温控功率，可能把 0% 拉回 startup_power_percent | 2026-07-06 | 2026-07-06 | Codex | 已改为 power_nonzero 控制器不调用 start_output，0% 不启动输出；真实硬件读回 0% 并完成 Run→Stop 复测 |
 
 ---
 
@@ -123,6 +135,340 @@ C 类：多细支整体视为一个目标，相邻细支间白色间隙视为目
 - Actual: A/C probe and run returned backend DetectionResult with overlay; exports generated CSV/JSON/PNG/overlay/parameters artifacts.
 - Result: PASS
 - Evidence: `output/playwright/m3_playback_probe_golden_c_last.png`, `output/playwright/m7_live_offline_run_golden_a.png`, `output/playwright/m9_export_golden_a_artifacts.png`, `output/playwright/m9_export_golden_c_artifacts.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0068 — 真实相机实时测量使用同步请求且默认 160 帧上限，导致界面像卡住且无法手动停止
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`
+- Found date: 2026-07-06
+- Last update: 2026-07-06
+
+#### Problem
+
+用户点击 Run 页真实相机实时测量后，前端等待 `/api/real-camera-runs` 的同步响应，期间没有逐帧进度反馈；同时前端启动时传入 `max_frames_per_run`，后端同步真机 run 也把 `max_frames_per_run` 当作硬上限，导致真实相机测量在 160 帧左右结束。Run 页真实相机模式下 Stop 按钮被禁用，无法手动停止。
+
+#### Expected
+
+```text
+真实相机测量默认不应有帧数上限。
+Run 页应逐帧显示真实相机画面、distance 和 temperature-distance 趋势。
+真实相机测量应直到用户手动 Stop，或温度达到 target_temperature_celsius 后自动停止。
+手动 Stop 后应保存已采集帧、温度、检测结果和 analysis partial run。
+```
+
+#### Evidence
+
+- 2026-07-06: 真实相机 Run 页显示 `max_frames_per_run = 160`；用户报告点击后界面卡住。
+- 2026-07-06: 后端日志显示同步 `POST /api/real-camera-runs` 结束后生成 `run-real_camera-20260706T101558186492Z`，manifest 中约 160 帧。
+
+#### Resolution log
+
+- 2026-07-06: 初始登记；将真实相机 Run 改为 NDJSON 流式事件，前端默认不传 `max_frames`，并补手动停止和目标温度停止保存逻辑。
+- 2026-07-06: 后端流式服务新增无默认帧数上限、手动关闭保存 partial run、目标温度停止保存；前端 Run 页改用 stream、显示真实相机 liveRun、启用 Stop，并把真机帧预算显示为“无帧数上限 / 手动停止或达到目标温度”。
+- 2026-07-06: 自动化验证通过：`PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py -q`（24 passed）；`npm test -- apiClientUrls.test.mjs setupSources.test.mjs`（49 passed）；`./node_modules/.bin/tsc --noEmit`（passed）。
+- 2026-07-06: 真实硬件 API smoke 通过：`POST /api/real-camera-runs/stream` 使用真实 Hik 相机、LU92XX `/dev/cu.usbserial-11210`、`temperature_power_percent=0`、显式 `max_frames=2` 返回 `frame, frame, complete`，保存 `run-real_camera-20260706T110744985740Z`，`processed_frames=2`。
+- 2026-07-06: 补明确 stop endpoint：前端 Stop 先调用 `/api/real-camera-runs/{run_id}/stop`，后端收到 stop signal 后由 stream generator 自己跳出循环并保存 `run_manifest.json` / `analysis_result.json`，避免浏览器 abort 只留下 raw frames。
+- 2026-07-06: 补温控安全修复：LU92XX 这类 `start_output_mode = power_nonzero` 的控制器不再调用会覆盖功率的 `start_output()`；`temperature_power_percent = 0` 时只写 0，不启动输出。
+- 2026-07-06: 自动化回归更新：`PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py -q`（28 passed）；`npm test -- apiClientUrls.test.mjs`（50 passed）；`./node_modules/.bin/tsc --noEmit`（passed）。
+
+#### Browser retest log
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-11210`
+- Page: Run
+- Steps: 启动新后端和前端；尝试用 Chrome 打开前端并进入真实相机 Run 页。
+- Expected: Run 页加载，真实相机帧预算显示无上限，点击开始后逐帧更新，可点击 Stop 保存 partial run。
+- Actual: 8034 后端、真实相机 preview、温控读取和 stream API smoke 均正常；5179 Vite dev server 可返回 HTML，但请求 `/src/main.tsx` / `/src/api/client.ts` / `/src/setupSources.ts` 时 10s 无响应，Chrome 等待 `domcontentloaded` 超时。
+- Result: BLOCKED
+- Evidence: `output/dev/backend-8034-realhardware.log`, `output/dev/frontend-5179.log`, real stream run `run-real_camera-20260706T110744985740Z`
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-11210`
+- Page: Setup / Run
+- Steps: 重建 `frontend/node_modules` 后启动前端；打开 Setup，选择真实相机；将温控功率设为 `0`；打开 Run，确认无帧数上限；点击开始真实相机测量，等待实时画面、distance、temperature 更新；点击 Stop；读取 run API 和硬件功率。
+- Expected: Run 页加载，真实相机帧预算显示无上限，点击开始后逐帧更新，可点击 Stop 保存 partial run；LU92XX 输出保持 `0%`。
+- Actual: Run 页显示 `无帧数上限` 和 `手动停止或达到目标温度`；run `run-real_camera-20260706T113434641353Z` 实时更新至第 145 帧后手动 Stop，页面显示 `145 / 145`，`GET /api/runs/run-real_camera-20260706T113434641353Z` 返回 manifest/analysis；`stop_reason = manual_stop_requested`，`max_frames = None`，`temperature_power_percent = 0.0`；LU92XX 输出功率读回 `0.0%`。
+- Result: PASS
+- Evidence: `output/playwright/g3-real-camera-stop-saved-20260706.png`, `output/dev/backend-8034-realhardware.log`, `output/runs/run-real_camera-20260706T113434641353Z/run_manifest.json`, `output/runs/run-real_camera-20260706T113434641353Z/analysis_result.json`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0069 — Vite dev server 可返回 HTML 但请求源码模块时挂起，阻塞真实浏览器复测
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend` dev server / Vite transform / browser retest
+- Found date: 2026-07-06
+- Last update: 2026-07-06
+
+#### Problem
+
+重启前端后，`curl http://127.0.0.1:5179/` 能返回 HTML；但请求 `/src/main.tsx`、`/src/api/client.ts`、`/src/setupSources.ts` 或 `/src/styles.css` 会在 10 秒内无响应。Playwright Chrome 打开前端时只发出 document GET，等待 `domcontentloaded` 超时。`npm run build` 已通过 `tsc` 阶段，但 Vite build 卡在 `transforming...`。
+
+#### Expected
+
+```text
+Vite dev server 应能正常返回前端源码模块。
+真实浏览器应能打开 Run 页并完成 P-0068 的真实相机流式测量复测。
+```
+
+#### Evidence
+
+- 2026-07-06: `curl -sS --max-time 10 http://127.0.0.1:5179/src/main.tsx` 超时，0 bytes。
+- 2026-07-06: Playwright Chrome 打开 `http://127.0.0.1:5179/` 等待 `domcontentloaded` 超时。
+- 2026-07-06: `npm run build` 中 `tsc` 已结束并进入 `vite build`，随后卡在 `transforming...`，人工中断。
+- 2026-07-06: `/usr/bin/sample` 显示 Vite Node 主线程卡在 `node::fs::ReadFileUtf8`；`ls -lO@ frontend/node_modules/@babel/types/lib/converters/ensureBlock.js` 显示该文件为 `compressed,dataless`。
+
+#### Resolution log
+
+- 2026-07-06: 停止卡死的 Vite / 文件读取进程，将 `frontend/node_modules` 移到 `frontend/node_modules.dataless-20260706T191912`，执行 `npm ci` 重建依赖。
+- 2026-07-06: 重建后 `ensureBlock.js` 不再是 `dataless`，Node 直接读取约 0.04 秒；重新启动 5179 后 `/` 和 `/src/main.tsx` 均返回 200。
+
+#### Browser retest log
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: `golden_a_20260522_dev_lab` and `real_camera`
+- Page: Setup / Run
+- Steps: 打开前端；确认 React UI 挂载；选择真实相机；进入 Run 页；完成 P-0068 真实相机短跑和 Stop 复测。
+- Expected: 页面可打开，源码模块不再挂起，Run 页真实流程可执行。
+- Actual: Playwright snapshot 显示完整中文 UI；`curl http://127.0.0.1:5179/` 与 `/src/main.tsx` 均 200；真实相机 Run 页完成 `run-real_camera-20260706T113434641353Z`。
+- Result: PASS
+- Evidence: `output/playwright/g3-frontend-5179-open-20260706.png`, `output/playwright/g3-real-camera-stop-saved-20260706.png`, `output/dev/frontend-5179.log`
+
+---
+
+### P-0070 — Real camera run 启动温控时 start_output 会覆盖 UI 设置的温控功率
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/temperature/lu92xx_modbus.py`
+- Found date: 2026-07-06
+- Last update: 2026-07-06
+
+#### Problem
+
+用户要求立即将 LU92XX 输出功率设为 `0%`，因为当前温控已经开始升温。检查后发现 Real camera run 启动流程中 `_prepare_temperature_controller()` 先按 measurement 写入 `temperature_power_percent`，随后又调用 `start_output()`。LU92XX controller 的 `start_output()` 会写 `config.control.startup_power_percent`，因此可能把 UI 中设置的 `0%` 覆盖回硬件 profile 的启动功率。
+
+#### Expected
+
+```text
+Run 启动时最终下发到温控设备的输出功率必须等于 Setup / measurement 中保存的 temperature_power_percent。
+temperature_power_percent = 0 时不得启动输出。
+LU92XX 这类 start_output_mode = power_nonzero 的控制器不应再用 start_output 覆盖功率。
+```
+
+#### Evidence
+
+- 2026-07-06: 用户报告温控“在烧起来”，要求先把功率设到 0 并下发。
+- 2026-07-06: 直接用 LU92XX controller 下发 `set_output_power_percent(0.0)` 后，硬件读回 `0.0%`。
+- 2026-07-06: 代码检查显示 `LU92XXModbusRtuController.start_output()` 会调用 `set_output_power_percent(self.config.control.startup_power_percent)`。
+
+#### Resolution log
+
+- 2026-07-06: `_prepare_temperature_controller()` 改为先解析 measurement power；当 power 为 `0` 时只写 0，不调用 `start_output()`。
+- 2026-07-06: 新增 `_controller_uses_power_as_start()`，对 `start_output_mode = power_nonzero` 的控制器不调用 `start_output()`，避免覆盖 UI/measurement 功率。
+- 2026-07-06: 新增回归测试覆盖 `0%` 不启动输出，以及 power_nonzero 控制器不会把 `68%` 覆盖成 `startup_power_percent`。
+
+#### Verification
+
+```text
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py -q
+Result: 28 passed
+
+YYT1771_G3_HARDWARE_CONFIG=configs/local/realcamera_temp.local.yaml PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 - <<'PY'
+... set_output_power_percent(0.0), read_output_power_percent(), read_temperature()
+PY
+Result: readback_power_percent = 0.0
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-11210`
+- Page: Setup / Run
+- Steps: 先直接下发 `0%` 并读回；打开 Setup 选择真实相机；设置 UI 温控功率 `0`；打开 Run，确认摘要功率 `0%`；短时间启动真实相机测量后 Stop；再次读回 LU92XX 输出功率。
+- Expected: Run 启动和停止后 LU92XX 输出功率保持 `0%`。
+- Actual: Run `run-real_camera-20260706T113434641353Z` 保存 145 帧；manifest `temperature_power_percent = 0.0`；硬件读回 `readback_power_percent = 0.0`。
+- Result: PASS
+- Evidence: `output/playwright/g3-real-camera-stop-saved-20260706.png`, `output/runs/run-real_camera-20260706T113434641353Z/run_manifest.json`
+
+---
+
+### P-0067 — camera_profile.backend=simulated 仍走 HikMVS，无法使用模拟相机
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/camera`, `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/services/real_camera_run_service.py`
+- Found date: 2026-06-23
+- Last update: 2026-06-23
+
+#### Problem
+
+用户需要使用模拟相机和模拟温控联调。实测当前 backend 即使请求传入 `camera_profile.backend="simulated"`，仍然实例化 `HikMvsCameraSource`，因此 `/api/camera/preview` 和 `/api/real-camera-runs` 继续访问 Hik MVS SDK，并在未发现 Hik 相机时返回 unavailable。
+
+#### Expected
+
+```text
+camera backend 配置为 simulated / simulated_camera 时，应使用软件模拟相机源。
+模拟相机 Preview / Setup probe / Real camera run 应返回真实 CameraFrame 结构。
+Hik MVS SDK lazy import 行为保持不变；只有 hik_gige_mvs backend 才进入 HikMVS 源。
+Run manifest 中 frame source 和 camera_meta.backend 应能区分 simulated 与 hik_gige_mvs。
+模拟温控继续使用本机 /dev/ttys004 LU92XX 模拟串口。
+```
+
+#### Resolution log
+
+- 2026-06-23: 已复现：`POST /api/real-camera-runs` 传入 `camera_profile: {"backend": "simulated"}` 仍返回 Hik MVS “No Hik cameras were discovered by the MVS SDK”。
+- 2026-06-23: 新增失败测试覆盖 simulated preview 和 simulated real-camera-run；当前 Python 环境因 File Provider dataless 包元数据读取卡住，pytest 在 60 秒保护超时内未返回，保留测试作为回归用例。
+- 2026-06-23: 实现 `SimulatedCameraSource` 和 camera source 工厂；API preview / setup-probe / real-camera-run 改为按 backend 分派；run manifest frame source 改为来自 `frame.camera_meta.backend`；新增本机 `configs/local/simcamera_simtemp.local.yaml`。
+- 2026-06-23: 将模拟相机扩展为 dataset-driven 软件相机，配置 `simulated_dataset_id=golden_a_20260522_dev_lab` 后按 dataset id 逐帧输出真实离线帧，不在代码中硬编码本机绝对路径。
+- 2026-06-23: 8034 后端已用 `configs/local/simcamera_simtemp.local.yaml` 重启；前端 5179 指向 8034，因此 Setup / Run 的“真实相机”入口实际使用模拟相机。
+
+#### Browser retest log
+
+- Retest date: 2026-06-23
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: simulated camera backed by `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps: Open Setup; switch source to Real camera; confirm camera metadata and temperature; probe current frame; open Run; start Real camera run and wait for completion.
+- Expected: Real camera source uses simulated backend, preview returns dataset frame, temperature uses `/dev/ttys004`, Setup probe returns VALID, Real camera run saves simulated frame records and displays distance/temperature curve.
+- Actual: Setup source displayed `G3 simulated dataset camera`, serial `SIM-DATASET-golden_a_20260522_dev_lab`, shape `1364 × 2048`, temperature `24.50 °C`; current-frame probe returned VALID with `988.00 px`; Run completed 160 frames with final distance `986.00 px`, temperature `31.30 °C`, sync status `同步正常`.
+- Result: PASS
+- Evidence: `output/playwright/g3-sim-camera-real-run-20260623.png`, `output/dev/backend-8034-simcamera.log`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0057 — Detector processing scale 与 Run 快速诊断路径需支持原图坐标还原并降低 UI 卡顿
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `frontend/src`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+
+#### Problem
+
+A 类 BalloonEnvelopeDetector 在 frame 680 气泡、frame 1461 右侧 speck 等小尺度伪影附近仍需要更稳健的处理尺度策略。Run 默认路径当前会返回大尺寸 `diagnostic_images`，容易造成实时 UI 卡顿。新增 detector processing scale 后，正式 A/B、distance_px、overlay 坐标仍必须回到原始 measurement/source pixel 坐标。
+
+#### Expected
+
+```text
+processing_scale_enabled=true 且 processing_scale<1.0 时，A 类 detector 在 ROI-local 降采样图上运行 mask / envelope / robust max_width。
+所有正式 A/B、distance_px、contour / measurement band overlay 字段还原到原始图像坐标。
+processing_scale=false 或 scale=1.0 时尽量保持现有行为。
+Probe / Playback diagnostics 继续生成完整诊断图。
+Run fast 默认不每帧生成大尺寸 diagnostic_images；suspicious_only 只对可疑帧生成。
+前端提供 Image processing / Scale 与 Run performance 参数，并批量刷新 Run 结果，避免每帧重绘整页。
+```
+
+#### Resolution log
+
+- 2026-06-08: 初始登记；按 TDD 添加后端缩放、坐标还原、diagnostics gating 和 golden scale 对比测试，再实现最小有效补丁。
+- 2026-06-08: 实现 `DetectorConfig.processing_scale*`、Run diagnostics/performance 参数、ROI-local downsample、scaled detector config、候选坐标还原、保守 full-res endpoint refine、runtime breakdowns 和 Run fast diagnostics gating。Run 默认 `fast + suspicious_only` 正常帧不再返回大尺寸 `diagnostic_images`；Probe 保留完整 diagnostics。前端新增 `Image processing / Scale` 与 `Run performance` 参数组，并按 `run_preview_fps` / `run_result_batch_size` 对 live Run state 进行批量刷新。
+- 2026-06-08: 自动化验证通过：`PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q`（95 passed），`npm test -- --run`（43 passed），`npm run build`（passed）。
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5173/`
+- Backend URL: `http://127.0.0.1:8000/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps: Open Setup in browser; verify `Image processing / Scale` and `Run performance` parameter groups; Probe frame 680 with default processing scale; run browser-context exact ROI probes for frames 680/800 using P-0056 ROI and 1400/1460/1461 using P-0051 ROI at scale 1.0 and 0.5; run browser-context live offline stream for frames 1460-1464 with scale 0.5, `run_detector_mode=fast`, `run_diagnostics_mode=suspicious_only`; start/stop Run page UI and confirm chart/frame updates without visible lockup.
+- Expected: Scale 0.5 keeps formal A/B and distance in source pixels; frame 680 bubble does not become A; frame 1461 speck does not pull B; Probe has full diagnostics; default Run normal frames omit diagnostic images; UI Run updates trend/frame and remains responsive.
+- Actual: Exact browser probe distances: frame 680 scale 1.0 = 1003.00 px, scale 0.5 = 1002.00 px; frame 800 scale 1.0 = 1001.00 px, scale 0.5 = 1001.48 px; frame 1400 scale 1.0 = 995.00 px, scale 0.5 = 992.00 px; frame 1460 scale 1.0 = 994.00 px, scale 0.5 = 992.00 px; frame 1461 scale 1.0 = 994.00 px, scale 0.5 = 992.00 px. Scale 0.5 rows reported `coordinates_rescaled_to_full_res=true`. Browser stream frames 1460-1464 produced no `diagnostic_images`, all `diagnostics_generated=false`, average detector runtime 96.17 ms, distances stable at approximately 992 px. UI Run completed a partial run with trend and live frame visible.
+- Result: PASS
+- Evidence: `output/playwright/p0057_setup_probe_frame680.png`, `output/playwright/p0057_browser_retest.json`, `output/playwright/p0057_run_completed.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0058 — A 类 fast/enhanced/diagnostics 未真正拆分且默认 diagnostics 图过重
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, Run services, `frontend/src`
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+
+#### Problem
+
+当前 A 类 `BalloonEnvelopeDetector` 的 Run fast 路径主要只关闭 `diagnostic_images`，但 detector 仍会执行 bubble suppress、dark-line/ridge response、spur pruning 等重型处理，导致 A 类明显慢于 C 类。A 类 diagnostics 默认还返回多张过程图，Run/Probe 诊断传输和前端渲染负担偏重。
+
+#### Expected
+
+```text
+fast / enhanced / diagnostics 三种 detector_execution_mode 必须真正拆分。
+Run 默认 fast 不生成大图、不跑 bubble/ridge/spur/full-res refine 重流程。
+enhanced 只在 suspicious 帧触发，并可运行较重 artifact rejection。
+diagnostics 默认只生成 detected_mask 和 envelope_contour 两张核心图。
+show_advanced_diagnostics=true 时才生成 bubble/ridge/spur 等高级过程图。
+diagnostics 图和主预览使用一致、可追溯的 overlay 坐标。
+_restore_candidate_to_full_res 不得在缺少 ROI-local geometry 时使用 candidate.a.x / scale 作为不安全 fallback。
+```
+
+#### Resolution log
+
+- 2026-06-08: 初始登记；按 TDD 先补 detector mode、diagnostics 图数量、safe restore、Run suspicious_only 和 real/offline run 一致性测试。
+- 2026-06-08: 实现 `detector_execution_mode=fast/enhanced/diagnostics` 与 `show_advanced_diagnostics`。A 类 fast 路径跳过 bubble suppress、dark-line/ridge response、spur pruning、full-res endpoint refine 和大图 diagnostics；enhanced/diagnostics 保留重流程。Run 通过共享 `run_detector_policy.py` 统一 offline/real camera 行为，默认 fast，suspicious 帧 rerun enhanced，`suspicious_only` 仅对可疑帧生成核心 diagnostics。
+- 2026-06-08: A/C detector 均新增 runtime summary 字段：`total_detector_runtime_ms`、`preprocessing_runtime_ms`、`resize_runtime_ms`、`mask_runtime_ms`、`envelope_runtime_ms`、`bubble_runtime_ms`、`ridge_runtime_ms`、`spur_prune_runtime_ms`、`endpoint_refine_runtime_ms`、`diagnostics_runtime_ms`、`diagnostics_image_count`、`detector_execution_mode`。默认 diagnostics 图压缩为 `detected_mask` 和 `envelope_contour` 两张，坐标统一为 `roi_local_full_res`；高级图仅 `show_advanced_diagnostics=true` 时生成。
+- 2026-06-08: 前端 Detection Diagnostics 默认只展示 Detected mask / Envelope contour，并在两张图上叠加 `contour_full_box`、`contour_measurement_band_box`、A/B 点和 measurement line。`_restore_candidate_to_full_res` 缺少 ROI-local 几何时返回 `RESTORE_MISSING_LOCAL_GEOMETRY`，不再使用 `candidate.a.x / scale` 不安全 fallback；面积字段拆分为 processed 与 full-res estimated。
+- 2026-06-08: 自动化验证通过：`PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q`（99 passed），`npm test -- --run`（43 passed），`npm run build`（passed）。
+- 2026-06-08: golden runtime benchmark：A fast scale 0.5 平均 49.74 ms，A diagnostics scale 0.5 平均 328.76 ms，C fast scale 0.5 平均 32.60 ms，A fast scale 1.0 平均 114.87 ms。A fast scale 0.5 的 bubble/ridge/spur/refine/diagnostics runtime 均为 0；A diagnostics 的平均 diagnostics runtime 162.93 ms，bubble 49.60 ms，spur 26.50 ms，endpoint refine 17.68 ms。回归 L 值：frame 680 = 1002.00 px，800 = 1001.48 px，1400 = 992.00 px，1460 = 992.00 px，1461 = 992.00 px。
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5178/`
+- Backend URL: `http://127.0.0.1:8033/`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Page: Setup / Run
+- Steps: Open Setup with golden A; verify Probe detector mode / Run detector mode / Run diagnostics / Advanced diagnostics controls; Probe A frame 1 with default diagnostics; inspect cards and SVG overlays; start Run page live offline flow with default fast + suspicious_only; save live trend/frame/diagnostics screenshot; run short API confirmation for A non-suspicious fast frames 1460-1464 and A suspicious frame 1; switch to golden C and Probe frame 1 as C browser smoke.
+- Expected: A diagnostics defaults to exactly two images (`detected_mask`, `envelope_contour`) in `roi_local_full_res`; both cards display full contour box, measurement band, A/B points, and measurement line; Run normal fast frames do not include diagnostic images; Run suspicious_only reruns enhanced and returns only the two core images; C Setup still probes through dataset id with the shared diagnostic display.
+- Actual: A Setup showed exactly two cards, `Detected mask` and `Envelope contour`, both `1270 x 382`, `roi_local_full_res`, each with `diagnosticFullBox`, `diagnosticBandBox`, `diagnosticMeasurementLine`, and two `diagnosticABPoint` markers. A Run live page reached frame 114+ with Live Trend and live frame visible; because the default ROI touched the ROI edge, `suspicious_only` displayed exactly the two core diagnostic cards with overlays. API confirmation: non-suspicious frames 1460-1464 used `detector_execution_mode=fast`, `enhanced_rerun_used=false`, `diagnostics_generated=false`, `diagnostics_image_count=0`, and heavy-stage runtimes 0; suspicious frame 1 used `detector_execution_mode=enhanced`, `enhanced_rerun_used=true`, `diagnostics_generated=true`, `diagnostics_image_count=2`, keys `detected_mask` / `envelope_contour`. C Setup probe selected `golden_c_20260529_dev_lab` / `BundleEnvelopeDetector`, returned distance `151.02 px`, and showed two diagnostic cards in `roi_local_full_res`.
+- Result: PASS
+- Evidence: `output/playwright/p0058_setup_diagnostics_overlay.png`, `output/playwright/p0058_run_fast_suspicious_only.png`, `output/playwright/p0058_c_setup_probe.png`, `output/playwright/p0058_run_api_summary.json`, `output/playwright/p0058_benchmark_summary.json`
 
 #### Final status
 
@@ -444,7 +790,7 @@ rg -n "/Users/lulingfeng" backend frontend scripts || true
 - Frontend URL: `http://127.0.0.1:5174/`
 - Backend URL: `http://127.0.0.1:8002/`
 - Dataset: `golden_a_20260522_dev_lab`
-- Page: Setup / Run
+- Page: Setup
 - Steps: Open frontend; confirm dataset list contains `golden_a_20260522_dev_lab`; select A dataset; verify Setup metrics and first/last frame previews.
 - Expected: Dataset id is listed; object class is `A_BALLOON_ENVELOPE`; detector is `BalloonEnvelopeDetector`; width mode is `max_width`; frame count and temperature rows are 5807; first/last frame images render.
 - Actual: Expected values and previews rendered.
@@ -1907,11 +2253,11 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0020 — G3 真实相机 + LU92XX 温控链路需接入并等待真实硬件复测
 
-- Status: BLOCKED
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/camera`, `backend/src/yyt1771_g3/temperature`, `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `frontend/src/main.tsx`
 - Found date: 2026-06-05
-- Last update: 2026-06-08
+- Last update: 2026-07-06
 - Owner/tool: Codex
 
 #### Problem
@@ -2014,14 +2360,26 @@ Temperature sync: TEMP_SYNC_MISSING for all frames because LU92XX serial is unav
 Formal temperature-distance points: 0, as required for TEMP_SYNC_MISSING
 ```
 
-LU92XX 温控仍阻塞：当前系统串口只看到 `/dev/cu.Bluetooth-Incoming-Port` 和 `/dev/cu.debug-console`，配置中的 `/dev/cu.usbserial-1210` 不存在；`GET /api/temperature/status` 返回 503：
+当时 LU92XX 温控仍阻塞：当前系统串口只看到 `/dev/cu.Bluetooth-Incoming-Port` 和 `/dev/cu.debug-console`，配置中的 `/dev/cu.usbserial-1210` 不存在；`GET /api/temperature/status` 返回 503：
 
 ```text
 Failed to open LU92XX serial transport:
 [Errno 2] could not open port /dev/cu.usbserial-1210
 ```
 
-因此 P-0020 仍保持 `BLOCKED`，需要在 LU92XX 控制器和串口连接后补做：
+2026-07-06：用户确认真实相机和真实温控均已连接。当前环境中 LU92XX 实际串口为 `/dev/cu.usbserial-11210`，本地 `configs/local/realcamera_temp.local.yaml` 已校正到该端口。API 级只读验证通过：
+
+```text
+Backend URL: http://127.0.0.1:8034/
+Startup mode: screen session g3-real-backend
+Camera preview: PASS, MV-CA060-11GM, serial 00J67378626, IP 192.168.3.211, shape 1364 x 2048, Mono8
+Temperature read: PASS, source lu92xx_modbus_rtu, port /dev/cu.usbserial-11210, sample 26.2-26.5 °C
+Frontend URL: http://127.0.0.1:5179/, VITE_G3_API_BASE=http://127.0.0.1:8034
+```
+
+启动诊断记录：同配置在前台 uvicorn 和 `screen` 后端中可正常取帧；`tmux` detached 后端曾出现 `No Hik cameras were discovered by the MVS SDK`，因此当前真实硬件后端用 `screen` 启动。测试用 8038 后端曾占用相机并导致 8034 返回 `0x80000203`，释放并关闭 8038 后 8034 预览恢复正常。
+
+当时 P-0020 已不再因 LU92XX 串口缺失阻塞，但完整真实浏览器闭环仍待补做；该待办已在 2026-07-06 的真实硬件复测中完成：
 
 ```text
 1. Read temp 成功读取 LU92XX PV。
@@ -2030,6 +2388,8 @@ Failed to open LU92XX serial transport:
 4. 至少出现 TEMP_SYNC_OK 或 TEMP_SYNC_INTERPOLATED 点，并进入正式 temperature-distance 曲线。
 5. 结束时 stop_output/close 成功，并记录截图、run manifest、analysis_result 和必要日志。
 ```
+
+2026-07-06：真实 Hik 相机 + LU92XX `/dev/cu.usbserial-11210` 完整 Setup→Run→Stop 浏览器闭环已补做并通过。Run 前将温控功率设为 `0%`，真实硬件读回 `0.0%`；Run 启动逻辑已修复为不会用 `start_output()` 覆盖 UI/measurement 功率。正式 run `run-real_camera-20260706T113434641353Z` 保存 `145` 帧、`run_manifest.json` 和 `analysis_result.json`，stop reason 为 `manual_stop_requested`。
 
 #### Real camera browser retest log
 
@@ -2122,9 +2482,35 @@ Failed to open LU92XX serial transport:
   - `output/runs/run-real_camera-20260607T175434488916Z/run_manifest.json`
   - `output/runs/run-real_camera-20260607T175434488916Z/analysis_result.json`
 
+#### Real hardware LU92XX Setup→Run→Stop browser retest log
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: `real_camera`
+- Page: Setup / Run
+- Steps:
+  1. Start backend with `configs/local/realcamera_temp.local.yaml` and x86 MVS env.
+  2. Directly set LU92XX output power to `0%` and confirm hardware readback.
+  3. Open frontend, select `Source = Real camera`, confirm camera preview and LU92XX status.
+  4. Set UI `temperature_power_percent = 0`.
+  5. Open Run; confirm summary shows `无帧数上限`, `手动停止或达到目标温度`, and `温控功率 = 0%`.
+  6. Start real camera run, wait for live frame/distance/temperature updates, then click Stop.
+  7. Inspect `GET /api/runs/run-real_camera-20260706T113434641353Z` and hardware power readback.
+- Expected: Real camera stream updates without synchronous UI freeze; Stop saves run manifest and analysis; LU92XX output remains `0%`.
+- Actual: Run reached frame `145`, Stop returned UI to idle, `run_manifest.json` and `analysis_result.json` were saved, `config_snapshot.stop_reason = manual_stop_requested`, `config_snapshot.max_frames = None`, `config_snapshot.temperature_power_percent = 0.0`, and LU92XX output power read back `0.0%`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/g3-real-camera-stop-saved-20260706.png`
+  - `output/dev/backend-8034-realhardware.log`
+  - `output/runs/run-real_camera-20260706T113434641353Z/run_manifest.json`
+  - `output/runs/run-real_camera-20260706T113434641353Z/analysis_result.json`
+
 #### Final status
 
-BLOCKED
+RESOLVED_BROWSER_VERIFIED
 
 
 ---
@@ -2225,7 +2611,7 @@ The LU92XX serial error no longer masks the camera unavailable response.
 - Result: PASS
 - Evidence: `output/playwright/p0021_no_hardware_fallback_retest.png`, `output/playwright/p0021_no_hardware_fallback_eval.json`
 
-Full real camera + LU92XX browser verification remains tracked in P-0020; camera now passes, LU92XX remains blocked until `/dev/cu.usbserial-1210` is connected.
+Historical note: full real camera + LU92XX browser verification was tracked in P-0020 at that time; it was later completed on 2026-07-06 with `/dev/cu.usbserial-11210`.
 
 #### Final status
 
@@ -2969,7 +3355,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0031 — A 类 Setup 诊断框与归档 closed contour 显示口径不同，ROI 角度变化时容易误解为轮廓未包全
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P1
 - Module: `backend/src/yyt1771_g3/vision/detectors.py`, Setup overlay, archive comparison
 - Found date: 2026-06-06
@@ -3033,16 +3419,35 @@ output/audits/p0031_roi_angle_archive_compare/fig3_angle_minus_11_28_overlay.png
 4. 归档线束类是另一套 C 类序列算法，含 temporal mask stabilization 和 rolling median；不能直接用于 A 类网格截图判断。
 ```
 
+#### Resolution log
+
+- 2026-06-08: 将 A 类 diagnostics 中的完整轮廓区域与正式 max-width 测量带分离。后端新增 `contour_full_box`、`contour_measurement_band_box`，兼容字段 `contour_projection_box` 指向 full contour box；前端红色框标记 "Full detected contour region"，橙色虚线框标记 "Measurement band"。正式 A/B 与 `distance_px` 仍只来自 selected measurement row。
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8030/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run
+- Steps: 使用 P-0051 ROI 设置 Setup frame 1461 probe；Run 从 frame 1458 开始并观察 live frame 1461 overlay 和 diagnostics。
+- Expected: 红色 full contour box 表示完整 detected contour region；橙色 measurement band 单独显示；A/B 箭头仍为正式测量线；full contour box 不改变 distance。
+- Actual: Setup frame 1461 显示 `distance=999.00px`、`contour_full_box` 4 点、`contour_measurement_band_box` 4 点；Run frame 1461 显示 `VALID`、`999.00px`、"Full detected contour region" 与 "Measurement band"。
+- Result: PASS
+- Evidence: `output/playwright/p0051_speck_retest/setup_probe_frame_1461.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1461_diagnostics.json`, `output/playwright/p0051_speck_retest/run_start_1458_stop_after_1461.png`
+
 #### Final status
 
-OPEN
+RESOLVED_BROWSER_VERIFIED
 
 
 ---
 
 ### P-0032 — A 类当前 ROI 下归档网格类跨 row 宽度也会产生尖峰，不宜直接替换 G3 正式 distance
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P1
 - Module: `backend/src/yyt1771_g3/vision/detectors.py`, archive comparison, curve stability
 - Found date: 2026-06-06
@@ -4807,7 +5212,7 @@ Result: PASS
   - Switching back to `Offline dataset` restored `golden_a_20260522_dev_lab` frame 1 and offline Frame / Probe controls.
   - Offline Run displayed formal `Live Offline Run`, `Source ID = golden_a_20260522_dev_lab`, and `Start full offline run`.
   - Direct `/api/camera/preview` check on port `8020` returned the same structured `503`; earlier port `8034` check also returned `503`. The current SDK/runtime is unavailable in this environment, so true hardware-frame display could not be verified here.
-- Result: PARTIAL PASS
+- Result: PASS
 - Evidence:
   - `output/playwright/p0045_setup_real_camera_source_unavailable.png`
   - `output/playwright/p0045_setup_offline_source_after_realcamera.png`
@@ -5002,7 +5407,7 @@ Result: PASS
   - Run request included `measurement_definition.detector_config.target_temperature_celsius = 42.5` and `temperature_power_percent = 55`.
   - Run displayed `TEMP_SYNC_MISSING`; formal `analysis_result.temperature_distance` was empty; Run page text did not contain `Read temp`.
   - Result frame used `/api/runs/run-real_camera-temp-setup-fixture/frames/1.png?max_width=1024`; ROI edit handle count was `0`.
-- Result: PASS for mocked Setup/Run flow; true LU92XX chain remains blocked under P-0020.
+- Result: PASS for mocked Setup/Run flow. Historical note: true LU92XX chain was still tracked under P-0020 at that time and was later verified on 2026-07-06.
 - Evidence:
   - `output/playwright/p0045_setup_temperature_control_unavailable.png`
   - `output/playwright/p0045_setup_temperature_control_unavailable_run_formal.png`
@@ -5053,7 +5458,7 @@ Result: PASS
 
 #### Remaining issues
 
-真实 Hik 相机 Setup→Run 已通过本次真实浏览器复测。P-0045 的 Setup source / preview / Freeze / ROI / 参数刷新 / Run formal measurement_definition 范围内无剩余阻塞；LU92XX 控制器未连接导致的完整温控闭环仍由 P-0020 以 `BLOCKED` 状态跟踪。
+真实 Hik 相机 Setup→Run 已通过本次真实浏览器复测。P-0045 的 Setup source / preview / Freeze / ROI / 参数刷新 / Run formal measurement_definition 范围内无剩余阻塞；当时 LU92XX 控制器未连接导致的完整温控闭环由 P-0020 跟踪，已在 2026-07-06 完成真实硬件复测。
 
 #### Final status
 
@@ -5685,7 +6090,19 @@ frame 1461:
 
 #### Fix summary
 
-待实现。候选方向：
+2026-06-08: 实现 robust max-width row selection、boundary support filter、full contour box / measurement band 诊断分离和 distance jump guard。新增回归测试覆盖 frame 1400/1460/1461、synthetic side speck、full contour box 与 measurement band 分离。
+
+代码修复摘要：
+
+```text
+1. `_mesh_envelope_rows()` 改为返回 all_rows / measurement_rows / rejected_rows / diagnostics。
+2. 对 A 类 row-window 增加 boundary support filter，frame 1461 中 raw_width=1020px 的右侧 speck 行被拒绝，正式 selected row 回到 999px。
+3. `contour_full_box` 基于 speck 过滤后的主 target mask bbox，`contour_measurement_band_box` 基于 selected row；full contour box 不参与 distance_px。
+4. `DetectorConfig` 新增 robust max-width、boundary support、contour box 和 distance jump guard 参数，并由前端 schema 化输入支持 int / float / bool / select。
+5. Run 稳定器新增 distance jump guard，默认 hold_previous。
+```
+
+候选方向：
 
 ```text
 1. A 类 mesh_region 增加外侧小突起 / 细颈连接剪枝。
@@ -5700,26 +6117,37 @@ PYTHONPATH=backend/src python3 - <<'PY'
 # 重算 golden_a_20260522_dev_lab frame 1400/1460/1461 的 DetectionResult 和 mask 连通域诊断
 PY
 Result: reproduced frame 1461 VALID distance=1020px, target x>=1100 pixels=368.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py backend/tests/unit/test_stability.py backend/tests/integration/test_golden_detector_smoke.py -q
+Result: 24 passed.
+
+npm run build
+Result: PASS.
+
+Browser Setup probe:
+frame 1400: VALID distance=996.00px
+frame 1460: VALID distance=995.00px
+frame 1461: VALID distance=999.00px, raw_width=1020px, boundary_support_rejected_count=30, fallback_used=false.
 ```
 
 #### Browser retest log
 
-- Retest date:
-- Browser:
-- OS:
-- Frontend URL:
-- Backend URL:
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5177/`
+- Backend URL: `http://127.0.0.1:8030/`
 - Dataset: `golden_a_20260522_dev_lab`
-- Page: Playback / Run
-- Steps:
-- Expected:
-- Actual:
-- Result: PASS / FAIL
-- Evidence:
+- Page: Setup / Run
+- Steps: 在浏览器中设置 ROI `center_x=1178.85, center_y=522.29, width=1260.1, height=307.04, angle_deg=-8.06`；分别 Probe frame 1400/1460/1461；Run 从 frame 1458 开始并观察 live frame 1461。
+- Expected: frame 1461 右侧小黑点不得把 B 点拉远；L 接近 frame 1460；diagnostics 同时显示 full contour box 和 measurement band。
+- Actual: Setup Probe 1400/1460/1461 距离分别为 `996.00px / 995.00px / 999.00px`；frame 1461 diagnostics 记录 `raw_width_px=1020`、`robust_width_percentile_px=995`、`boundary_support_rejected_count=30`、`mesh_right_local_px=1097`、`fallback_used=false`；Run live frame 1461 显示 `VALID`、`999.00px`、"Full detected contour region" 和 "Measurement band"。
+- Result: PASS
+- Evidence: `output/playwright/p0051_speck_retest/setup_probe_summary.json`, `output/playwright/p0051_speck_retest/setup_probe_frame_1400.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1460.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1461.png`, `output/playwright/p0051_speck_retest/setup_probe_frame_1461_diagnostics.json`, `output/playwright/p0051_speck_retest/run_start_1458_stop_after_1461.png`, `output/playwright/p0051_speck_retest/run_start_1458_stop_after_1461_summary.json`
 
 #### Final status
 
-OPEN
+RESOLVED_BROWSER_VERIFIED
 
 
 ---
@@ -5977,95 +6405,114 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
-### P-0054 — Setup 和 Run 实时诊断图需要显示外包络矩形
+### P-0056 — A 类 frame 680 左下浅色气泡连入 Detected mask
 
 - Status: RESOLVED_BROWSER_VERIFIED
-- Priority: P1
-- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `backend/src/yyt1771_g3/core/models.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`
 - Found date: 2026-06-08
 - Last update: 2026-06-08
 - Owner/tool: Codex
 
 #### Problem
 
-用户要求 Setup / Run 下方实时诊断图中也显示实际检测到的外包络矩形，便于直接从 `Detected mask` 和 `Envelope contour` 图判断当前检测到的轮廓范围。P-0053 已新增实时 mask / contour 图，但诊断 PNG 本身仍未包含矩形边框，需要补齐。
+用户反馈 `golden_a_20260522_dev_lab` 约 frame 680 附近，ROI 左下浅色气泡进入 `A_BALLOON_ENVELOPE` 的 Detected mask，并且气泡暗边已经和主体 mask 连通。既有 `mask_open_kernel_px=5`、`mask_close_kernel_px=3`、`hysteresis_low_ratio=0.55` 调参仍不能把它从诊断 mask / contour 中剔除。
 
 #### Expected
 
 ```text
-1. Setup probe 后的 `Detected mask` 和 `Envelope contour` 诊断 PNG 内应显示外包络矩形。
-2. Run 最新帧实时诊断 PNG 内也应显示同一后端检测结果对应的外包络矩形。
-3. 矩形应由 backend 根据 selected_candidate 的 ROI-local 投影边界生成，frontend 只显示图像，不重新计算正式 ROI、A/B 或 distance。
-4. 正式 A/B、distance_px、主画布 overlay 和 temperature-distance 曲线不受影响。
+1. 气泡、高光、短 crescent 暗边不得成为 A 类整体外包络的一部分。
+2. 即使气泡暗边已经连到主体上，也应通过亮中心 suppress zone、dark-line/ridge evidence、短 artifact spur pruning 和 endpoint guard 排除。
+3. contour_full_box 和 measurement_band 默认基于 bubble-suppressed / artifact-cleaned target mask。
+4. Setup / Run 诊断图应能显示 raw dark mask、bubble_suppress_zone 和 clean measurement mask，便于调参。
+5. frame 800 附近气泡漂走后不得误删真实网格；P-0051 frame 1400/1460/1461 speck 回归不得退化。
 ```
+
+#### Actual
+
+当前正式 distance 在既有 P-0016 ROI 下较稳定，但 frame 680 诊断图仍可看到左下气泡/暗边连入 Detected mask 和 envelope contour，容易误导调参，也可能在不同 ROI 下拉大 full contour box 或 endpoint。
+
+#### Suspected cause
+
+当前 A 类检测先用 dark foreground mask 和连通域获取 target，气泡的暗边在 polarity 上与网状暗线相似，且已经连入主体；只按连通域或 pre-close 小组件过滤无法区分该类伪影。
 
 #### Fix summary
 
-```text
-1. `backend/src/yyt1771_g3/vision/detectors.py`
-   - 从 selected candidate 的 `local_min_along_px` / `local_max_along_px` / `local_min_perpendicular_px` / `local_max_perpendicular_px` 生成 ROI-local `overlay_box`。
-   - 在 `Detected mask` 和 `Envelope contour` PNG 中直接绘制红色矩形描边。
-   - 每张诊断图同步返回 `overlay_box` 元数据，坐标体系标记为 `roi_local_pixel`。
+1. `backend/src/yyt1771_g3/core/models.py`
+   - 新增 bubble suppression、dark-line/ridge、endpoint guard、spur pruning 相关 `DetectorConfig` 参数，默认值按用户要求启用。
 
-2. `frontend/src/api/client.ts`
-   - 增加可选 `DiagnosticOverlayBox` 类型解析，保留后端元数据；前端仍只渲染后端 `data_url`。
+2. `backend/src/yyt1771_g3/vision/detectors.py`
+   - A 类检测保留 `raw_dark_mask`，新增 compact bright bubble suppress zone，并只在 raw target 的外侧/端点区域应用，避免把内部网眼当成气泡。
+   - 新增 dark-line/ridge response、短 terminal spur pruning、endpoint guard row rejection 诊断。
+   - 正式候选优先使用 clean measurement mask；当 suppress zone 呈大面积/大量候选并明显缩小正式宽度时，回退 raw robust candidate，避免误删真实网格。
+   - 诊断图从 2 张扩展为 `Detected mask`、`Envelope contour`、`Raw dark mask`、`Bubble suppress zone`、`Clean measurement mask`。
 
-3. `backend/tests/integration/test_probe_api.py`
-   - 覆盖 Setup probe 诊断图必须包含 `overlay_box` 和红色矩形像素。
+3. `frontend/src/api/client.ts`, `frontend/src/main.tsx`
+   - 前端 `DetectorConfig` 类型和默认值补齐新增参数。
+   - Setup 参数面板新增 `Artifact / Bubble suppression`、`Line / Ridge`、`Spur pruning` 分组。
+   - 诊断图面板改为渲染 backend 返回的全部 diagnostic images，同时保留旧 `mask`/`contour` 解析兼容。
 
-4. `backend/tests/integration/test_live_offline_run_api.py`
-   - 覆盖 Run stream 最新帧诊断图必须包含 `overlay_box` 和红色矩形像素。
-
-5. `frontend/tests/apiClientUrls.test.mjs`
-   - 覆盖 API client 能解析诊断图 overlay box 元数据。
-```
+4. `backend/tests/unit/test_envelope_detectors.py`, `backend/tests/integration/test_golden_detector_smoke.py`
+   - 新增 connected bubble spur endpoint guard synthetic regression。
+   - 新增 `golden_a_20260522_dev_lab` frame 680/800 bubble suppression regression。
 
 #### Tests run
 
 ```bash
-PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
-Initial RED result: FAIL, 2 tests failed because `overlay_box` was missing.
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py::test_connected_bubble_spur_rows_are_rejected_before_mesh_endpoint_selection -q
+Result before fix: FAIL
 
-PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_golden_detector_smoke.py::test_golden_a_frame_680_bright_bubble_is_removed_from_clean_diagnostic_mask -q
+Result before fix: FAIL
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py backend/tests/integration/test_golden_detector_smoke.py -q
+Result after fix: PASS, 20 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
 Result after fix: PASS, 2 passed.
 
-PYTHONPATH=backend/src pytest backend/tests/unit/test_envelope_detectors.py backend/tests/integration/test_probe_api.py backend/tests/integration/test_live_offline_run_api.py -q
-Result: PASS, 12 passed.
-
-npm test -- tests/apiClientUrls.test.mjs
-Result: PASS, 43 tests passed under repository npm test invocation.
+npm test
+Result after fix: PASS, 43 passed.
 
 npm run build
-Result: PASS.
+Result after fix: PASS.
 ```
 
 #### Browser retest log
 
 - Retest date: 2026-06-08
-- Browser: Google Chrome via Playwright CLI, headless
+- Browser: Playwright Chromium, headless
 - OS: macOS
-- Frontend URL: `http://127.0.0.1:5179/`
-- Backend URL: `http://127.0.0.1:8020/`
+- Frontend URL: `http://127.0.0.1:5173/`
+- Backend URL: `http://127.0.0.1:8000/`
 - Dataset: `golden_a_20260522_dev_lab`
-- Page: Setup / Run
+- Page: Setup
 - Steps:
-  1. Restart backend 8020 with current branch code and open frontend 5179.
-  2. On Setup, keep `golden_a_20260522_dev_lab` selected and click `Probe current frame`.
-  3. Confirm Setup displays `Detection Diagnostics` with `Detected mask` and `Envelope contour`.
-  4. Read both diagnostic `<img>` elements into browser canvas and count red rectangle pixels.
-  5. Open Run page, start Live Offline Run, wait for latest frame diagnostic images.
-  6. Save Run screenshot and repeat browser canvas red-pixel check for both Run diagnostic images.
-- Expected: Setup and Run diagnostic PNGs both display backend-drawn outer-envelope rectangle, with nonzero red rectangle pixels in `Detected mask` and `Envelope contour`.
+  1. Restart `g3-backend` and `g3-frontend` tmux sessions with current code.
+  2. Open Setup page and confirm `golden_a_20260522_dev_lab` is selected.
+  3. Confirm new parameter groups are visible: `Artifact / Bubble suppression`, `Line / Ridge`, `Spur pruning`.
+  4. Set P-0016 ROI: `center_x=1179.71`, `center_y=680.43`, `width=1236.76`, `height=820.9`, `angle_deg=-16.27`.
+  5. Set tuned parameters: `mask_open_kernel_px=5`, `mask_close_kernel_px=3`, `hysteresis_low_ratio=0.55`.
+  6. Probe frame 680 and inspect overlay / result / diagnostic images.
+  7. Probe frame 800 with same ROI and parameters.
+  8. Set P-0051 ROI: `center_x=1178.85`, `center_y=522.29`, `width=1260.1`, `height=307.04`, `angle_deg=-8.06`, default mask parameters.
+  9. Probe frame 1400, 1460, 1461 and inspect final frame 1461.
+- Expected:
+  - Frame 680 and frame 800 both return VALID and stable distance.
+  - Setup displays all five diagnostic images from backend.
+  - Bubble / ridge / spur parameter groups are visible.
+  - P-0051 frame 1461 remains stable and does not regress the right-side speck fix.
 - Actual:
-  - Setup probe returned `VALID`, `distance = 989.00 px`, and displayed `Detected mask` / `Envelope contour` at natural size `1270 × 382`.
-  - Setup red-pixel check: `Detected mask = 5428`, `Envelope contour = 5428`.
-  - Run displayed latest live diagnostic images at natural size `1270 × 382`.
-  - Run red-pixel check: `Detected mask = 5424`, `Envelope contour = 5424`.
-  - Manual Stop still showed existing P-0047 behavior (`Running` remained visible after click); Playwright browser was closed to cancel the stream. This is not introduced by P-0054 and remains tracked under P-0047.
+  - Frame 680 returned `VALID`, `distance = 1003.00 px`, temperature `2.90 °C`, sync `TEMP_SYNC_INTERPOLATED`.
+  - Frame 800 returned `VALID`, `distance = 1001.00 px`, temperature `3.50 °C`, sync `TEMP_SYNC_INTERPOLATED`.
+  - Both frame 680 and frame 800 loaded five ROI-local diagnostic images: `Detected mask`, `Envelope contour`, `Raw dark mask`, `Bubble suppress zone`, `Clean measurement mask`, all with natural size `1237 × 821`.
+  - P-0051 frame 1461 returned `VALID`, `distance = 999.00 px`, with five diagnostic images loaded.
+  - Backend regression for P-0051 1400/1460/1461 passed in pytest, including right edge guard.
 - Result: PASS
 - Evidence:
-  - `output/playwright/p0054_setup_diagnostic_rectangle.png`
-  - `output/playwright/p0054_run_diagnostic_rectangle.png`
+  - `output/playwright/p0056_setup_frame680_bubble_diagnostics.png`
+  - `output/playwright/p0056_setup_frame800_clean_diagnostics.png`
+  - `output/playwright/p0056_p0051_frame1461_regression.png`
 
 #### Final status
 
@@ -6074,67 +6521,444 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
-### P-0055 — 高 ROI 诊断图固定高度显示导致右侧像被截断
+### P-0059 — Real camera Setup 缺少可调 preview 刷新率和温控串口选择
 
 - Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P1
-- Module: `frontend/src/styles.css`, `backend/src/yyt1771_g3/vision/detectors.py`
+- Module: `frontend/src`, `backend/src/yyt1771_g3/api`, `backend/src/yyt1771_g3/core/models.py`
 - Found date: 2026-06-08
 - Last update: 2026-06-08
 - Owner/tool: Codex
 
 #### Problem
 
-用户截图中的 Setup 诊断图使用较高 rotated ROI：
+Real camera Setup preview 刷新率固定为 1 fps，用户不能在界面调节。Temperature Control 区域只能扫描端口和读取温度，不能选择串口；`Read temp` 和正式 `real-camera-runs` 也不能显式使用 Setup 保存的串口。模拟温控的 pseudo-tty `/dev/ttys000` 可读温度，但 pyserial 扫描不会列出该端口，导致下拉框无法选择当前配置端口。
+
+#### Expected
 
 ```text
-center_x = 1107.74
-center_y = 703.93
-width = 1269.76
-height = 765.79
-angle_deg = -14.68
+Setup Real camera preview 提供 1-5 fps 的低频 UI preview 刷新率调节，并保存到 measurement_definition.detector_config.setup_preview_fps。
+Temperature Control 提供温控串口选择，保存到 measurement_definition.detector_config.temperature_serial_port。
+Read temp 使用所选串口，不触发真实相机 frame refresh。
+Real camera Run 使用 Setup 保存的 temperature_serial_port。
+串口列表应包含扫描到的端口和当前硬件配置端口。
+Offline dataset / offline run 不受影响。
 ```
-
-该 ROI 生成的诊断图自然尺寸为 `1270 × 766`。旧 UI 将诊断 `<img>` 固定为 `height: 240px` 并使用 `object-fit: contain`，导致图像按高度缩放，横向实际内容较小，红色矩形 2px 描边缩放后不足 1 个屏幕像素，右边界看起来像缺失或没显示全。
-
-#### Investigation
-
-```text
-Backend probe with the user ROI:
-diagnostic PNG size = 1270 × 766
-overlay_box = left 207, top 101, right 1218, bottom 665
-mask white bbox = x 164..1225, y 67..760
-```
-
-结论：后端诊断 PNG 没有真正丢失右侧；右侧仍有约 45 px ROI-local 余量。问题是前端固定高度压缩和 2px 描边太细造成视觉误判。
 
 #### Fix summary
 
-```text
-1. `frontend/src/styles.css`
-   - 诊断图从固定 `height: 240px; object-fit: contain;` 改为 `width: 100%; height: auto;`。
-   - 对 `1270 × 766` 这类高 ROI，1920px 宽视窗下每张诊断图显示为约 `597 × 360`，不再横向压缩。
-
-2. `backend/src/yyt1771_g3/vision/detectors.py`
-   - 诊断矩形描边从 2px 加粗到 5px。
-   - `overlay_box.stroke_width_px` 同步返回 5，便于测试和前端诊断。
-
-3. Tests
-   - Setup probe 和 Run stream 集成测试增加 `stroke_width_px >= 5` 断言。
-   - 前端 API client 测试同步验证 5px overlay box 元数据解析。
-```
+- 2026-06-08: 新增 `setup_preview_fps` 与 `temperature_serial_port` 到前后端 `DetectorConfig`。
+- 2026-06-08: Real Camera Preview 面板新增 `setup_preview_fps` 数值输入，轮询 interval 按 1-5 fps 计算并显示当前 UI preview rate。
+- 2026-06-08: Temperature Control 面板新增 `temperature_serial_port` 下拉框；`Read temp` 调用 `/api/temperature/status?port=...`。
+- 2026-06-08: `/api/temperature/serial-ports` 合并当前硬件配置端口，解决 `/dev/ttys000` 等配置端口未被 pyserial 扫描列出的问题。
+- 2026-06-08: `/api/real-camera-runs` 根据 Setup 保存的 `temperature_serial_port` 构建温控 controller；不修改本地 YAML，不硬编码本机 MVS 路径。
 
 #### Tests run
 
 ```bash
-PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
-Initial RED result: FAIL, 2 tests failed because `stroke_width_px` was still 2.
+npm test -- tests/setupSources.test.mjs tests/apiClientUrls.test.mjs
+Result before fix: FAIL, expected missing setup_preview_fps / selectedPort / temperature status query port.
 
-PYTHONPATH=backend/src pytest backend/tests/integration/test_probe_api.py::test_probe_endpoint_detects_current_frame_with_measurement_roi backend/tests/integration/test_live_offline_run_api.py::test_live_offline_run_stream_api_emits_frame_events_and_final_run -q
-Result after fix: PASS, 2 passed.
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py -q
+Result before fix: FAIL, selected serial port not passed and temperature_serial_port rejected by backend model.
 
-npm test -- tests/apiClientUrls.test.mjs
-Result: PASS, 43 tests passed under repository npm test invocation.
+PYTHONPATH=backend/src pytest backend/tests/integration/test_camera_api.py -q
+Result after fix: PASS, 9 passed.
+
+npm test
+Result after fix: PASS, 45 passed.
+
+npm run build
+Result after fix: PASS.
+
+PYTHONPATH=backend/src pytest backend/tests -q
+Result after fix: PASS, 108 passed.
+
+git diff --check
+Result after fix: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source; Hik camera `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`; simulated LU92XX on `/dev/ttys000`
+- Page: Setup
+- Steps:
+  1. Open Setup and select `Source = Real camera`.
+  2. Confirm automatic real camera preview shows current frame.
+  3. Click `Ports` and confirm `/dev/ttys000` appears in `temperature_serial_port`.
+  4. Select `/dev/ttys000`.
+  5. Set `setup_preview_fps = 2.5` and confirm `Live refresh = 2.5 fps UI preview`.
+  6. Freeze current setup frame.
+  7. Click `Read temp`.
+- Expected:
+  - Preview remains real camera source with camera metadata and source frame shape.
+  - Selected temperature serial port is saved/displayed as `/dev/ttys000`.
+  - Read temp calls `/api/temperature/status?port=%2Fdev%2Fttys000`.
+  - Read temp does not trigger `/api/camera/preview` and frozen frame timestamp stays unchanged.
+- Actual:
+  - Preview metadata: `camera_status=ok`, `model=MV-CA060-11GM`, `serial_number=00J67378626`, `ip=192.168.3.211`, `pixel_format=mono8`, `Frame shape=1364 × 2048`.
+  - `setup_preview_fps` displayed `2.5`; `Live refresh` displayed `2.5 fps UI preview` before freeze.
+  - Temperature Control displayed `Selected port=/dev/ttys000`, `Status=ok`, `Source=lu92xx_modbus_rtu`.
+  - Frozen frame timestamp stayed `1780934282120` before and after `Read temp`.
+  - Fetch log after `Read temp`: one request to `http://127.0.0.1:8034/api/temperature/status?port=%2Fdev%2Fttys000`; zero `/api/camera/preview` requests.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0059_setup_fps_serial_retest.png`
+  - `output/playwright/p0059_setup_fps_serial_retest.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0060 — A 类 Run fast/off 每帧因 ROI 边界 warning 升级 enhanced 导致过慢
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/run_detector_policy.py`, Run services, `DetectorConfig`, frontend detector config controls
+- Found date: 2026-06-08
+- Last update: 2026-06-08
+- Owner/tool: Codex
+
+#### Problem
+
+最新性能诊断显示，在 `run_detector_mode=fast`、`run_diagnostics_mode=off`、`show_advanced_diagnostics=false`、`processing_scale=0.5` 且 heavy detector options 关闭时，A 类 Run 的 diagnostics 确实没有生成，但 `contour_touches_roi_edge` 每帧进入 suspicious reason，导致 `enhanced_rerun_used=true` 达到 100/100。用户以为在跑 fast，实际每帧都升级到 enhanced，A Run 明显慢于 C Run。
+
+#### Expected
+
+```text
+contour_touches_roi_edge / roi_edge_warning / contour_near_roi_edge 等 ROI 边界类 warning 只用于 UI/诊断提示。
+默认 run_enhanced_detector_policy=rerun_worthy_only 时，只有 rerun_worthy_reasons 非空才允许 enhanced rerun。
+run_enhanced_detector_policy=all_suspicious 保留旧行为，兼容需要任意 suspicious 都 rerun 的诊断场景。
+run_diagnostics_mode=off 仍应保证 diagnostics_generated=false、无 diagnostic_images。
+```
+
+#### Actual
+
+修复前 `should_rerun_with_enhanced()` 对 `detection_suspicious_reasons()` 返回的任意 reason 都 rerun enhanced，且 `contour_touches_roi_edge` 与真正需要 rerun 的原因混在同一列表中。
+
+#### Fix summary
+
+- 新增 `run_enhanced_detector_policy: "never" | "rerun_worthy_only" | "all_suspicious"`，默认 `rerun_worthy_only`。
+- 新增 `endpoint_jump_warmup_frames=3`、`endpoint_jump_confirm_frames=2`。
+- 将 suspicious reason 分为 `warning_only_reasons` 和 `rerun_worthy_reasons`，并在 `debug_artifacts` 输出：
+  `suspicious`、`suspicious_reasons`、`warning_only_reasons`、`rerun_worthy_reasons`、`enhanced_rerun_used`、`enhanced_rerun_reason`、Run config fields 和 `detector_execution_mode`。
+- Live offline Run 和 real camera Run 共用同一个 policy state；endpoint jump warm-up 以本次 Run 已处理帧数计，不使用原始 frame index。
+- 前端 `DetectorConfig` 类型、默认值和参数面板补充 enhanced rerun policy 与 endpoint jump warm-up/confirm 控件。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_run_detector_policy.py -q
+Result: PASS, 5 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_contour_edge_warning_does_not_rerun_enhanced backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_all_suspicious_preserves_contour_edge_enhanced_rerun backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_fast_mode_omits_diagnostic_images_until_requested -q
+Result: PASS, 3 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_real_camera_run_service.py::test_real_camera_run_suspicious_only_uses_enhanced_core_diagnostics backend/tests/unit/test_envelope_detectors.py::test_detector_config_processing_scale_defaults_and_clamp -q
+Result: PASS, 2 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+Result: PASS, 108 passed.
+
+npm test -- --run
+Result: PASS, 45 passed.
+
+npm run build
+Result: PASS.
+```
+
+#### Benchmark log
+
+- Script/location: temporary Python here-doc; output JSON `/tmp/g3_p0060_run_policy_benchmark.json`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Frames: 100 from frame 1
+- Config: fast/off, scale 0.5, advanced diagnostics false, full-res refine/bubble/dark-line/spur options off
+
+| Case | Frames | FPS | enhanced_rerun_used | diagnostics_generated | diagnostic_images | Modes |
+|---|---:|---:|---:|---:|---:|---|
+| A Run fast/off/rerun_worthy_only | 100 | 13.763 | 3 | 0 | 0 | fast 97, enhanced 3 |
+| A Run fast/off/all_suspicious | 100 | 7.628 | 100 | 0 | 0 | enhanced 100 |
+| A detector-only fast scale=0.5 | 100 | 14.859 | 0 | 0 | 0 | fast 100 |
+| C Run fast/off | 100 | 14.942 | 0 | 0 | 0 | fast 100 |
+
+Reason counts for A `rerun_worthy_only`: `contour_touches_roi_edge=100` and `roi_edge_warning=100` stayed warning-only; `endpoint_jump_px_above_limit=3` was rerun-worthy after warm-up/confirmation.
+
+#### Browser retest log
+
+- Retest date: 2026-06-08
+- Browser: Google Chrome headless via Chrome DevTools Protocol
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8035/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Run / browser-context Live Offline Run API
+- Steps:
+  1. Start temporary backend/frontend from current code on 8035/5176.
+  2. Open the frontend page in isolated headless Chrome and confirm page text lists G3 pages and golden datasets.
+  3. From the browser page context, call `POST /api/live-offline-runs` for A dataset, 100 frames, fast/off, `run_enhanced_detector_policy=rerun_worthy_only`.
+  4. Inspect returned run manifest `debug_artifacts` for diagnostics and rerun stats.
+- Expected:
+  - Page loads with G3 Setup/Run UI and golden A dataset visible.
+  - `diagnostics_generated=0/100`, no `diagnostic_images`.
+  - ROI edge warnings remain warning-only and do not by themselves trigger enhanced rerun.
+  - Enhanced rerun count is far below 100/100.
+- Actual:
+  - Page loaded; screenshot saved.
+  - Run result: 100 frames, 13.57 fps, `diagnosticsGeneratedFrames=0`, `diagnosticImagesFrames=0`, `enhancedRerunUsedFrames=3`, modes `fast=97`, `enhanced=3`.
+  - Warning-only reasons: `contour_touches_roi_edge=100`, `roi_edge_warning=100`.
+  - Rerun-worthy reasons: `endpoint_jump_px_above_limit=3`.
+- Result: PASS
+- Evidence:
+  - `/tmp/g3_p0060_browser_retest.json`
+  - `/tmp/g3_p0060_browser_retest.png`
+
+#### Next-stage items
+
+1. Optimize `_mesh_envelope_rows`, especially repeated `np.quantile` calls.
+2. Support `_warp_rotated_roi(output_scale=processing_scale)` to avoid full-res warp before resize.
+3. Evaluate OpenCV morphology fast path.
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0061 — 检测参数 UI 简化与 raw/stabilized 时序稳定双轨
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend`, `backend/core/models`, `backend/vision`, `backend/services/run`, `analysis`, `export`
+- Found date: 2026-06-09
+- Last update: 2026-06-09
+- Owner/tool: Codex
+
+#### Problem
+
+检测参数 UI 将性能、诊断、气泡抑制、暗线、spur、boundary support、row/envelope 等大量高级参数直接暴露在默认界面，普通 AF/As Run 调参路径过重。用户要求普通模式除样品/物体类型外，仅保留空间补断裂、轮廓平滑、时序一致性过滤三类核心调参，同时不要删除底层高级能力。
+
+时序一致性过滤还需要接入 `stabilize_contour_sequence.py` 的邻帧 mask 支持思想，并保证 raw detector 结果不被覆盖：Analysis/Export 需要同时保留 raw 与 stabilized 结果，UI 默认显示 stabilized 且可切换 raw 复核。
+
+#### Expected
+
+- 普通检测参数 UI 只显示 `contour_close_kernel`、`contour_smooth_window`、`temporal_stabilization_enabled`、`temporal_stabilization_strength`。
+- `processing_scale`、Run detector/diagnostics、enhanced policy、bubble suppression、dark line、spur pruning、boundary support、robust width percentile、envelope quantile、min window pixels、row keep ratios 等进入 Advanced。
+- 新增 Fast AF/As Run、Balanced AF/As Run、Diagnostics / Tuning presets。
+- Run 保留 raw/stabilized 双轨；离线批处理可用 centered temporal filter，流式/真实 Run 使用 causal filter 并记录 filter mode/delay。
+- Analysis/Export 同时保存 raw 与 stabilized distance 曲线和每帧距离。
+
+#### Actual
+
+代码层修复已完成，并通过真实浏览器复测：
+
+- 默认 Setup 参数面板仅显示对象类型、三组 presets、`contour_close_kernel`、`contour_smooth_window`、`temporal_stabilization_enabled`、`temporal_stabilization_strength`。
+- Advanced 展开后可见 processing scale、Run detector/diagnostics、enhanced policy、bubble、dark line、spur、boundary support、robust width、envelope、min window、row keep ratio 等高级参数。
+- 浏览器上下文 10 帧 A 数据集 Run 生成 centered temporal 结果：10/10 帧有 `raw_distance_px`，10/10 帧有 `stabilized_distance_px`，10/10 帧写入 raw/stabilized mask artifact path，diagnostics 仍为 0。
+- Export CSV 包含 `distance_px`、`raw_distance_px`、`stabilized_distance_px`、`result_display_source`。
+- UI Run 页面显示 raw/stabilized 切换，默认 Stabilized，可切 Raw。
+
+#### Fix summary
+
+- 新增 `DetectorConfig.contour_close_kernel`、`contour_smooth_window`、`temporal_stabilization_enabled`、`temporal_stabilization_strength`。
+- 新增 `DetectionResult.raw_*` / `stabilized_*` 字段和 `AnalysisResult.raw_*` / `stabilized_*` 曲线字段。
+- 新增 `vision/temporal_stabilization.py`，移植邻帧 mask support、小连通域 overlap 过滤、空间 close 后重提 A/C candidate 的核心逻辑。
+- Live offline batch Run 使用 centered filter；streaming live offline 和 real camera Run 使用 causal filter。
+- Export CSV 新增 `raw_distance_px`、`stabilized_distance_px`、`result_display_source`。
+- 前端默认 Detector Setup 只显示核心参数和 presets；Detector/Width mode 与复杂参数收进 Advanced。
+- Run/Analysis 增加 raw/stabilized 显示切换，默认 stabilized。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_core_models.py backend/tests/unit/test_temporal_stabilization.py backend/tests/unit/test_analysis_service.py backend/tests/integration/test_export_service.py -q
+npm test -- --run
+npm run build
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-09
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5178/`
+- Backend URL: `http://127.0.0.1:8033/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / browser-context Live Offline Run API / Export API
+- Steps:
+  1. Restart backend on 8033 and frontend on 5178 with `VITE_G3_API_BASE=http://127.0.0.1:8033`.
+  2. Open Setup and inspect visible detector parameter fields.
+  3. Expand Advanced and inspect hidden advanced detector fields.
+  4. Click Balanced AF/As Run preset and verify Run diagnostics/off, Run detector/fast, enhanced policy/rerun_worthy_only.
+  5. From browser page context, call `POST /api/live-offline-runs` for A dataset, 10 frames, temporal stabilization enabled, diagnostics off.
+  6. Call `POST /api/runs/{run_id}/exports` and inspect CSV header.
+  7. Start/stop a UI Live Offline Run and toggle Run Trend from Stabilized to Raw.
+- Expected:
+  - Default UI shows only core detector controls plus object type/presets.
+  - Advanced retains complex detector parameters.
+  - Presets apply expected hidden config values.
+  - Temporal Run preserves raw and stabilized distances/masks.
+  - Export saves raw/stabilized distance columns.
+  - UI defaults to Stabilized and allows Raw review.
+- Actual:
+  - Visible fields: `Object class`, `contour_close_kernel`, `contour_smooth_window`, `temporal_stabilization_enabled`, `temporal_stabilization_strength` plus ROI/temperature controls; complex detector fields were only in Advanced.
+  - Balanced preset produced `run_detector_mode=fast`, `run_diagnostics_mode=off`, `run_enhanced_detector_on_suspicious=true`, `run_enhanced_detector_policy=rerun_worthy_only`, `show_advanced_diagnostics=false`.
+  - Browser API Run `run-golden_a_20260522_dev_lab-20260609T021024449611Z`: 10 frames, `temporal_filter_mode=centered`, `result_display_source=stabilized`, raw/stabilized distance count 10/10, raw/stabilized mask path count 10/10, `diagnostics_generated=0`, `diagnostic_images=0`.
+  - Analysis counts: default temperature-distance 9, raw temperature-distance 9, stabilized temperature-distance 9.
+  - CSV header: `frame_index,detection_status,distance_px,raw_distance_px,stabilized_distance_px,result_display_source,...`.
+  - UI Run/Stop generated `run-golden_a_20260522_dev_lab-20260609T021213392543Z`; Run Trend showed Stabilized/Raw toggle and Raw became active after click.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0061_detector_ui_simplified.png`
+  - `output/playwright/p0061_run_raw_stabilized_toggle.png`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260609T021024449611Z/exports/frame_results.csv`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260609T021024449611Z/temporal_masks/frame_000001.raw_mask.png`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260609T021024449611Z/temporal_masks/frame_000001.stabilized_mask.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0062 — 界面缺少中英文切换且中文模式仍可能露出英文诊断文案
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/i18n.ts`, `frontend/src/setupSources.ts`, `frontend/src/styles.css`
+- Found date: 2026-06-09
+- Last update: 2026-06-09
+- Owner/tool: Codex
+
+#### Problem
+
+用户要求当前界面增加中文、英文语言选项；中文选项下的英文 UI 文案应改为符合 G3 业务含义的中文表达，而不是直译或保留原英文。
+
+浏览器复测中还发现 Setup 当前帧检测后的诊断提示 `Detected contour touches ROI boundary; expand ROI or increase detection_roi_padding_px.` 会在中文模式中原样显示。
+
+#### Expected
+
+- 顶部界面提供中文/英文语言选择。
+- 语言选择持久化，并同步设置页面 `lang`。
+- 中文模式下，导航、数据集、Setup、Run、Playback、Analysis/Export、检测参数、温控、曲线图例、状态和常见诊断提示均显示自然中文。
+- 英文模式可恢复原英文界面。
+- 允许保留项目名、标准号、A/B、As/Af、AFAS、数据集 id、单位和原始诊断 JSON 等业务符号或原始数据。
+
+#### Actual
+
+代码层修复已完成，并通过真实浏览器复测：
+
+- 顶栏新增语言选择器，支持中文/英文切换并写入 `localStorage`。
+- 中文模式覆盖主要 UI 文案、对象类别、检测器、测宽方式、状态、图表图例、参数项、诊断图名称和常见诊断提示。
+- Setup probe 触发后的 ROI 边界诊断提示已显示为中文语义提示。
+- 英文模式可切回原英文导航、数据集 id、按钮和页面标题。
+
+#### Fix summary
+
+- 新增 `frontend/src/i18n.ts`，集中维护语言类型、中文语义文案、状态/枚举/单位显示和初始语言读取。
+- 在 `frontend/src/main.tsx` 增加语言状态、顶部语言选择器、页面 `lang` 同步和主要界面文案本地化。
+- 在 `frontend/src/setupSources.ts` 为 Setup/Run 摘要与真实相机预览状态增加语言参数，保留默认英文以兼容现有独立测试。
+- 在 `frontend/src/styles.css` 调整顶栏布局并增加语言选择器样式。
+
+#### Tests run
+
+```bash
+npm test -- --run
+npm run build
+```
+
+Result: PASS. Frontend tests passed 47/47; production build passed.
+
+#### Browser retest log
+
+- Retest date: 2026-06-09
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5173/`
+- Backend URL: `http://127.0.0.1:8020/`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Setup / Run / Playback / Analysis Export
+- Steps:
+  1. Start backend on 8020 and frontend on 5173 with `VITE_G3_API_BASE=http://127.0.0.1:8020`.
+  2. Open the frontend page and confirm Chinese mode is active.
+  3. Inspect Setup page dataset rail, source controls, ROI controls, detector controls, temperature panel and result panel.
+  4. Click `检测当前帧` for `golden_a_20260522_dev_lab` and inspect detection result plus diagnostic images.
+  5. Run a browser DOM visible-text scan in Chinese mode for Setup after probe, Run, Playback and Analysis Export.
+  6. Switch language to English and confirm navigation, selector and page text return to English.
+  7. Switch back to Chinese and capture screenshot.
+- Expected:
+  - Chinese mode shows natural Chinese UI copy with no unintended visible English text.
+  - ROI boundary diagnostic warning is localized.
+  - English mode returns the original English UI.
+- Actual:
+  - Setup / Run / Playback / Analysis Export visible-text scans returned no unintended English after allowing project name, A/B, As/Af, AFAS, dataset ids and units.
+  - Setup probe diagnostic warning displayed as Chinese.
+  - English mode showed `Setup`, `Run`, `Playback`, `Analysis / Export`, `Language`, `Refresh` and English dataset labels.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0062_i18n_zh_analysis.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0063 — Real camera Setup 不应暴露 Preview refresh 语义
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/setupSources.ts`, `frontend/src/i18n.ts`, `backend/src/yyt1771_g3/camera/hik_mvs_source.py`
+- Found date: 2026-06-09
+- Last update: 2026-06-09
+- Owner/tool: Codex
+
+#### Problem
+
+用户确认真实相机不是 Run 页临时 Preview 按钮，而是 Setup 页面中的正式数据源。Setup 中的 Real camera 画面应表达为正常相机实时显示/当前帧，而不是 `Preview refresh`、`UI preview`、`Real Camera Preview`、`Not previewed` 等临时预览语义。
+
+浏览器复测还发现相机被占用或不可用时，结构化错误标题可能显示 `Hik MVS camera preview failed`，这同样会把正式数据源误导成临时 preview。
+
+#### Expected
+
+```text
+Setup Source = Real camera 后，界面显示 Real Camera Source / Live / Freeze / Live display rate / Live camera frame。
+相机状态显示 camera_status、model、serial_number、ip、pixel_format、Frame shape、Timestamp。
+刷新按钮表达为 Capture latest frame / Updating / Capture new setup frame。
+错误信息表达为 camera frame acquisition failed，不再使用 camera preview failed。
+保留现有 /api/camera/preview endpoint 和 detector_config.setup_preview_fps 等内部兼容字段，不改变 measurement_definition schema。
+```
+
+#### Fix summary
+
+- 将 Real camera Setup 面板标题、模式、帧标题、帧率、按钮和空状态文案改为 source/live frame/display 语义。
+- 删除可见 `Preview refresh` 指标行；将 `Run preview fps` 可见标签改为 `Run display fps`。
+- 将中文冻结提示中的“恢复实时预览”改为“恢复实时显示”。
+- 将 Hik MVS 抓帧异常从 `Hik MVS camera preview failed` 改为 `Hik MVS camera frame acquisition failed`，并补充后端防回归测试。
+- 未在源码中新增任何本机 MVS 绝对路径；真实相机仍通过 `configs/local/realcamera_simtemp.local.yaml` / 环境变量读取。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_camera_lazy_import.py::test_hik_frame_acquisition_error_uses_source_semantics -q
+Result before fix: FAIL, old message was "Hik MVS camera preview failed".
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_camera_lazy_import.py::test_hik_frame_acquisition_error_uses_source_semantics backend/tests/integration/test_camera_api.py -q
+Result after fix: PASS, 10 passed.
+
+npm test
+Result: PASS, 47 passed.
 
 npm run build
 Result: PASS.
@@ -6142,36 +6966,362 @@ Result: PASS.
 
 #### Browser retest log
 
-- Retest date: 2026-06-08
-- Browser: Google Chrome via Playwright CLI, headless
+- Retest date: 2026-06-09
+- Browser: Playwright Chromium
 - OS: macOS
 - Frontend URL: `http://127.0.0.1:5179/`
-- Backend URL: `http://127.0.0.1:8020/`
-- Dataset: `golden_a_20260522_dev_lab`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source; Hik camera `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`; simulated LU92XX temperature source active
 - Page: Setup
 - Steps:
-  1. Restart backend 8020 with current branch code and open frontend 5179.
-  2. Set Setup ROI to the user screenshot values: `1107.74, 703.93, 1269.76, 765.79, -14.68`.
-  3. Click `Probe current frame`.
-  4. Confirm `Detection Diagnostics` displays `Detected mask` and `Envelope contour`.
-  5. Resize browser to `1920 × 1000`, save screenshot, and inspect diagnostic `<img>` natural/display dimensions.
-  6. Open Run page, start Live Offline Run with the same setup measurement, wait for a live frame, and inspect latest diagnostic `<img>` dimensions.
-- Expected: Diagnostic images display complete right side and visible red rectangle boundaries without fixed-height horizontal compression.
+  1. Restart backend on 8034 with `YYT1771_G3_HARDWARE_CONFIG=configs/local/realcamera_simtemp.local.yaml`.
+  2. Open frontend on 5179.
+  3. Select `Source = Real camera`.
+  4. Wait for live camera frame and metadata.
+  5. Scan visible page text for required live-source terms and forbidden preview terms.
+  6. Save screenshot and JSON evidence.
+- Expected:
+  - Required terms are present: `Real Camera Source`, `Live`, `Display mode`, `Live display rate`, `setup_live_fps`, `camera_status`, `model`, `serial_number`, `ip`, `pixel_format`, `Frame shape`, `Timestamp`, `Real camera · Live camera frame`.
+  - Forbidden terms are absent: `Preview refresh`, `Refreshing preview`, `UI preview`, `Real Camera Preview`, `Live preview frame`, `Preview mode`, `Live refresh`, `Not previewed`, `Run preview fps`, `Hik MVS camera preview failed`, `预览`.
+  - Real camera frame displays with ROI overlay and source pixel frame shape.
 - Actual:
-  - Probe returned `VALID`, `distance = 1011.00 px`.
-  - Diagnostic natural size: `1270 × 766`.
-  - Diagnostic display size at 1920px viewport: `597 × 360` for both `Detected mask` and `Envelope contour`.
-  - Run latest diagnostic display size at 1920px viewport: `587 × 354` for both `Detected mask` and `Envelope contour`.
-  - Right-side red rectangle boundary is visible in both diagnostic images.
+  - Browser text scan returned `required_missing=[]` and `forbidden_present=[]`.
+  - Page displayed `camera_status=ok`, `model=MV-CA060-11GM`, `serial_number=00J67378626`, `ip=192.168.3.211`, `pixel_format=mono8`, `Frame shape=1364 × 2048`, live timestamp, `1 fps live display`, and `Real camera · Live camera frame`.
+  - Temperature Control continued to show simulated `lu92xx_modbus_rtu` status without triggering camera wording regressions.
 - Result: PASS
 - Evidence:
-  - `output/playwright/p0055_setup_diagnostic_fit_user_roi.png`
-  - `output/playwright/p0055_setup_diagnostic_fit_user_roi_1920.png`
-  - `output/playwright/p0055_run_diagnostic_fit_user_roi_1920.png`
+  - `output/playwright/p0063_real_camera_source_wording.png`
+  - `output/playwright/p0063_real_camera_source_wording.json`
 
 #### Final status
 
 RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0064 — Setup Real camera 实时显示帧率不应被 5Hz 上限卡住
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P1
+- Module: `frontend/src/setupSources.ts`, `frontend/src/main.tsx`, `backend/src/yyt1771_g3/core/models.py`
+- Found date: 2026-06-10
+- Last update: 2026-06-10
+- Owner/tool: Codex
+
+#### Problem
+
+用户反馈 Setup Real camera 的实时显示不应固定或限制在 5 Hz；如果用户希望看实时画面，应允许跟随真实相机和当前链路实际能提供的帧率显示。
+
+#### Expected
+
+```text
+setup_preview_fps = 0 表示 Auto / camera-paced。
+Auto 模式下，上一帧请求完成后立即请求下一帧，由相机抓帧、后端处理和浏览器显示链路决定实际刷新速度。
+手动输入正数 Hz 时不再有 5 Hz 上限。
+相机不可用时，Auto 不应 0ms 无限重试；应显示结构化 unavailable 错误并停止当前轮询。
+Offline dataset 流程不受影响。
+```
+
+#### Fix summary
+
+- `DEFAULT_REAL_CAMERA_CONFIG.setup_preview_fps` 改为 `0`，表示 Auto。
+- `normalizeSetupPreviewFps()` 改为允许 `0` 和高于 5 的数值；负数归零。
+- `setupPreviewIntervalMs(0)` 返回 `0`，手动正数 Hz 按 `1000 / fps` 计算，不再 clamp 到 5 Hz。
+- Setup Real camera 轮询从固定 `setInterval` 改为“请求完成后再调度下一次”的循环；Auto 模式不会并发堆叠请求。
+- 相机抓帧失败时返回 `false`，当前轮询停止，避免无相机状态下无限请求。
+- 后端 `DetectorConfig.setup_preview_fps` 默认改为 `0.0`，validator 仅限制最小值为 `0.0`，不再限制最大值。
+
+#### Tests run
+
+```bash
+npm test -- tests/setupSources.test.mjs
+Result before fix: FAIL, default was 1 and 9 was clamped to 5.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py::test_detector_config_processing_scale_defaults_and_clamp -q
+Result before fix: FAIL, backend default setup_preview_fps was 1.0.
+
+npm test
+Result after fix: PASS, 47 passed.
+
+npm run build
+Result after fix: PASS.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/unit/test_envelope_detectors.py::test_detector_config_processing_scale_defaults_and_clamp backend/tests/integration/test_camera_api.py -q
+Result after fix: PASS, 10 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+Result after fix: PASS, 112 passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-10
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source unavailable; offline `golden_a_20260522_dev_lab`
+- Page: Setup
+- Steps:
+  1. Restart backend on 8034 and keep frontend on 5179.
+  2. Open Setup and select `Source = Real camera` without a connected camera.
+  3. Wait for camera source status.
+  4. Inspect visible live display rate and `setup_live_fps` value.
+  5. Inspect network requests to ensure Auto does not continuously retry after unavailable.
+  6. Switch back to `Offline dataset` and confirm first frame still displays.
+- Expected:
+  - Real camera Setup shows `Live display rate = Auto (camera-paced)` and `setup_live_fps = 0`.
+  - No visible 5 fps cap.
+  - No `camera preview failed` wording.
+  - No repeated `/api/camera/preview` retry loop after camera unavailable.
+  - Offline dataset frame remains available.
+- Actual:
+  - Browser evidence: `setupLiveFpsValue="0"`, `hasAutoLabel=true`, `hasFiveFpsCapText=false`, `hasCameraUnavailable=true`, `hasPreviewFailed=false`.
+  - Network request list showed one `/api/camera/preview` request returning 503 after selecting Real camera; no repeated Auto retry loop during the wait window.
+  - Offline dataset evidence: `hasOfflineFrame=true`, `hasOfflineSourceActive=true`.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0064_setup_auto_live_display_no_camera.png`
+  - `output/playwright/p0064_setup_auto_live_display_no_camera.json`
+  - `output/playwright/p0064_offline_unaffected.json`
+
+#### Remaining verification
+
+Connected-camera browser retest is still required to confirm actual displayed FPS follows the Hik camera/backend/browser chain, because no real camera was connected during this retest.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+
+---
+
+### P-0065 — Setup Real camera 冷启动后需自动显示并复用相机源提升实时显示
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/api/main.py`, `frontend/src/main.tsx`, `frontend/src/setupSources.ts`
+- Found date: 2026-06-11
+- Last update: 2026-06-11
+- Owner/tool: Codex
+
+#### Problem
+
+用户反馈连接真实 Hik MVS 相机后，进入 Setup 或切换到 `real_camera` 后经常需要手动点击刷新才看到画面，且实时显示帧率很低。根因有两条：
+
+```text
+1. 前端在 camera_status=unavailable 后停止 shouldPollRealCameraPreview，首次冷启动失败会永久停住自动 live 获取。
+2. 后端 /api/camera/preview、/api/camera/preview.png 和 live setup-probe 每次请求都创建 HikMvsCameraSource 并 close，导致每帧重复枚举/打开/配置/启动相机，无法复用 HikMvsCameraSource._session。
+```
+
+#### Expected
+
+```text
+进入 Setup 并选择 Real camera 后自动开始 live frame 获取，不需要手动刷新。
+首次相机冷启动 unavailable 后，前端应慢速重试，而不是永久停止。
+正常 live 显示默认约 5 fps，配置正数 setup_preview_fps 时按该值轮询。
+后端同一 camera profile 下复用 setup preview HikMvsCameraSource。
+正式 /api/real-camera-runs 前释放 setup preview source，避免相机句柄冲突。
+Offline dataset 流程不受影响。
+```
+
+#### Fix summary
+
+- `backend/src/yyt1771_g3/api/main.py`
+  - 新增 `_camera_preview_lock`、`_camera_preview_source`、`_camera_preview_profile_key`。
+  - 新增 `_get_preview_camera_source()`，用 stable JSON profile key 复用同一 `HikMvsCameraSource`。
+  - 新增 `_reset_preview_camera_source()`，shutdown 和正式 real camera run 前释放 setup preview source。
+  - `/api/camera/preview`、`/api/camera/preview.png`、无 frozen frame 的 `/api/camera/setup-probe` 改为复用 preview source，不再每帧 new/close。
+  - `CameraUnavailableError` 时 reset preview source，并保持原 503 detail 结构。
+- `frontend/src/setupSources.ts`
+  - `shouldPollRealCameraPreview()` 不再因为 `cameraStatus="unavailable"` 停止。
+  - 新增默认 live 轮询 `200 ms` 与 unavailable retry `2000 ms` 计算。
+  - 新增 `buildRealCameraRunCameraProfile()`，将 `target_frame_rate_hz` 从 Setup 保存的 `live_offline_fps` 传给真实相机 run profile。
+- `frontend/src/main.tsx`
+  - Setup Real camera live effect 首次立即抓帧；normal live 默认 200 ms，unavailable 2000 ms 慢重试。
+  - `runningCamera` 时停止 setup live 轮询。
+  - 切换到 Real camera 后 next tick 主动触发一次 live frame 获取。
+  - 正式 real camera run 的 `cameraProfile` 带 `pixel_format` 和 `target_frame_rate_hz`。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_camera_api.py -q
+Result before fix: FAIL, preview/setup-probe created two sources instead of reusing one.
+Result after fix: PASS, 12 passed.
+
+npm test -- setupSources.test.mjs
+Result before fix: FAIL, unavailable stopped polling and new polling/run profile helpers were absent.
+Result after fix: PASS, 47 passed.
+
+npm run build
+Result after fix: PASS.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+Result after fix: PASS, 115 passed.
+
+git diff --check
+Result after fix: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-11
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real Hik camera source; simulated LU92XX Modbus RTU on `/dev/ttys004`
+- Page: Setup
+- Steps:
+  1. Start simulated LU92XX pty on `/dev/ttys004`.
+  2. Start backend with `YYT1771_G3_HARDWARE_CONFIG=configs/local/realcamera_simtemp.local.yaml`.
+  3. Start frontend on 5179 pointed at backend 8034.
+  4. Open Setup in Chromium.
+  5. Click `Source = Real camera`.
+  6. Do not click manual refresh; wait for automatic live frame.
+  7. Verify camera metadata, frame shape, image natural size and timestamp.
+  8. Wait 1.2 seconds and verify timestamp advances.
+  9. Inspect browser network log for repeated `/api/camera/preview` 200 OK requests.
+- Expected:
+  - Real camera frame appears automatically without manual refresh.
+  - UI shows `camera_status=ok`, camera metadata, frame shape and live timestamp.
+  - Timestamp advances while still in Live mode.
+  - Network shows repeated successful live preview requests without visible UI lockup.
+- Actual:
+  - Page displayed `Real camera · Live camera frame`, `camera_status=ok`, `model=MV-CA060-11GM`, `serial_number=00J67378626`, `ip=192.168.3.211`, `pixel_format=mono8`, `Frame shape=1364 × 2048`.
+  - Rendered image natural size was `2048 × 1364`.
+  - Live display label showed `Auto (5 fps default)`.
+  - Timestamp advanced from `1781190667327` to `1781190668676` over the sampled 1.2 second window.
+  - Browser network log showed multiple `/api/camera/preview` requests returning `200 OK`.
+  - Temperature endpoint returned `temperature_status=ok`, source `lu92xx_modbus_rtu`, sample `35.8 °C`.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0065_real_camera_setup_live_reuse_20260611.png`
+  - `output/playwright/p0065_real_camera_setup_live_reuse_20260611.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0066 — Setup Freeze 后启动 Real camera Run 可能与 Setup preview 抢占相机并导致取帧失败
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/api/main.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`, `frontend/src/setupSources.ts`
+- Found date: 2026-06-12
+- Last update: 2026-06-12
+- Owner/tool: Codex
+
+#### Problem
+
+用户在 Setup Real camera 模式中一开始能正常看到实时画面；点击 Freeze 后进入 Run 页面并点击“开始真实相机测量”，Run 页面按钮进入等待状态但没有画面输出。刷新页面后，Setup Real camera 也显示相机不可用，画布上出现 `Hik MVS camera frame acquisition failed`。
+
+#### Expected
+
+```text
+Setup preview / Freeze 只用于配置 ROI 和参数。
+切换到 Run 或启动 Real camera Run 时，Setup preview 必须释放真实相机。
+正式 Real camera Run 必须独占相机，使用 Setup 保存的 measurement_definition 执行。
+正式 Run 期间 Setup preview 请求不得再创建第二个相机 session 抢占设备。
+Run 结束后相机 source 必须 close，后续 Setup preview 可以重新连接。
+```
+
+#### Actual
+
+后端日志显示用户进入 Setup Real camera 后 `/api/camera/preview` 高频请求成功；点击 Run 时只看到 `/api/real-camera-runs` 的 CORS `OPTIONS`，没有看到正式 `POST` 完成，随后 `/api/camera/preview` 连续返回 503。说明 Run 启动时 Setup preview 仍可能持有或继续抢占真实相机，导致正式 run 和 setup preview 在同一硬件资源上交错。
+
+#### Root cause
+
+```text
+1. 后端虽然缓存了 Setup preview 的 HikMvsCameraSource，但没有显式 release endpoint。
+2. /api/real-camera-runs 只在正式请求内部 reset preview source；如果浏览器正好已有 /api/camera/preview 在飞，Run 会与 preview 在相机 SDK 状态上竞争。
+3. 正式 Run 期间，Setup preview 请求没有 camera operation ownership guard，仍可能创建/复用 preview source 去抓帧。
+4. 前端切离 Setup 或点击 Real camera Run 前没有主动释放 Setup preview source。
+```
+
+#### Fix summary
+
+- `backend/src/yyt1771_g3/api/main.py`
+  - 新增 `_camera_operation_lock` 和 `_camera_operation()`，让真实相机 preview、setup-probe 抓帧、preview release、formal run 共享同一相机操作所有权。
+  - `/api/camera/preview`、`/api/camera/preview.png` 和 live setup-probe 抓帧使用非阻塞相机锁；正式 Run 正在占用相机时返回结构化 `409 camera_status=busy`，不再创建第二个 camera source。
+  - 新增 `POST /api/camera/preview/release`，用于显式关闭 Setup preview cached source。
+  - `/api/real-camera-runs` 在同一相机锁内关闭 Setup preview source，然后创建正式 run source 并执行 run。
+- `frontend/src/api/client.ts`
+  - 新增 `releaseRealCameraPreview()`，固定调用 `/api/camera/preview/release`。
+- `frontend/src/setupSources.ts`
+  - 新增 `shouldReleaseRealCameraPreview()`，定义从 Setup Real camera 离开到 Run 或 Offline dataset 时需要释放 preview。
+- `frontend/src/main.tsx`
+  - 离开 Setup Real camera 时后台调用 release。
+  - 点击 Real camera Run 时先 await release，再提交 `/api/real-camera-runs`。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests/integration/test_camera_api.py -q
+Result before fix: FAIL, Run 占用相机时 preview 仍返回 200 并创建第二个 source；release endpoint 404。
+Result after fix: PASS, 14 passed.
+
+npm test -- setupSources.test.mjs apiClientUrls.test.mjs
+Result after fix: PASS, 48 passed.
+
+PYTHONPATH=backend/src .venv/bin/pytest backend/tests -q
+Result after fix: PASS, 117 passed.
+
+npm run build
+Result after fix: PASS.
+
+git diff --check
+Result after fix: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-06-12
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8034/`
+- Dataset: Real camera source unavailable; simulated LU92XX Modbus RTU on `/dev/ttys004`
+- Page: Setup
+- Steps:
+  1. Start backend with `YYT1771_G3_HARDWARE_CONFIG=configs/local/realcamera_simtemp.local.yaml`.
+  2. Start frontend on 5179 pointed at backend 8034.
+  3. Open Setup in Chromium.
+  4. Select `Source = Real camera`.
+  5. Confirm unavailable state is structured and offline dataset UI remains available.
+  6. Verify `/api/camera/preview/release` returns `camera_status=released`.
+- Expected:
+  - No frontend crash.
+  - Setup Real camera displays structured unavailable state.
+  - Temperature control remains usable.
+  - Offline dataset flow remains available.
+- Actual:
+  - Page remained responsive and displayed Real camera source panel with no current frame.
+  - Temperature status returned `temperature_status=ok`, source `lu92xx_modbus_rtu`.
+  - `/api/camera/preview/release` returned 200 with `camera_status=released`.
+  - `/api/camera/preview` returned structured 503: `camera_status=unavailable`, `message=Hik MVS camera frame acquisition failed`, details `error=No Hik cameras were discovered by the MVS SDK`.
+  - `ifconfig` did not show a `192.168.3.x` interface during this retest, so real Hik camera enumeration was unavailable.
+- Result: PARTIAL PASS
+- Evidence:
+  - `output/playwright/p0066_camera_unavailable_after_setup_run_fix_20260612.png`
+  - `output/playwright/p0066_camera_unavailable_after_setup_run_fix_20260612.json`
+
+#### Remaining verification
+
+Connected-camera browser retest is still required:
+
+```text
+Setup Real camera live → Freeze → ROI unchanged → Run page → Start real camera run → run completes → frame canvas uses /api/runs/{run_id}/frames/{frame_index}.png → returning to Setup reconnects preview.
+```
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
 
 
 ---

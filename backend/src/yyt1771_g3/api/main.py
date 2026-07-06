@@ -5,7 +5,9 @@ import binascii
 import io
 import json
 import os
-from dataclasses import asdict
+import threading
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from yyt1771_g3.camera.hik_mvs_source import CameraUnavailableError, HikMvsCameraSource
-from yyt1771_g3.camera.base import CameraFrame
+from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableError
+from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
+from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import HardwareConfig, load_hardware_config
 from yyt1771_g3.core.models import MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import (
@@ -34,14 +37,23 @@ from yyt1771_g3.services.live_offline_run_service import (
     run_live_offline_dataset,
 )
 from yyt1771_g3.services.analysis_service import build_analysis_result
-from yyt1771_g3.services.real_camera_run_service import run_real_camera
+from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.export_service import export_run
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
-from yyt1771_g3.temperature.serial_ports import list_serial_ports
+from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
 
 
-app = FastAPI(title="YY/T 1771 G3 Backend", version="0.1.0")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):  # noqa: ANN202, ARG001
+    try:
+        yield
+    finally:
+        with _camera_preview_lock:
+            _reset_preview_camera_source()
+
+
+app = FastAPI(title="YY/T 1771 G3 Backend", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -67,6 +79,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_camera_preview_lock = threading.Lock()
+_camera_preview_source: CameraSource | None = None
+_camera_preview_profile_key: str | None = None
+_camera_operation_lock = threading.Lock()
+_camera_operation_owner: str | None = None
+_real_camera_stream_stop_lock = threading.Lock()
+_real_camera_stream_stop_events: dict[str, threading.Event] = {}
+
 
 def _registry():
     config_path = os.environ.get("YYT1771_G3_OFFLINE_DATASETS_CONFIG")
@@ -75,6 +95,112 @@ def _registry():
 
 def _hardware_config() -> HardwareConfig:
     return load_hardware_config()
+
+
+def _hardware_config_with_temperature_port(config: HardwareConfig, port: str | None) -> HardwareConfig:
+    selected_port = str(port or "").strip()
+    if not selected_port:
+        return config
+    return replace(config, temp=replace(config.temp, serial=replace(config.temp.serial, port=selected_port)))
+
+
+def _preview_profile_key(profile: dict[str, Any]) -> str:
+    return json.dumps(profile, sort_keys=True, default=str)
+
+
+def _build_camera_source(profile: dict[str, Any] | None = None) -> CameraSource:
+    profile = profile or {}
+    backend = str(profile.get("backend", "hik_gige_mvs") or "hik_gige_mvs").strip().lower()
+    if backend in HIK_CAMERA_BACKENDS:
+        return HikMvsCameraSource(profile=profile)
+    return build_camera_source(profile)
+
+
+def _register_real_camera_stream_stop(run_id: str) -> None:
+    with _real_camera_stream_stop_lock:
+        _real_camera_stream_stop_events.setdefault(run_id, threading.Event())
+
+
+def _real_camera_stream_stop_requested(run_id: str) -> bool:
+    with _real_camera_stream_stop_lock:
+        stop_event = _real_camera_stream_stop_events.get(run_id)
+    return stop_event.is_set() if stop_event is not None else False
+
+
+def _request_real_camera_stream_stop(run_id: str) -> bool:
+    with _real_camera_stream_stop_lock:
+        stop_event = _real_camera_stream_stop_events.get(run_id)
+        if stop_event is None:
+            return False
+        stop_event.set()
+    return True
+
+
+def _clear_real_camera_stream_stop(run_id: str) -> None:
+    with _real_camera_stream_stop_lock:
+        _real_camera_stream_stop_events.pop(run_id, None)
+
+
+def _stream_event_run_id(event: dict[str, Any]) -> str | None:
+    run_id = event.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        return run_id
+    manifest = event.get("run_manifest")
+    if isinstance(manifest, dict):
+        manifest_run_id = manifest.get("run_id")
+        if isinstance(manifest_run_id, str) and manifest_run_id:
+            return manifest_run_id
+    return None
+
+
+def _get_preview_camera_source(camera_profile: dict[str, Any] | None = None) -> CameraSource:
+    global _camera_preview_profile_key, _camera_preview_source
+    profile = {**_hardware_config().camera.to_profile(), **(camera_profile or {})}
+    profile_key = _preview_profile_key(profile)
+    if _camera_preview_source is None or _camera_preview_profile_key != profile_key:
+        _reset_preview_camera_source()
+        _camera_preview_source = _build_camera_source(profile)
+        _camera_preview_profile_key = profile_key
+    return _camera_preview_source
+
+
+def _reset_preview_camera_source() -> None:
+    global _camera_preview_profile_key, _camera_preview_source
+    if _camera_preview_source is not None:
+        try:
+            _camera_preview_source.close()
+        except Exception:
+            pass
+    _camera_preview_source = None
+    _camera_preview_profile_key = None
+
+
+@contextmanager
+def _camera_operation(purpose: str, *, blocking: bool = True, timeout: float | None = None):  # noqa: ANN202
+    global _camera_operation_owner
+    if timeout is None:
+        acquired = _camera_operation_lock.acquire(blocking=blocking)
+    else:
+        acquired = _camera_operation_lock.acquire(timeout=timeout)
+    if not acquired:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "camera_status": "busy",
+                "message": f"Real camera is busy with {_camera_operation_owner or 'another operation'}",
+                "details": {
+                    "active_operation": _camera_operation_owner,
+                    "requested_operation": purpose,
+                },
+            },
+        )
+    previous_owner = _camera_operation_owner
+    _camera_operation_owner = purpose
+    try:
+        yield
+    finally:
+        _camera_operation_owner = previous_owner
+        _camera_operation_lock.release()
 
 
 @app.get("/api/health")
@@ -333,6 +459,27 @@ def get_run_frame_png(run_id: str, frame_index: int, max_width: int | None = Non
     return Response(content=_array_to_png(frame, max_width=max_width), media_type="image/png")
 
 
+@app.get("/api/runs/{run_id}/raw-frames/{frame_index}.png")
+def get_run_raw_frame_png(run_id: str, frame_index: int, max_width: int | None = None) -> Response:
+    if frame_index <= 0:
+        raise HTTPException(status_code=400, detail="frame_index must be a positive integer")
+    if max_width is not None and max_width <= 0:
+        raise HTTPException(status_code=400, detail="max_width must be a positive integer")
+    run_dir = _run_store().run_dir(run_id).resolve()
+    frame_path = (run_dir / "raw_frames" / f"frame_{frame_index:06d}.npy").resolve()
+    if not frame_path.is_relative_to(run_dir):
+        raise HTTPException(status_code=400, detail="invalid run frame path")
+    if not frame_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Run raw frame file not found: {frame_index}")
+    try:
+        frame = np.load(frame_path, allow_pickle=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Run raw frame cannot be loaded: {frame_index}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Run raw frame file not found: {frame_index}") from exc
+    return Response(content=_array_to_png(frame, max_width=max_width), media_type="image/png")
+
+
 @app.get("/api/runs/{run_id}/availability")
 def get_run_availability(run_id: str) -> dict[str, Any]:
     availability = _run_store().run_availability(run_id)
@@ -362,10 +509,14 @@ def recompute_run_analysis(run_id: str, request: AnalysisRecomputeRequest) -> di
 @app.get("/api/camera/preview")
 def preview_real_camera() -> dict[str, Any]:
     config = _hardware_config()
-    source = HikMvsCameraSource(profile=config.camera.to_profile())
     try:
-        frame = source.preview_frame()
+        with _camera_operation("setup_preview", blocking=False):
+            with _camera_preview_lock:
+                source = _get_preview_camera_source()
+                frame = source.preview_frame()
     except CameraUnavailableError as exc:
+        with _camera_preview_lock:
+            _reset_preview_camera_source()
         raise HTTPException(
             status_code=503,
             detail={
@@ -374,8 +525,6 @@ def preview_real_camera() -> dict[str, Any]:
                 "details": exc.details,
             },
         ) from exc
-    finally:
-        source.close()
     return {
         "camera_status": "ok",
         "timestamp_ms": frame.timestamp_ms,
@@ -392,11 +541,14 @@ def preview_real_camera() -> dict[str, Any]:
 
 @app.get("/api/camera/preview.png")
 def preview_real_camera_png() -> Response:
-    config = _hardware_config()
-    source = HikMvsCameraSource(profile=config.camera.to_profile())
     try:
-        frame = source.preview_frame()
+        with _camera_operation("setup_preview_png", blocking=False):
+            with _camera_preview_lock:
+                source = _get_preview_camera_source()
+                frame = source.preview_frame()
     except CameraUnavailableError as exc:
+        with _camera_preview_lock:
+            _reset_preview_camera_source()
         raise HTTPException(
             status_code=503,
             detail={
@@ -405,9 +557,15 @@ def preview_real_camera_png() -> Response:
                 "details": exc.details,
             },
         ) from exc
-    finally:
-        source.close()
     return Response(content=_array_to_png(frame.array), media_type="image/png")
+
+
+@app.post("/api/camera/preview/release")
+def release_real_camera_preview() -> dict[str, str]:
+    with _camera_operation("setup_preview_release", timeout=5.0):
+        with _camera_preview_lock:
+            _reset_preview_camera_source()
+    return {"camera_status": "released"}
 
 
 @app.post("/api/camera/setup-probe")
@@ -422,11 +580,10 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
         else:
             config = _hardware_config()
             camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
-            source = HikMvsCameraSource(profile=camera_profile)
-            try:
-                frame = source.preview_frame()
-            finally:
-                source.close()
+            with _camera_operation("setup_probe_capture", blocking=False):
+                with _camera_preview_lock:
+                    source = _get_preview_camera_source(camera_profile)
+                    frame = source.preview_frame()
         payload = probe_setup_frame(
             dataset_id="real_camera",
             frame_array=frame.array,
@@ -450,6 +607,8 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
         )
         return payload
     except CameraUnavailableError as exc:
+        with _camera_preview_lock:
+            _reset_preview_camera_source()
         raise HTTPException(
             status_code=503,
             detail={
@@ -495,12 +654,22 @@ def get_temperature_serial_ports() -> dict[str, Any]:
             status_code=503,
             detail={"temperature_status": "unavailable", "message": str(exc)},
         ) from exc
+    configured_port = _hardware_config().temp.serial.port.strip()
+    if configured_port and all(port.device != configured_port for port in ports):
+        ports.append(
+            SerialPortInfo(
+                device=configured_port,
+                name=configured_port,
+                description="configured",
+                hwid="configured",
+            )
+        )
     return {"ports": [asdict(port) for port in ports]}
 
 
 @app.get("/api/temperature/status")
-def get_temperature_status() -> dict[str, Any]:
-    config = _hardware_config()
+def get_temperature_status(port: str | None = None) -> dict[str, Any]:
+    config = _hardware_config_with_temperature_port(_hardware_config(), port)
     controller = build_temperature_controller(config)
     if controller is None:
         raise HTTPException(
@@ -524,20 +693,27 @@ def get_temperature_status() -> dict[str, Any]:
 
 @app.post("/api/real-camera-runs")
 def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
-    config = _hardware_config()
-    camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
-    temperature_controller = build_temperature_controller(config)
     try:
-        result = run_real_camera(
-            _run_store(),
-            camera_source=HikMvsCameraSource(profile=camera_profile),
-            temperature_controller=temperature_controller,
-            measurement=request.measurement_definition,
-            max_frames=request.max_frames,
-            target_fps=request.target_fps,
-            camera_profile=camera_profile,
-            temp_sync_target_ms=config.run.temp_sync_target_ms,
-        )
+        with _camera_operation("real_camera_run", timeout=5.0):
+            with _camera_preview_lock:
+                _reset_preview_camera_source()
+            config = _hardware_config()
+            camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
+            run_config = _hardware_config_with_temperature_port(
+                config,
+                request.measurement_definition.detector_config.temperature_serial_port,
+            )
+            temperature_controller = build_temperature_controller(run_config)
+            result = run_real_camera(
+                _run_store(),
+                camera_source=_build_camera_source(camera_profile),
+                temperature_controller=temperature_controller,
+                measurement=request.measurement_definition,
+                max_frames=request.max_frames,
+                target_fps=request.target_fps,
+                camera_profile=camera_profile,
+                temp_sync_target_ms=run_config.run.temp_sync_target_ms,
+            )
     except CameraUnavailableError as exc:
         raise HTTPException(
             status_code=503,
@@ -551,6 +727,74 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
         "run_manifest": result.manifest.model_dump(mode="json"),
         "analysis_result": result.analysis.model_dump(mode="json"),
     }
+
+
+@app.post("/api/real-camera-runs/stream")
+def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
+    operation = _camera_operation("real_camera_run_stream", timeout=5.0)
+    operation.__enter__()
+
+    def event_lines():
+        events = None
+        active_run_id: str | None = None
+        try:
+            with _camera_preview_lock:
+                _reset_preview_camera_source()
+            config = _hardware_config()
+            camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
+            run_config = _hardware_config_with_temperature_port(
+                config,
+                request.measurement_definition.detector_config.temperature_serial_port,
+            )
+            temperature_controller = build_temperature_controller(run_config)
+            events = iter_real_camera_run_events(
+                _run_store(),
+                camera_source=_build_camera_source(camera_profile),
+                temperature_controller=temperature_controller,
+                measurement=request.measurement_definition,
+                max_frames=request.max_frames,
+                target_fps=request.target_fps,
+                camera_profile=camera_profile,
+                temp_sync_target_ms=run_config.run.temp_sync_target_ms,
+                stop_requested=_real_camera_stream_stop_requested,
+            )
+            for event in events:
+                event_run_id = _stream_event_run_id(event)
+                if event_run_id is not None and active_run_id is None:
+                    active_run_id = event_run_id
+                    _register_real_camera_stream_stop(event_run_id)
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        except CameraUnavailableError as exc:
+            yield json.dumps(
+                {
+                    "event": "error",
+                    "message": str(exc),
+                    "camera_status": "unavailable",
+                    "details": exc.details,
+                },
+                ensure_ascii=False,
+            ) + "\n"
+        except Exception as exc:
+            yield json.dumps({"event": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
+        finally:
+            close = getattr(events, "close", None)
+            if callable(close):
+                close()
+            if active_run_id is not None:
+                _clear_real_camera_stream_stop(active_run_id)
+            operation.__exit__(None, None, None)
+
+    return StreamingResponse(event_lines(), media_type="application/x-ndjson")
+
+
+@app.post("/api/real-camera-runs/{run_id}/stop")
+def stop_real_camera_run(run_id: str) -> dict[str, Any]:
+    if _request_real_camera_stream_stop(run_id):
+        return {"run_id": run_id, "stop_requested": True, "already_complete": False}
+    availability = _run_store().run_availability(run_id)
+    if availability["exists"]:
+        return {"run_id": run_id, "stop_requested": False, "already_complete": True}
+    raise HTTPException(status_code=404, detail=f"Active real camera stream not found: {run_id}")
 
 
 def build_temperature_controller(config: HardwareConfig):  # noqa: ANN201

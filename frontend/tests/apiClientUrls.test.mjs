@@ -55,24 +55,14 @@ test("diagnostic image metadata exposes mask and contour display sources", async
 
   const images = readDiagnosticImages({
     diagnostic_images: {
-      mask: {
+      detected_mask: {
         label: "Detected mask",
-        coordinates: "roi_local_pixel",
-        overlay_box: {
-          source: "selected_candidate_local_projection_bounds",
-          coordinates: "roi_local_pixel",
-          left: 12,
-          top: 5,
-          right: 62,
-          bottom: 27,
-          stroke: "#ff4040",
-          stroke_width_px: 5
-        },
+        coordinates: "roi_local_full_res",
         data_url: "data:image/png;base64,mask"
       },
-      contour: {
+      envelope_contour: {
         label: "Envelope contour",
-        coordinates: "roi_local_pixel",
+        coordinates: "roi_local_full_res",
         url: "/api/debug/contour.png"
       }
     }
@@ -80,12 +70,10 @@ test("diagnostic image metadata exposes mask and contour display sources", async
 
   assert.equal(images.mask.label, "Detected mask");
   assert.equal(images.mask.src, "data:image/png;base64,mask");
-  assert.equal(images.mask.overlayBox.source, "selected_candidate_local_projection_bounds");
-  assert.equal(images.mask.overlayBox.left, 12);
-  assert.equal(images.mask.overlayBox.strokeWidthPx, 5);
+  assert.equal(images.mask.coordinates, "roi_local_full_res");
   assert.equal(images.contour.label, "Envelope contour");
   assert.match(images.contour.src, /\/api\/debug\/contour\.png$/);
-  assert.equal(images.contour.overlayBox, null);
+  assert.equal(images.length, 2);
 });
 
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
@@ -295,6 +283,7 @@ test("real camera run posts the saved setup measurement definition without overr
       live_offline_fps: 4,
       target_temperature_celsius: 42.5,
       temperature_power_percent: 55,
+      temperature_serial_port: "/dev/ttys000",
       min_component_area_px: 123
     }
   };
@@ -350,6 +339,185 @@ test("real camera run posts the saved setup measurement definition without overr
     assert.deepEqual(body.measurement_definition.detector_config, measurement.detector_config);
     assert.equal(body.max_frames, 77);
     assert.equal(body.target_fps, 4);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("real camera stream omits max_frames by default for unbounded hardware measurement", async () => {
+  const { streamRealCameraRun } = await loadApiClientModule();
+  const measurement = {
+    measurement_id: "setup-real-camera-stream",
+    source: "real_camera",
+    object_class: "C_BUNDLE_ENVELOPE",
+    detector: "BundleEnvelopeDetector",
+    width_mode: "max_width",
+    measurement_coordinates: "source_pixel",
+    roi: {
+      type: "rotated_rect",
+      center_x: 957.46,
+      center_y: 726.36,
+      width: 1269.76,
+      height: 381.92,
+      angle_deg: -2.5
+    },
+    detector_config: {
+      max_frames_per_run: 77,
+      live_offline_fps: 4,
+      target_temperature_celsius: 42.5,
+      temperature_power_percent: 55,
+      temperature_serial_port: "/dev/ttys000",
+      min_component_area_px: 123
+    }
+  };
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      [
+        JSON.stringify({
+          event: "complete",
+          run_manifest: {
+            run_id: "run-real_camera-stream",
+            dataset_id: "real_camera",
+            measurement_definition: measurement,
+            frame_records: [],
+            temperature_records: [],
+            detection_results: [],
+            export_artifacts: [],
+            created_at: "2026-07-06T00:00:00Z",
+            config_snapshot: { max_frames: null },
+            software: {}
+          },
+          analysis_result: {
+            analysis_id: "analysis-stream",
+            run_id: "run-real_camera-stream",
+            all_frames: [],
+            distance_time: [],
+            raw_distance_time: [],
+            stabilized_distance_time: [],
+            temperature_time: [],
+            temperature_distance: [],
+            raw_temperature_distance: [],
+            stabilized_temperature_distance: [],
+            afas_preprocessing: {},
+            afas_analysis: {},
+            export_artifacts: [],
+            created_at: "2026-07-06T00:00:00Z"
+          }
+        })
+      ].join("\n"),
+      { status: 200, headers: { "Content-Type": "application/x-ndjson" } }
+    );
+  };
+
+  try {
+    const events = [];
+    await streamRealCameraRun(
+      measurement,
+      {
+        targetFps: 4,
+        cameraProfile: { pixel_format: "mono8" }
+      },
+      (event) => events.push(event)
+    );
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/real-camera-runs\/stream$/);
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.max_frames, undefined);
+    assert.equal(body.target_fps, 4);
+    assert.equal(body.measurement_definition.source, undefined);
+    assert.deepEqual(body.measurement_definition.roi, measurement.roi);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, "complete");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("real camera stop posts the active stream run id", async () => {
+  const { stopRealCameraRun } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        run_id: "run-real_camera-stop-fixture",
+        stop_requested: true,
+        already_complete: false
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    const response = await stopRealCameraRun("run-real_camera-stop-fixture");
+
+    assert.deepEqual(response, {
+      run_id: "run-real_camera-stop-fixture",
+      stop_requested: true,
+      already_complete: false
+    });
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/real-camera-runs\/run-real_camera-stop-fixture\/stop$/);
+    assert.equal(calls[0].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("temperature status request can target the selected serial port", async () => {
+  const { getTemperatureStatus } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        temperature_status: "ok",
+        reading: {
+          timestamp_ms: 1779448000123,
+          celsius: 24.2,
+          source: "lu92xx_modbus_rtu",
+          error: ""
+        }
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    await getTemperatureStatus({ port: "/dev/ttys000" });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/temperature\/status\?port=%2Fdev%2Fttys000$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("real camera preview release uses the setup preview release endpoint", async () => {
+  const { releaseRealCameraPreview } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ camera_status: "released" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+
+  try {
+    const payload = await releaseRealCameraPreview();
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/camera\/preview\/release$/);
+    assert.equal(calls[0].init.method, "POST");
+    assert.deepEqual(payload, { camera_status: "released" });
   } finally {
     globalThis.fetch = originalFetch;
   }

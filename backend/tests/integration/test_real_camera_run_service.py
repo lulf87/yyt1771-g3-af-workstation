@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 from yyt1771_g3.camera.base import CameraFrame
 from yyt1771_g3.core.enums import DetectorType, ObjectClass, WidthMode
 from yyt1771_g3.core.models import DetectorConfig, MeasurementDefinition, RotatedROI
-from yyt1771_g3.services.real_camera_run_service import run_real_camera
+from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureReading
 
@@ -67,6 +68,21 @@ class FakeTemperatureController:
 
     def close(self) -> None:
         self.closed = True
+
+
+class PowerAsStartTemperatureController(FakeTemperatureController):
+    def __init__(self, startup_power_percent: float = 100.0) -> None:
+        super().__init__()
+        self.config = SimpleNamespace(
+            control=SimpleNamespace(
+                start_output_mode="power_nonzero",
+                startup_power_percent=startup_power_percent,
+            )
+        )
+
+    def start_output(self) -> None:
+        self.started = True
+        self.set_output_power_percent(float(self.config.control.startup_power_percent))
 
 
 class FailingTemperatureController:
@@ -157,6 +173,175 @@ def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Pat
     assert restored == result.manifest
 
 
+def test_real_camera_stream_without_frame_limit_saves_partial_run_on_close(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-stream-stop-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=3,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+        ),
+    )
+    source = FakeCameraSource()
+    temperature = FakeTemperatureController()
+    events = iter_real_camera_run_events(
+        run_store,
+        camera_source=source,
+        temperature_controller=temperature,
+        measurement=measurement,
+        max_frames=None,
+        target_fps=8.0,
+    )
+
+    first_event = next(events)
+    events.close()
+
+    assert first_event["event"] == "frame"
+    assert first_event["frame_count"] == 0
+    assert first_event["total_frames"] == 0
+    run_id = first_event["run_id"]
+    manifest = run_store.read_run_manifest(run_id)
+    assert manifest.config_snapshot["max_frames"] is None
+    assert manifest.config_snapshot["processed_frames"] == 1
+    assert manifest.config_snapshot["stop_reason"] == "manual_stop_or_stream_closed"
+    assert len(manifest.frame_records) == 1
+    assert source.closed is True
+    assert temperature.stopped is True
+    assert temperature.closed is True
+
+
+def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-stream-stop-callback-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=3,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+        ),
+    )
+    source = FakeCameraSource()
+    temperature = FakeTemperatureController()
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=source,
+            temperature_controller=temperature,
+            measurement=measurement,
+            max_frames=None,
+            target_fps=8.0,
+            stop_requested=lambda run_id: True,
+        )
+    )
+
+    assert [event["event"] for event in events] == ["frame", "complete"]
+    run_id = events[0]["run_id"]
+    manifest = run_store.read_run_manifest(run_id)
+    assert manifest.config_snapshot["max_frames"] is None
+    assert manifest.config_snapshot["processed_frames"] == 1
+    assert manifest.config_snapshot["stop_reason"] == "manual_stop_requested"
+    assert len(manifest.frame_records) == 1
+    assert events[-1]["run_manifest"]["run_id"] == run_id
+    assert source.closed is True
+    assert temperature.stopped is True
+    assert temperature.closed is True
+
+
+def test_real_camera_stream_stops_when_target_temperature_reached(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-stream-target-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=99,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+            target_temperature_celsius=22.0,
+            temperature_power_percent=68.0,
+        ),
+    )
+    temperature = FakeTemperatureController()
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=FakeCameraSource(),
+            temperature_controller=temperature,
+            measurement=measurement,
+            max_frames=None,
+            target_fps=8.0,
+        )
+    )
+
+    assert [event["event"] for event in events] == ["frame", "frame", "complete"]
+    assert events[0]["total_frames"] == 0
+    assert events[1]["processed_frames"] == 2
+    manifest = run_store.read_run_manifest(events[-1]["run_manifest"]["run_id"])
+    assert len(manifest.frame_records) == 2
+    assert manifest.config_snapshot["max_frames"] is None
+    assert manifest.config_snapshot["stop_reason"] == "target_temperature_reached"
+    assert temperature.target_values == [22.0]
+    assert temperature.stopped is True
+    assert temperature.closed is True
+
+
+def test_real_camera_run_suspicious_only_uses_enhanced_core_diagnostics(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-suspicious-diagnostics-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=1,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+            run_detector_mode="fast",
+            run_diagnostics_mode="suspicious_only",
+            run_enhanced_detector_on_suspicious=True,
+            run_enhanced_detector_policy="all_suspicious",
+            suspicious_boundary_reject_ratio=0.0,
+        ),
+    )
+
+    result = run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        measurement=measurement,
+        max_frames=1,
+        target_fps=8.0,
+    )
+
+    debug = result.manifest.detection_results[0].debug_artifacts
+    assert debug["suspicious"] is True
+    assert debug["enhanced_rerun_used"] is True
+    assert debug["diagnostics_generated"] is True
+    assert debug["detector_execution_mode"] == "enhanced"
+    assert set(debug["diagnostic_images"]) == {"detected_mask", "envelope_contour"}
+
+
 def test_real_camera_run_samples_lu92xx_temperature_each_frame(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     measurement = MeasurementDefinition(
@@ -201,6 +386,74 @@ def test_real_camera_run_samples_lu92xx_temperature_each_frame(tmp_path: Path) -
     assert {item.temperature_sync_status for item in result.manifest.detection_results} == {"TEMP_SYNC_OK"}
     assert result.manifest.config_snapshot["temperature_backend"] == "lu92xx_modbus_rtu"
     assert result.analysis.temperature_distance
+
+
+def test_real_camera_run_keeps_measurement_power_for_power_nonzero_controller(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-temp-power-nonzero-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=1,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+            temperature_power_percent=68.0,
+        ),
+    )
+    temperature = PowerAsStartTemperatureController(startup_power_percent=100.0)
+
+    run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        temperature_controller=temperature,
+        measurement=measurement,
+        max_frames=1,
+        target_fps=10.0,
+    )
+
+    assert temperature.power_values == [68.0]
+    assert temperature.started is False
+    assert temperature.stopped is True
+    assert temperature.closed is True
+
+
+def test_real_camera_run_zero_power_does_not_start_temperature_output(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = MeasurementDefinition(
+        measurement_id="real-camera-temp-zero-power-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=1,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+            temperature_power_percent=0.0,
+        ),
+    )
+    temperature = FakeTemperatureController()
+
+    run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        temperature_controller=temperature,
+        measurement=measurement,
+        max_frames=1,
+        target_fps=10.0,
+    )
+
+    assert temperature.power_values == [0.0]
+    assert temperature.started is False
+    assert temperature.stopped is True
+    assert temperature.closed is True
 
 
 def test_real_camera_run_records_missing_temperature_when_controller_prepare_fails(tmp_path: Path) -> None:

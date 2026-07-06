@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import json
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -22,6 +24,10 @@ def test_camera_preview_endpoint_returns_clear_error_without_sdk(monkeypatch) ->
         return original_import_module(name, package)
 
     monkeypatch.setattr("importlib.import_module", fake_import)
+    monkeypatch.setattr(
+        "yyt1771_g3.camera.hik_mvs_source._import_sdk_with_library_override",
+        lambda profile: None,
+    )
 
     from yyt1771_g3.api.main import app
 
@@ -31,6 +37,45 @@ def test_camera_preview_endpoint_returns_clear_error_without_sdk(monkeypatch) ->
     assert response.status_code == 503
     assert response.json()["detail"]["camera_status"] == "unavailable"
     assert "Hik MVS SDK is not available" in response.json()["detail"]["message"]
+
+
+def test_camera_preview_endpoint_uses_simulated_camera_backend(monkeypatch) -> None:  # noqa: ANN001
+    import importlib
+
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, DeviceRoiConfig, HardwareConfig
+
+    api_main._reset_preview_camera_source()
+    original_import_module = importlib.import_module
+
+    def fake_import(name: str, package: str | None = None):  # noqa: ANN202
+        if name == "MvCameraControl_class":
+            raise AssertionError("simulated camera backend must not import Hik MVS SDK")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="simulated",
+                pixel_format="mono8",
+                device_roi=DeviceRoiConfig(width=120, height=80),
+            )
+        ),
+    )
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/camera/preview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["camera_status"] == "ok"
+    assert payload["shape"] == [80, 120]
+    assert payload["pixel_format"] == "mono8"
+    assert payload["camera_meta"]["backend"] == "simulated"
+    assert payload["image_data_url"].startswith("data:image/png;base64,")
 
 
 def test_real_camera_run_endpoint_returns_clear_error_without_sdk(monkeypatch, tmp_path) -> None:  # noqa: ANN001
@@ -44,6 +89,10 @@ def test_real_camera_run_endpoint_returns_clear_error_without_sdk(monkeypatch, t
         return original_import_module(name, package)
 
     monkeypatch.setattr("importlib.import_module", fake_import)
+    monkeypatch.setattr(
+        "yyt1771_g3.camera.hik_mvs_source._import_sdk_with_library_override",
+        lambda profile: None,
+    )
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
 
     from yyt1771_g3.api.main import app
@@ -76,6 +125,63 @@ def test_real_camera_run_endpoint_returns_clear_error_without_sdk(monkeypatch, t
     assert response.status_code == 503
     assert response.json()["detail"]["camera_status"] == "unavailable"
     assert "Hik MVS SDK is not available" in response.json()["detail"]["message"]
+
+
+def test_real_camera_run_endpoint_uses_simulated_camera_backend(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    import importlib
+
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    original_import_module = importlib.import_module
+
+    def fake_import(name: str, package: str | None = None):  # noqa: ANN202
+        if name == "MvCameraControl_class":
+            raise AssertionError("simulated camera backend must not import Hik MVS SDK")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+
+    from yyt1771_g3.api import main as api_main
+
+    api_main._reset_preview_camera_source()
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: None)
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/real-camera-runs",
+        json={
+            "max_frames": 2,
+            "target_fps": 8.0,
+            "camera_profile": {
+                "backend": "simulated",
+                "pixel_format": "mono8",
+                "device_roi": {"width": 120, "height": 80},
+            },
+            "measurement_definition": {
+                "measurement_id": "simulated-camera-api",
+                "source": "real_camera",
+                "object_class": "A_BALLOON_ENVELOPE",
+                "detector": "BalloonEnvelopeDetector",
+                "width_mode": "max_width",
+                "measurement_coordinates": "source_pixel",
+                "roi": {
+                    "type": "rotated_rect",
+                    "center_x": 60.0,
+                    "center_y": 35.0,
+                    "width": 70.0,
+                    "height": 40.0,
+                    "angle_deg": 0.0,
+                },
+                "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 2},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["run_manifest"]["frame_records"]) == 2
+    assert payload["run_manifest"]["frame_records"][0]["source"] == "simulated"
+    assert payload["run_manifest"]["frame_records"][0]["camera_meta"]["backend"] == "simulated"
+    assert payload["run_manifest"]["config_snapshot"]["camera_profile"]["backend"] == "simulated"
 
 
 def test_camera_preview_png_endpoint_returns_frame_from_lazy_sdk(monkeypatch) -> None:  # noqa: ANN001
@@ -135,6 +241,7 @@ class FakeApiCameraSource:
 
 def test_camera_preview_endpoint_returns_setup_metadata(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
 
     class MetadataCameraSource(FakeApiCameraSource):
         def preview_frame(self) -> CameraFrame:
@@ -163,6 +270,238 @@ def test_camera_preview_endpoint_returns_setup_metadata(monkeypatch) -> None:  #
     assert payload["pixel_format"] == "mono8"
     assert payload["shape"] == [32, 48]
     assert payload["timestamp_ms"] == 1779445920110
+
+
+def test_camera_preview_reuses_source_for_same_profile(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
+
+    sources: list[FakeApiCameraSource] = []
+
+    class CountingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            self.preview_count = 0
+            sources.append(self)
+
+        def preview_frame(self) -> CameraFrame:
+            self.preview_count += 1
+            return super().preview_frame()
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingCameraSource)
+
+    client = TestClient(api_main.app)
+    first = client.get("/api/camera/preview")
+    second = client.get("/api/camera/preview")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(sources) == 1
+    assert sources[0].preview_count == 2
+    assert sources[0].closed is False
+
+    api_main._reset_preview_camera_source()
+    assert sources[0].closed is True
+
+
+def test_setup_probe_reuses_preview_source_when_capturing_live_frame(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
+
+    sources: list[FakeApiCameraSource] = []
+
+    class CountingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            self.preview_count = 0
+            sources.append(self)
+
+        def preview_frame(self) -> CameraFrame:
+            self.preview_count += 1
+            return super().preview_frame()
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingCameraSource)
+
+    client = TestClient(api_main.app)
+    preview = client.get("/api/camera/preview")
+    probe = client.post(
+        "/api/camera/setup-probe",
+        json={
+            "measurement_definition": {
+                "measurement_id": "real-probe-live",
+                "source": "real_camera",
+                "object_class": "A_BALLOON_ENVELOPE",
+                "detector": "BalloonEnvelopeDetector",
+                "width_mode": "max_width",
+                "measurement_coordinates": "source_pixel",
+                "roi": {
+                    "type": "rotated_rect",
+                    "center_x": 60.0,
+                    "center_y": 35.0,
+                    "width": 70.0,
+                    "height": 40.0,
+                    "angle_deg": 0.0,
+                },
+                "detector_config": {"min_component_area_px": 20},
+            },
+        },
+    )
+
+    assert preview.status_code == 200
+    assert probe.status_code == 200
+    assert len(sources) == 1
+    assert sources[0].preview_count == 2
+    assert sources[0].closed is False
+
+    api_main._reset_preview_camera_source()
+    assert sources[0].closed is True
+
+
+def test_real_camera_run_resets_cached_setup_preview_source(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
+
+    sources: list[FakeApiCameraSource] = []
+
+    class CapturingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            sources.append(self)
+
+        def preview_frame(self) -> CameraFrame:
+            if len(sources) > 1:
+                assert sources[0].closed is True
+            return super().preview_frame()
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CapturingCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
+
+    client = TestClient(api_main.app)
+    preview = client.get("/api/camera/preview")
+    response = client.post(
+        "/api/real-camera-runs",
+        json={
+            "max_frames": 1,
+            "target_fps": 10.0,
+            "camera_profile": {"pixel_format": "mono8", "target_frame_rate_hz": 10.0},
+            "measurement_definition": {
+                "measurement_id": "real-api-reset-preview",
+                "source": "real_camera",
+                "object_class": "A_BALLOON_ENVELOPE",
+                "detector": "BalloonEnvelopeDetector",
+                "width_mode": "max_width",
+                "measurement_coordinates": "source_pixel",
+                "roi": {
+                    "type": "rotated_rect",
+                    "center_x": 60.0,
+                    "center_y": 35.0,
+                    "width": 70.0,
+                    "height": 40.0,
+                    "angle_deg": 0.0,
+                },
+                "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 1},
+            },
+        },
+    )
+
+    assert preview.status_code == 200
+    assert response.status_code == 200
+    assert len(sources) == 2
+    assert sources[0].closed is True
+
+
+def test_camera_preview_returns_busy_while_real_camera_run_owns_camera(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
+
+    run_started = threading.Event()
+    allow_run_finish = threading.Event()
+    run_response: dict[str, object] = {}
+    sources: list[FakeApiCameraSource] = []
+
+    class BlockingRunCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            self.source_index = len(sources)
+            sources.append(self)
+
+        def preview_frame(self) -> CameraFrame:
+            if self.source_index == 0:
+                run_started.set()
+                assert allow_run_finish.wait(timeout=5), "test timed out waiting to release real camera run"
+            return super().preview_frame()
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", BlockingRunCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: None)
+
+    client = TestClient(api_main.app)
+
+    def post_run() -> None:
+        run_response["response"] = client.post(
+            "/api/real-camera-runs",
+            json={
+                "max_frames": 1,
+                "target_fps": 10.0,
+                "camera_profile": {"pixel_format": "mono8", "target_frame_rate_hz": 10.0},
+                "measurement_definition": {
+                    "measurement_id": "real-api-camera-owned",
+                    "source": "real_camera",
+                    "object_class": "A_BALLOON_ENVELOPE",
+                    "detector": "BalloonEnvelopeDetector",
+                    "width_mode": "max_width",
+                    "measurement_coordinates": "source_pixel",
+                    "roi": {
+                        "type": "rotated_rect",
+                        "center_x": 60.0,
+                        "center_y": 35.0,
+                        "width": 70.0,
+                        "height": 40.0,
+                        "angle_deg": 0.0,
+                    },
+                    "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 1},
+                },
+            },
+        )
+
+    thread = threading.Thread(target=post_run)
+    thread.start()
+    try:
+        assert run_started.wait(timeout=5), "real camera run did not start"
+        preview = client.get("/api/camera/preview")
+        assert preview.status_code == 409
+        assert preview.json()["detail"]["camera_status"] == "busy"
+        assert len(sources) == 1
+    finally:
+        allow_run_finish.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert run_response["response"].status_code == 200
+
+
+def test_camera_preview_release_endpoint_closes_cached_source(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
+
+    sources: list[FakeApiCameraSource] = []
+
+    class CapturingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            sources.append(self)
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CapturingCameraSource)
+
+    client = TestClient(api_main.app)
+    preview = client.get("/api/camera/preview")
+    release = client.post("/api/camera/preview/release")
+
+    assert preview.status_code == 200
+    assert release.status_code == 200
+    assert release.json()["camera_status"] == "released"
+    assert sources[0].closed is True
 
 
 class FakeApiTemperatureController:
@@ -208,6 +547,33 @@ def test_temperature_status_endpoint_reads_configured_controller(monkeypatch, tm
     assert controller.closed is True
 
 
+def test_temperature_status_endpoint_uses_selected_serial_port(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, SerialPortConfig, TempConfig
+
+    controller = FakeApiTemperatureController()
+    captured_configs = []
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(temp=TempConfig(serial=SerialPortConfig(port="/dev/default-temp"))),
+    )
+
+    def fake_build_temperature_controller(config):  # noqa: ANN001, ANN202
+        captured_configs.append(config)
+        return controller
+
+    monkeypatch.setattr(api_main, "build_temperature_controller", fake_build_temperature_controller)
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/status", params={"port": "/dev/ttys000"})
+
+    assert response.status_code == 200
+    assert captured_configs[0].temp.serial.port == "/dev/ttys000"
+    assert controller.closed is True
+
+
 def test_temperature_serial_ports_endpoint_returns_discovered_ports(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.temperature.serial_ports import SerialPortInfo
@@ -225,11 +591,36 @@ def test_temperature_serial_ports_endpoint_returns_discovered_ports(monkeypatch)
     assert response.json()["ports"][0]["device"] == "COM5"
 
 
+def test_temperature_serial_ports_endpoint_includes_configured_port(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, SerialPortConfig, TempConfig
+    from yyt1771_g3.temperature.serial_ports import SerialPortInfo
+
+    monkeypatch.setattr(
+        api_main,
+        "list_serial_ports",
+        lambda: [SerialPortInfo(device="COM5", name="COM5", description="USB Serial", hwid="VID:PID")],
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(temp=TempConfig(serial=SerialPortConfig(port="/dev/ttys000"))),
+    )
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/serial-ports")
+
+    assert response.status_code == 200
+    assert [port["device"] for port in response.json()["ports"]] == ["COM5", "/dev/ttys000"]
+
+
 def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
     from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
 
     controllers: list[FakeApiTemperatureController] = []
+    temperature_configs = []
     camera_profiles: list[dict] = []
 
     class CapturingCameraSource(FakeApiCameraSource):
@@ -238,6 +629,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
             camera_profiles.append(self.profile)
 
     def fake_build_temperature_controller(config):  # noqa: ANN001, ANN202
+        temperature_configs.append(config)
         controller = FakeApiTemperatureController()
         controllers.append(controller)
         return controller
@@ -272,6 +664,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
                     "max_frames_per_run": 1,
                     "target_temperature_celsius": 55.0,
                     "temperature_power_percent": 68.0,
+                    "temperature_serial_port": "/dev/ttys000",
                 },
             },
         },
@@ -283,6 +676,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
     assert payload["run_manifest"]["temperature_records"][0]["celsius"] == 25.3
     assert payload["run_manifest"]["detection_results"][0]["temperature_sync_status"] == "TEMP_SYNC_OK"
     assert camera_profiles[0]["exposure_us"] == 50000
+    assert temperature_configs[0].temp.serial.port == "/dev/ttys000"
     assert controllers[0].target_values == [55.0]
     assert controllers[0].power_values == [68.0]
     assert controllers[0].stopped is True
@@ -292,3 +686,97 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
     assert frame_png.headers["content-type"] == "image/png"
     image = Image.open(io.BytesIO(frame_png.content))
     assert image.size == (120, 80)
+
+
+def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    api_main._reset_preview_camera_source()
+
+    controllers: list[FakeApiTemperatureController] = []
+    camera_profiles: list[dict] = []
+
+    class CapturingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            camera_profiles.append(self.profile)
+
+    def fake_build_temperature_controller(config):  # noqa: ANN001, ANN202
+        controller = FakeApiTemperatureController()
+        controllers.append(controller)
+        return controller
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CapturingCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", fake_build_temperature_controller)
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/real-camera-runs/stream",
+        json={
+            "max_frames": 2,
+            "target_fps": 10.0,
+            "camera_profile": {"pixel_format": "mono8", "exposure_us": 50000},
+            "measurement_definition": {
+                "measurement_id": "real-api-stream",
+                "source": "real_camera",
+                "object_class": "A_BALLOON_ENVELOPE",
+                "detector": "BalloonEnvelopeDetector",
+                "width_mode": "max_width",
+                "measurement_coordinates": "source_pixel",
+                "roi": {
+                    "type": "rotated_rect",
+                    "center_x": 60.0,
+                    "center_y": 35.0,
+                    "width": 70.0,
+                    "height": 40.0,
+                    "angle_deg": 0.0,
+                },
+                "detector_config": {
+                    "min_component_area_px": 20,
+                    "max_frames_per_run": 160,
+                    "target_temperature_celsius": 55.0,
+                    "temperature_power_percent": 68.0,
+                    "temperature_serial_port": "/dev/ttys000",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    assert [event["event"] for event in events] == ["frame", "frame", "complete"]
+    assert events[0]["dataset_id"] == "real_camera"
+    assert events[0]["frame_count"] == 2
+    assert events[0]["frame_url"].endswith("/raw-frames/1.png")
+    assert events[1]["processed_frames"] == 2
+    assert events[-1]["run_manifest"]["config_snapshot"]["max_frames"] == 2
+    assert len(events[-1]["run_manifest"]["frame_records"]) == 2
+    assert camera_profiles[0]["exposure_us"] == 50000
+    assert controllers[0].target_values == [55.0]
+    assert controllers[0].power_values == [68.0]
+    assert controllers[0].stopped is True
+    assert controllers[0].closed is True
+
+    raw_frame_png = client.get(f"/api/runs/{events[-1]['run_manifest']['run_id']}/raw-frames/1.png")
+    assert raw_frame_png.status_code == 200
+    assert raw_frame_png.headers["content-type"] == "image/png"
+
+
+def test_real_camera_run_stop_endpoint_marks_active_stream() -> None:
+    from yyt1771_g3.api import main as api_main
+
+    run_id = "run-real_camera-stop-api-fixture"
+    api_main._register_real_camera_stream_stop(run_id)
+    client = TestClient(api_main.app)
+    try:
+        response = client.post(f"/api/real-camera-runs/{run_id}/stop")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "run_id": run_id,
+            "stop_requested": True,
+            "already_complete": False,
+        }
+        assert api_main._real_camera_stream_stop_requested(run_id) is True
+    finally:
+        api_main._clear_real_camera_stream_stop(run_id)

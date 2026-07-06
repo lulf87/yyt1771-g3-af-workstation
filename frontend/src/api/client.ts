@@ -51,18 +51,84 @@ export type DetectorConfig = {
   switch_after_n_frames?: number;
   jump_limit_px?: number;
   min_confidence?: number;
+  dark_enhance_bg_kernel_px?: number;
+  hysteresis_low_ratio?: number;
   min_component_area_px?: number;
+  envelope_quantile?: number;
   envelope_window_px?: number;
   envelope_step_px?: number;
   min_window_pixels?: number;
   window_width_keep_ratio?: number;
+  contour_close_kernel?: number;
+  contour_smooth_window?: number;
   mask_open_kernel_px?: number;
   mask_close_kernel_px?: number;
   mask_dilate_kernel_px?: number;
+  mesh_row_width_keep_ratio?: number;
+  mesh_row_count_keep_ratio?: number;
+  envelope_width_percentile?: number;
+  envelope_width_outlier_epsilon_px?: number;
+  envelope_min_consensus_rows?: number;
+  boundary_support_window_px?: number;
+  boundary_support_min_pixels?: number;
+  boundary_support_min_ratio?: number;
+  boundary_support_enabled?: boolean;
+  distance_jump_limit_px?: number;
+  distance_jump_hold_frames?: number;
+  distance_jump_policy?: "hold_previous" | "mark_invalid";
+  temporal_stabilization_enabled?: boolean;
+  temporal_stabilization_strength?: "weak" | "medium" | "strong";
+  contour_box_mode?: "component_bbox" | "robust_component_bbox" | "measurement_band";
+  contour_box_padding_px?: number;
+  contour_box_quantile?: number;
+  contour_box_min_coverage_ratio?: number;
+  show_measurement_band_box?: boolean;
+  roi_edge_guard_px?: number;
+  detection_roi_padding_px?: number;
+  bubble_suppress_enabled?: boolean;
+  bubble_local_radius_px?: number;
+  bubble_bright_z_threshold?: number;
+  bubble_min_area_px?: number;
+  bubble_max_area_px?: number;
+  bubble_max_bbox_px?: number;
+  bubble_max_aspect_ratio?: number;
+  bubble_min_compactness?: number;
+  bubble_suppress_radius_px?: number;
+  bubble_suppress_measurement_only?: boolean;
+  dark_line_filter_enabled?: boolean;
+  dark_line_filter_length_px?: number;
+  dark_line_filter_width_px?: number;
+  dark_line_min_response?: number;
+  endpoint_min_dark_line_response?: number;
+  spur_prune_enabled?: boolean;
+  spur_prune_max_length_px?: number;
+  spur_prune_dilate_px?: number;
+  spur_prune_min_ridge_response?: number;
+  spur_prune_require_bubble_overlap_or_low_ridge?: boolean;
+  processing_scale_enabled?: boolean;
+  processing_scale?: number;
+  processing_scale_mode?: "area_downsample" | "gaussian_pyramid";
+  refine_endpoint_on_full_res?: boolean;
+  full_res_refine_band_px?: number;
+  detector_execution_mode?: "fast" | "enhanced" | "diagnostics";
+  show_advanced_diagnostics?: boolean;
+  run_detector_mode?: "fast" | "enhanced" | "diagnostics";
+  run_diagnostics_mode?: "off" | "suspicious_only" | "every_frame";
+  run_preview_fps?: number;
+  run_result_batch_size?: number;
+  run_enhanced_detector_on_suspicious?: boolean;
+  run_enhanced_detector_policy?: "never" | "rerun_worthy_only" | "all_suspicious";
+  endpoint_jump_limit_px?: number;
+  endpoint_jump_warmup_frames?: number;
+  endpoint_jump_confirm_frames?: number;
+  suspicious_boundary_reject_ratio?: number;
+  suspicious_outlier_reject_count?: number;
   max_frames_per_run?: number;
   live_offline_fps?: number;
+  setup_preview_fps?: number;
   target_temperature_celsius?: number | null;
   temperature_power_percent?: number;
+  temperature_serial_port?: string;
 };
 
 export type MeasurementDefinition = {
@@ -96,8 +162,14 @@ export type DetectionResult = {
   detection_status: string;
   ab_points: { a: ABPoint; b: ABPoint } | null;
   distance_px: number | null;
+  raw_ab_points: { a: ABPoint; b: ABPoint } | null;
+  raw_distance_px: number | null;
+  stabilized_ab_points: { a: ABPoint; b: ABPoint } | null;
+  stabilized_distance_px: number | null;
+  result_display_source: "raw" | "stabilized";
   raw_best_candidate: DetectionCandidate | null;
   selected_candidate: DetectionCandidate | null;
+  stabilized_candidate: DetectionCandidate | null;
   rejected_candidates: DetectionCandidate[];
   quality: {
     confidence: number;
@@ -123,23 +195,11 @@ export type DiagnosticImageInfo = {
   coordinates: string;
   width: number | null;
   height: number | null;
-  overlayBox: DiagnosticOverlayBox | null;
 };
 
-export type DiagnosticImages = {
-  mask: DiagnosticImageInfo;
-  contour: DiagnosticImageInfo;
-};
-
-export type DiagnosticOverlayBox = {
-  source: string;
-  coordinates: string;
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-  stroke: string;
-  strokeWidthPx: number;
+export type DiagnosticImages = DiagnosticImageInfo[] & {
+  mask?: DiagnosticImageInfo;
+  contour?: DiagnosticImageInfo;
 };
 
 export type ProbeResponse = {
@@ -208,8 +268,12 @@ export type AnalysisResult = {
   run_id: string;
   all_frames: DetectionResult[];
   distance_time: CurvePoint[];
+  raw_distance_time: CurvePoint[];
+  stabilized_distance_time: CurvePoint[];
   temperature_time: CurvePoint[];
   temperature_distance: CurvePoint[];
+  raw_temperature_distance: CurvePoint[];
+  stabilized_temperature_distance: CurvePoint[];
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;
   export_artifacts: ExportArtifact[];
@@ -243,6 +307,12 @@ export type RunAvailability = {
   analysis_exists: boolean;
 };
 
+export type RealCameraStopResponse = {
+  run_id: string;
+  stop_requested: boolean;
+  already_complete: boolean;
+};
+
 export type LiveOfflineFrameEvent = {
   event: "frame";
   run_id: string;
@@ -259,6 +329,10 @@ export type LiveOfflineFrameEvent = {
     distance_time: CurvePoint | null;
     temperature_time: CurvePoint | null;
     temperature_distance: CurvePoint | null;
+    raw_distance_time?: CurvePoint | null;
+    raw_temperature_distance?: CurvePoint | null;
+    stabilized_distance_time?: CurvePoint | null;
+    stabilized_temperature_distance?: CurvePoint | null;
   };
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;
@@ -281,6 +355,8 @@ export type LiveOfflineRunStreamEvent =
   | LiveOfflineCompleteEvent
   | LiveOfflineErrorEvent;
 
+export type RealCameraRunStreamEvent = LiveOfflineRunStreamEvent;
+
 export type CameraPreviewResponse = {
   camera_status: string;
   timestamp_ms: number | null;
@@ -296,8 +372,12 @@ export type CameraPreviewResponse = {
 
 export type RealCameraSetupProbeResponse = ProbeResponse &
   CameraPreviewResponse & {
-    image_data_url: string;
-  };
+  image_data_url: string;
+};
+
+export type CameraPreviewReleaseResponse = {
+  camera_status: string;
+};
 
 export type ApiErrorDetail = {
   camera_status?: string;
@@ -466,10 +546,20 @@ export function readDiagnosticImages(debugArtifacts: Record<string, unknown> | n
   const diagnosticImages = debugArtifacts.diagnostic_images;
   if (!diagnosticImages || typeof diagnosticImages !== "object") return null;
   const source = diagnosticImages as Record<string, unknown>;
-  const mask = readDiagnosticImage(source.mask, "Detected mask");
-  const contour = readDiagnosticImage(source.contour, "Envelope contour");
-  if (!mask || !contour) return null;
-  return { mask, contour };
+  const images = Object.entries(source)
+    .map(([key, value]) => readDiagnosticImage(value, key))
+    .filter((image): image is DiagnosticImageInfo => image !== null);
+  if (images.length === 0) return null;
+  const result = images as DiagnosticImages;
+  result.mask =
+    readDiagnosticImage(source.detected_mask, "Detected mask") ??
+    readDiagnosticImage(source.mask, "Detected mask") ??
+    undefined;
+  result.contour =
+    readDiagnosticImage(source.envelope_contour, "Envelope contour") ??
+    readDiagnosticImage(source.contour, "Envelope contour") ??
+    undefined;
+  return result;
 }
 
 function readDiagnosticImage(value: unknown, fallbackLabel: string): DiagnosticImageInfo | null {
@@ -483,30 +573,7 @@ function readDiagnosticImage(value: unknown, fallbackLabel: string): DiagnosticI
     src,
     coordinates: stringFromUnknown(item.coordinates) ?? "roi_local_pixel",
     width: numberFromUnknown(item.width),
-    height: numberFromUnknown(item.height),
-    overlayBox: readDiagnosticOverlayBox(item.overlay_box)
-  };
-}
-
-function readDiagnosticOverlayBox(value: unknown): DiagnosticOverlayBox | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Record<string, unknown>;
-  const source = stringFromUnknown(item.source);
-  const coordinates = stringFromUnknown(item.coordinates) ?? "roi_local_pixel";
-  const left = numberFromUnknown(item.left);
-  const top = numberFromUnknown(item.top);
-  const right = numberFromUnknown(item.right);
-  const bottom = numberFromUnknown(item.bottom);
-  if (!source || left === null || top === null || right === null || bottom === null) return null;
-  return {
-    source,
-    coordinates,
-    left,
-    top,
-    right,
-    bottom,
-    stroke: stringFromUnknown(item.stroke) ?? "#ff4040",
-    strokeWidthPx: numberFromUnknown(item.stroke_width_px) ?? 1
+    height: numberFromUnknown(item.height)
   };
 }
 
@@ -671,12 +738,24 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
   return requestJson<CameraPreviewResponse>("/api/camera/preview");
 }
 
+export async function releaseRealCameraPreview(): Promise<CameraPreviewReleaseResponse> {
+  const response = await fetch(`${API_BASE}/api/camera/preview/release`, { method: "POST" });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<CameraPreviewReleaseResponse>;
+}
+
 export function realCameraPreviewImageUrl(cacheKey: number): string {
   return `${API_BASE}/api/camera/preview.png?t=${cacheKey}`;
 }
 
-export async function getTemperatureStatus(): Promise<TemperatureStatusResponse> {
-  return requestJson<TemperatureStatusResponse>("/api/temperature/status");
+export async function getTemperatureStatus(options: { port?: string } = {}): Promise<TemperatureStatusResponse> {
+  const params = new URLSearchParams();
+  const port = options.port?.trim();
+  if (port) params.set("port", port);
+  const query = params.toString();
+  return requestJson<TemperatureStatusResponse>(`/api/temperature/status${query ? `?${query}` : ""}`);
 }
 
 export async function listTemperatureSerialPorts(): Promise<SerialPortInfo[]> {
@@ -686,7 +765,7 @@ export async function listTemperatureSerialPorts(): Promise<SerialPortInfo[]> {
 
 export async function createRealCameraRun(
   measurementDefinition: MeasurementDefinition,
-  options: { maxFrames: number; targetFps: number; cameraProfile?: Record<string, unknown> }
+  options: { maxFrames?: number; targetFps: number; cameraProfile?: Record<string, unknown> }
 ): Promise<RunResponse> {
   const response = await fetch(`${API_BASE}/api/real-camera-runs`, {
     method: "POST",
@@ -703,6 +782,89 @@ export async function createRealCameraRun(
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
   return response.json() as Promise<RunResponse>;
+}
+
+export async function streamRealCameraRun(
+  measurementDefinition: MeasurementDefinition,
+  options: { maxFrames?: number; targetFps: number; cameraProfile?: Record<string, unknown>; signal?: AbortSignal },
+  onEvent: (event: RealCameraRunStreamEvent) => void
+): Promise<RunResponse> {
+  const response = await fetch(`${API_BASE}/api/real-camera-runs/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: options.signal,
+    body: JSON.stringify({
+      max_frames: options.maxFrames,
+      target_fps: options.targetFps,
+      camera_profile: options.cameraProfile ?? { pixel_format: "mono8" },
+      measurement_definition: backendMeasurementDefinition(measurementDefinition)
+    })
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+  }
+  if (!response.body) {
+    throw new Error("Streaming response body is not available");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let complete: RunResponse | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffered += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffered.split("\n");
+    buffered = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as RealCameraRunStreamEvent;
+      onEvent(event);
+      if (event.event === "error") {
+        throw new Error(event.message);
+      }
+      if (event.event === "complete") {
+        complete = {
+          run_manifest: event.run_manifest,
+          analysis_result: event.analysis_result
+        };
+      }
+    }
+
+    if (done) break;
+  }
+
+  if (buffered.trim()) {
+    const event = JSON.parse(buffered) as RealCameraRunStreamEvent;
+    onEvent(event);
+    if (event.event === "error") {
+      throw new Error(event.message);
+    }
+    if (event.event === "complete") {
+      complete = {
+        run_manifest: event.run_manifest,
+        analysis_result: event.analysis_result
+      };
+    }
+  }
+
+  if (!complete) {
+    throw new Error("Real camera stream ended before the run completed");
+  }
+  return complete;
+}
+
+export async function stopRealCameraRun(runId: string): Promise<RealCameraStopResponse> {
+  const response = await fetch(`${API_BASE}/api/real-camera-runs/${runId}/stop`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<RealCameraStopResponse>;
 }
 
 function backendMeasurementDefinition(
