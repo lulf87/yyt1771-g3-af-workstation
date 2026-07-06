@@ -358,6 +358,37 @@ test("analysis AFAS defaults to formal curve only and keeps raw diagnostic point
   assert.ok(model.hasPoints);
 });
 
+test("analysis AFAS model explains stale frames when saved formal curve is empty", async () => {
+  const { buildAnalysisAfasModel } = await loadCurveModule();
+  const model = buildAnalysisAfasModel(
+    {
+      ...sampleAnalysis(),
+      all_frames: [
+        {
+          frame_index: 1,
+          detection_status: "VALID",
+          distance_px: 758,
+          temperature_celsius: 17.5,
+          temperature_sync_status: "TEMP_SYNC_STALE",
+          temperature_delta_ms: 100,
+          temp_sync_target_ms: 10
+        }
+      ],
+      temperature_distance: [],
+      afas_preprocessing: {}
+    },
+    { width: 980, height: 540 }
+  );
+
+  assert.equal(model.hasPoints, false);
+  assert.equal(model.emptyState?.kind, "status_rugs_only");
+  assert.match(model.emptyState?.title ?? "", /No formal temperature-distance points/);
+  assert.match(model.emptyState?.detail ?? "", /status markers below the x axis/);
+  assert.equal(model.emptyState?.syncStatus, "TEMP_SYNC_STALE");
+  assert.equal(model.emptyState?.temperatureDeltaMs, 100);
+  assert.equal(model.emptyState?.tempSyncTargetMs, 10);
+});
+
 test("analysis AFAS shows As and Af-tan construction guides without stretching y axis", async () => {
   const { buildAnalysisAfasModel } = await loadCurveModule();
 
@@ -630,6 +661,41 @@ test("run trend model breaks invalid and stale points out of the formal curve", 
   );
   assert.equal(model.latestPoint?.frameIndex, 5);
   assert.equal(model.valueStrip.points, 3);
+});
+
+test("run trend model explains stale status rugs when no formal temperature-distance points exist", async () => {
+  const { buildRunTrendModel } = await loadCurveModule();
+
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      all_frames: [
+        {
+          frame_index: 1,
+          detection_status: "VALID",
+          distance_px: 758,
+          temperature_celsius: 17.5,
+          temperature_sync_status: "TEMP_SYNC_STALE",
+          temperature_delta_ms: 100,
+          temp_sync_target_ms: 10
+        }
+      ],
+      temperature_distance: [],
+      afas_preprocessing: {}
+    },
+    { mode: "full", width: 900, height: 420 }
+  );
+
+  assert.equal(model.hasPoints, false);
+  assert.equal(model.statusRugs.length, 1);
+  assert.equal(model.emptyState?.kind, "status_rugs_only");
+  assert.match(model.emptyState?.title ?? "", /No formal temperature-distance points/);
+  assert.match(model.emptyState?.detail ?? "", /status markers below the x axis/);
+  assert.equal(model.emptyState?.syncStatus, "TEMP_SYNC_STALE");
+  assert.equal(model.emptyState?.temperatureDeltaMs, 100);
+  assert.equal(model.emptyState?.tempSyncTargetMs, 10);
+  assert.equal(model.valueStrip.temperatureDeltaMs, 100);
+  assert.equal(model.valueStrip.tempSyncTargetMs, 10);
 });
 
 test("run trend model renders raw frame points as scatter while connecting backend smoothed temperatures", async () => {

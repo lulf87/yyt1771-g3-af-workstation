@@ -121,6 +121,7 @@ import {
   type AnalysisAfasModel,
   type IndustrialCurveViewVariant,
   type RunTrendPoint,
+  type TrendEmptyState,
   type RunTrendYAxisRange,
   type CurveSpec
 } from "./curves";
@@ -2850,7 +2851,11 @@ function RunPage({
       ? runResult
       : null;
   const manifest = displayedRunResult?.run_manifest ?? null;
-  const analysis = displayedLiveRun?.analysis ?? displayedRunResult?.analysis_result ?? null;
+  const analysis = displayedLiveRun?.analysis
+    ? analysisWithSyncConfigSnapshot(displayedLiveRun.analysis, manifest?.config_snapshot)
+    : displayedRunResult
+      ? analysisWithSyncConfigSnapshot(displayedRunResult.analysis_result, displayedRunResult.run_manifest.config_snapshot)
+      : null;
   const displayedAnalysis = analysis ? analysisForResultSource(analysis, resultSource) : null;
   const runMode = runModeForSetupSource(setupSource, language);
   const setupSummary = buildRunSetupSummary(setupSource, uiDatasetLabel(language, dataset), measurement, language);
@@ -2999,7 +3004,11 @@ function AnalysisPage({
   const language = useUiLanguage();
   const t = useUiText();
   const [resultSource, setResultSource] = useState<DetectionResultSource>("stabilized");
-  const baseAnalysis = runResult?.analysis_result ?? (liveRun?.status === "stopped" ? liveRun.analysis : null);
+  const baseAnalysis = runResult
+    ? analysisWithSyncConfigSnapshot(runResult.analysis_result, runResult.run_manifest.config_snapshot)
+    : liveRun?.status === "stopped"
+      ? liveRun.analysis
+      : null;
   const selectedRunId = runResult?.run_manifest.run_id ?? (liveRun?.status === "stopped" ? liveRun.runId : null);
   const [analysisOverride, setAnalysisOverride] = useState<AnalysisResult | null>(null);
   const analysis = analysisOverride ?? baseAnalysis;
@@ -3664,9 +3673,12 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
           ) : null}
           {hoverTarget ? <AnalysisAfasTooltip target={hoverTarget} plot={model.plot} /> : null}
           {!model.hasPoints ? (
-            <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
-              {t("No AFAS temperature-distance points")}
-            </text>
+            <CurveEmptyText
+              emptyState={model.emptyState}
+              fallback="No AFAS temperature-distance points"
+              x={(model.plot.left + model.plot.right) / 2}
+              y={(model.plot.top + model.plot.bottom) / 2}
+            />
           ) : null}
         </IndustrialCurveView>
         <div className="analysisAfasLegend" aria-label={t("AFAS chart legend")}>
@@ -4077,14 +4089,81 @@ function RunTrendChart({
           ) : null}
           {activePoint ? <RunTrendTooltip point={activePoint} plot={model.plot} /> : null}
           {!model.hasPoints ? (
-            <text className="curveEmptyText" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2} textAnchor="middle">
-              {t("No formal temperature-distance points")}
-            </text>
+            <CurveEmptyText
+              emptyState={model.emptyState}
+              fallback="No formal temperature-distance points"
+              x={(model.plot.left + model.plot.right) / 2}
+              y={(model.plot.top + model.plot.bottom) / 2}
+            />
           ) : null}
         </IndustrialCurveView>
       </figure>
     </div>
   );
+}
+
+function CurveEmptyText({
+  emptyState,
+  fallback,
+  x,
+  y
+}: {
+  emptyState: TrendEmptyState | null;
+  fallback: string;
+  x: number;
+  y: number;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const lines = emptyState ? trendEmptyStateLines(emptyState, language) : [t(fallback)];
+  const firstY = y - Math.max(0, lines.length - 1) * 9;
+  return (
+    <text className="curveEmptyText" textAnchor="middle">
+      {lines.map((line, index) => (
+        <tspan key={`${line}-${index}`} x={x} y={index === 0 ? firstY : undefined} dy={index === 0 ? 0 : 18}>
+          {line}
+        </tspan>
+      ))}
+    </text>
+  );
+}
+
+function trendEmptyStateLines(emptyState: TrendEmptyState, language: UiLanguage): string[] {
+  const diagnostic = trendEmptyStateDiagnosticLine(emptyState, language);
+  if (language === "zh") {
+    return [
+      "暂无正式温度-距离点",
+      "当前帧被判为温度滞后/无效；x 轴下方为状态标记",
+      "状态标记不参与正式分析；请检查温控时间戳或调大同步容差",
+      diagnostic
+    ].filter((line) => line.length > 0);
+  }
+  return [
+    emptyState.title,
+    "Markers below the x axis are status markers, not the formal curve.",
+    "Status markers are excluded from formal analysis; check timestamps or increase sync tolerance.",
+    diagnostic
+  ].filter((line) => line.length > 0);
+}
+
+function trendEmptyStateDiagnosticLine(emptyState: TrendEmptyState, language: UiLanguage): string {
+  const parts: string[] = [];
+  if (emptyState.syncStatus) {
+    parts.push(language === "zh"
+      ? `同步状态：${shortStatus(emptyState.syncStatus, language)}`
+      : `sync status: ${emptyState.syncStatus}`);
+  }
+  if (emptyState.temperatureDeltaMs !== null) {
+    parts.push(language === "zh"
+      ? `Δt=${emptyState.temperatureDeltaMs.toFixed(0)} ms`
+      : `Δt=${emptyState.temperatureDeltaMs.toFixed(0)} ms`);
+  }
+  if (emptyState.tempSyncTargetMs !== null) {
+    parts.push(language === "zh"
+      ? `容差=${emptyState.tempSyncTargetMs.toFixed(0)} ms`
+      : `tolerance=${emptyState.tempSyncTargetMs.toFixed(0)} ms`);
+  }
+  return parts.join(language === "zh" ? "，" : ", ");
 }
 
 function sameYAxisRange(
@@ -4106,6 +4185,8 @@ function RunValueStrip({ valueStrip }: { valueStrip: ReturnType<typeof buildRunT
       <RunValue label="Current temperature" value={formatNullableNumber(valueStrip.currentTemperature, " °C", 2, language)} />
       <RunValue label="Frame" value={valueStrip.currentFrame?.toLocaleString() ?? uiNone(language)} />
       <RunValue label="Sync status" value={shortStatus(valueStrip.syncStatus, language)} tone={statusTone(valueStrip.syncStatus, "sync")} />
+      <RunValue label="Sync Δt" value={formatNullableNumber(valueStrip.temperatureDeltaMs, " ms", 0, language)} tone={statusTone(valueStrip.syncStatus, "sync")} />
+      <RunValue label="Sync tolerance" value={formatNullableNumber(valueStrip.tempSyncTargetMs, " ms", 0, language)} />
       <RunValue label="Valid / Invalid" value={shortStatus(valueStrip.detectionStatus, language)} tone={statusTone(valueStrip.detectionStatus, "detection")} />
       <RunValue label="Temp-distance points" value={valueStrip.points.toLocaleString()} />
     </dl>
@@ -4527,13 +4608,15 @@ function updateLiveRunFromFrame(
     detectionResult: null,
     analysis: emptyAnalysis(runId)
   };
+  const detection = detectionWithSyncConfig(event.detection_result, event.sync_config);
   const analysis = appendLiveAnalysis(
     previous.analysis,
-    event.detection_result,
+    detection,
     event.curve_points,
     event.afas_preprocessing,
     event.afas_analysis,
-    runId
+    runId,
+    event.sync_config
   );
   return {
     ...previous,
@@ -4546,7 +4629,7 @@ function updateLiveRunFromFrame(
     totalFrames: event.total_frames,
     processedFrames: event.processed_frames,
     frameShape: refreshPreview ? event.frame_record.shape : previous.frameShape,
-    detectionResult: refreshPreview ? event.detection_result : previous.detectionResult,
+    detectionResult: refreshPreview ? detection : previous.detectionResult,
     analysis
   };
 }
@@ -4576,8 +4659,12 @@ function appendLiveAnalysis(
   curvePoints: LiveOfflineFrameEvent["curve_points"],
   afasPreprocessing: LiveOfflineFrameEvent["afas_preprocessing"],
   afasAnalysis: LiveOfflineFrameEvent["afas_analysis"],
-  runId: string
+  runId: string,
+  syncConfig?: LiveOfflineFrameEvent["sync_config"]
 ): AnalysisResult {
+  const nextSyncConfig = syncConfig?.temp_sync_target_ms !== undefined
+    ? { ...analysis.sync_config, temp_sync_target_ms: syncConfig.temp_sync_target_ms }
+    : analysis.sync_config;
   return {
     ...analysis,
     run_id: runId,
@@ -4591,12 +4678,44 @@ function appendLiveAnalysis(
     raw_temperature_distance: appendCurvePoint(analysis.raw_temperature_distance ?? [], curvePoints.raw_temperature_distance ?? liveRawTemperatureDistancePoint(detection)),
     stabilized_temperature_distance: appendCurvePoint(analysis.stabilized_temperature_distance ?? [], curvePoints.stabilized_temperature_distance ?? liveStabilizedTemperatureDistancePoint(detection)),
     afas_preprocessing: mergeLiveAfasPreprocessing(analysis.afas_preprocessing, afasPreprocessing),
-    afas_analysis: afasAnalysis
+    afas_analysis: afasAnalysis,
+    sync_config: nextSyncConfig
   };
 }
 
 function appendCurvePoint(points: CurvePoint[], point: CurvePoint | null): CurvePoint[] {
   return point ? [...points, point] : points;
+}
+
+function detectionWithSyncConfig(
+  detection: DetectionResult,
+  syncConfig?: LiveOfflineFrameEvent["sync_config"]
+): DetectionResult {
+  const tempSyncTargetMs = numberFromUnknown(syncConfig?.temp_sync_target_ms);
+  return tempSyncTargetMs === null
+    ? detection
+    : { ...detection, temp_sync_target_ms: tempSyncTargetMs };
+}
+
+function analysisWithSyncConfigSnapshot(
+  analysis: AnalysisResult,
+  configSnapshot?: Record<string, unknown>
+): AnalysisResult {
+  const tempSyncTargetMs = numberFromUnknown(configSnapshot?.temp_sync_target_ms);
+  if (tempSyncTargetMs === null) return analysis;
+  return {
+    ...analysis,
+    sync_config: {
+      ...analysis.sync_config,
+      temp_sync_target_ms: tempSyncTargetMs
+    },
+    config_snapshot: configSnapshot,
+    all_frames: analysis.all_frames.map((frame) => (
+      frame.temp_sync_target_ms === undefined || frame.temp_sync_target_ms === null
+        ? { ...frame, temp_sync_target_ms: tempSyncTargetMs }
+        : frame
+    ))
+  };
 }
 
 function analysisForResultSource(analysis: AnalysisResult, source: DetectionResultSource): AnalysisResult {

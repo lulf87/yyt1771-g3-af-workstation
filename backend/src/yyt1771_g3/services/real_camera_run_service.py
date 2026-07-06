@@ -40,6 +40,7 @@ from yyt1771_g3.vision.temporal_stabilization import CausalTemporalStabilizer
 
 
 AFAS_PREVIEW_INTERVAL_FRAMES = 10
+REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS = 1000.0
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ def run_real_camera(
     max_frames: int | None = None,
     target_fps: float | None = None,
     camera_profile: dict[str, Any] | None = None,
-    temp_sync_target_ms: float = 10.0,
+    temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
 ) -> RealCameraRunResult:
     frame_limit = _bounded_frame_limit(max_frames, measurement)
     run_id = _new_run_id()
@@ -129,7 +130,7 @@ def iter_real_camera_run_events(
     max_frames: int | None = None,
     target_fps: float | None = None,
     camera_profile: dict[str, Any] | None = None,
-    temp_sync_target_ms: float = 10.0,
+    temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
     stop_requested: Callable[[str], bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
     frame_limit = _unbounded_frame_limit(max_frames)
@@ -187,6 +188,7 @@ def iter_real_camera_run_events(
                     temperature_distance_points,
                     processed_frames=len(frame_records),
                 ),
+                temp_sync_target_ms=temp_sync_target_ms,
             )
             if stop_requested is not None and stop_requested(run_id):
                 stop_reason = "manual_stop_requested"
@@ -508,6 +510,7 @@ def _frame_event(
     detection: DetectionResult,
     curve_points: dict[str, CurvePoint | None],
     afas_preprocessing: dict[str, Any],
+    temp_sync_target_ms: float,
 ) -> dict[str, Any]:
     return {
         "event": "frame",
@@ -521,6 +524,9 @@ def _frame_event(
         "frame_record": frame_record.model_dump(mode="json"),
         "temperature_record": temperature_record.model_dump(mode="json"),
         "detection_result": detection.model_dump(mode="json"),
+        "sync_config": {
+            "temp_sync_target_ms": temp_sync_target_ms,
+        },
         "curve_points": {
             key: point.model_dump(mode="json") if point is not None else None
             for key, point in curve_points.items()

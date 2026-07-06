@@ -13,6 +13,12 @@ export type RunTrendFrameInput = {
   distance_px?: number | null;
   temperature_celsius?: number | null;
   temperature_sync_status?: string | null;
+  temperature_delta_ms?: number | null;
+  temp_sync_target_ms?: number | null;
+};
+
+export type SyncConfigInput = {
+  temp_sync_target_ms?: number | null;
 };
 
 export type AnalysisCurveSource = {
@@ -22,6 +28,8 @@ export type AnalysisCurveSource = {
   temperature_distance: CurvePointInput[];
   afas_preprocessing?: Record<string, unknown>;
   afas_analysis?: Record<string, unknown>;
+  sync_config?: SyncConfigInput;
+  config_snapshot?: Record<string, unknown>;
 };
 
 export type CurveXAxis =
@@ -174,6 +182,8 @@ export type RunTrendStatusRug = {
   label: string;
   syncStatus: string | null;
   detectionStatus: string | null;
+  temperatureDeltaMs: number | null;
+  tempSyncTargetMs: number | null;
   x: number;
   y1: number;
   y2: number;
@@ -185,7 +195,20 @@ export type RunTrendValueStrip = {
   currentFrame: number | null;
   syncStatus: string | null;
   detectionStatus: string | null;
+  temperatureDeltaMs: number | null;
+  tempSyncTargetMs: number | null;
   points: number;
+};
+
+export type TrendEmptyState = {
+  kind: "status_rugs_only";
+  title: string;
+  detail: string;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+  frameIndex: number | null;
+  temperatureDeltaMs: number | null;
+  tempSyncTargetMs: number | null;
 };
 
 export type RunTrendModel = {
@@ -209,6 +232,7 @@ export type RunTrendModel = {
   yRange: { min: number; max: number };
   dataYRange: RunTrendYAxisRange;
   valueStrip: RunTrendValueStrip;
+  emptyState: TrendEmptyState | null;
   hasPoints: boolean;
 };
 
@@ -299,6 +323,7 @@ export type AnalysisAfasModel = {
   xRange: { min: number; max: number };
   yRange: { min: number; max: number };
   summary: AnalysisAfasSummary;
+  emptyState: TrendEmptyState | null;
   hasPoints: boolean;
 };
 
@@ -479,6 +504,7 @@ export function buildRunTrendModel(
     position: scaleLinear(value, yRange.min, yRange.max, plot.bottom, plot.top),
     label: formatRunTrendTick(value, yRange)
   }));
+  const hasPoints = formalPoints.length > 0 || referencePoints.length > 0;
 
   return {
     width,
@@ -501,7 +527,8 @@ export function buildRunTrendModel(
     yRange,
     dataYRange,
     valueStrip: buildRunTrendValueStrip(analysis),
-    hasPoints: formalPoints.length > 0 || referencePoints.length > 0
+    emptyState: hasPoints ? null : buildTrendEmptyState(statusRugs),
+    hasPoints
   };
 }
 
@@ -629,6 +656,8 @@ type RunTrendStatusData = {
   label: string;
   syncStatus: string | null;
   detectionStatus: string | null;
+  temperatureDeltaMs: number | null;
+  tempSyncTargetMs: number | null;
 };
 
 function buildFrameMap(frames: RunTrendFrameInput[]): Map<number, RunTrendFrameInput> {
@@ -670,6 +699,7 @@ function normalizeRunTrendStatusData(
   analysis: AnalysisCurveSource,
   frameMap: Map<number, RunTrendFrameInput>
 ): RunTrendStatusData[] {
+  const analysisTempSyncTargetMs = readTempSyncTargetMs(analysis);
   const rawPointByFrame = new Map<number, CurvePointInput>();
   for (const point of analysis.temperature_distance) {
     const frameIndex = readFiniteNumber(point.frame_index);
@@ -690,7 +720,9 @@ function normalizeRunTrendStatusData(
       kind,
       label: invalid ? "Invalid" : formatSyncStatusShort(syncStatus),
       syncStatus,
-      detectionStatus
+      detectionStatus,
+      temperatureDeltaMs: readFiniteNumber(frame.temperature_delta_ms),
+      tempSyncTargetMs: readFiniteNumber(frame.temp_sync_target_ms) ?? analysisTempSyncTargetMs
     }];
   }).sort((a, b) => a.frameIndex - b.frameIndex);
 }
@@ -731,6 +763,8 @@ function scaleRunTrendStatusRug(
     label: rug.label,
     syncStatus: rug.syncStatus,
     detectionStatus: rug.detectionStatus,
+    temperatureDeltaMs: rug.temperatureDeltaMs,
+    tempSyncTargetMs: rug.tempSyncTargetMs,
     x: scaleLinear(rug.temperature, xRange.min, xRange.max, plot.left, plot.right),
     y1: plot.bottom + 12,
     y2: plot.bottom + 26
@@ -776,14 +810,79 @@ function buildRunTrendValueStrip(analysis: AnalysisCurveSource): RunTrendValueSt
   const latestPoint = analysis.temperature_distance.length
     ? analysis.temperature_distance[analysis.temperature_distance.length - 1]
     : null;
+  const tempSyncTargetMs = readFiniteNumber(latestFrame?.temp_sync_target_ms) ?? readTempSyncTargetMs(analysis);
   return {
     currentDistance: readFiniteNumber(latestFrame?.distance_px) ?? readFiniteNumber(latestPoint?.y),
     currentTemperature: readFiniteNumber(latestFrame?.temperature_celsius) ?? readFiniteNumber(latestPoint?.x),
     currentFrame: Math.round(readFiniteNumber(latestFrame?.frame_index) ?? readFiniteNumber(latestPoint?.frame_index) ?? NaN) || null,
     syncStatus: readString(latestFrame?.temperature_sync_status) ?? readString(latestPoint?.sync_status),
     detectionStatus: readString(latestFrame?.detection_status),
+    temperatureDeltaMs: readFiniteNumber(latestFrame?.temperature_delta_ms),
+    tempSyncTargetMs,
     points: analysis.temperature_distance.length
   };
+}
+
+function buildTrendEmptyState(statusRugs: RunTrendStatusRug[]): TrendEmptyState | null {
+  if (!statusRugs.length) return null;
+  const latest = statusRugs[statusRugs.length - 1];
+  return trendEmptyStateFromDiagnostic({
+    frameIndex: latest.frameIndex,
+    syncStatus: latest.syncStatus,
+    detectionStatus: latest.detectionStatus,
+    temperatureDeltaMs: latest.temperatureDeltaMs,
+    tempSyncTargetMs: latest.tempSyncTargetMs,
+  });
+}
+
+function buildAnalysisEmptyState(analysis: AnalysisCurveSource): TrendEmptyState | null {
+  const frames = analysis.all_frames ?? [];
+  for (let index = frames.length - 1; index >= 0; index -= 1) {
+    const frame = frames[index];
+    const syncStatus = readString(frame.temperature_sync_status);
+    const detectionStatus = readString(frame.detection_status);
+    const hasTemperature = readFiniteNumber(frame.temperature_celsius) !== null;
+    const hasDistance = readFiniteNumber(frame.distance_px) !== null;
+    if (!hasTemperature && !hasDistance) continue;
+    if (isDetectionStatusValid(detectionStatus) && isSyncStatusFormal(syncStatus)) continue;
+    return trendEmptyStateFromDiagnostic({
+      frameIndex: Math.round(readFiniteNumber(frame.frame_index) ?? NaN) || null,
+      syncStatus,
+      detectionStatus,
+      temperatureDeltaMs: readFiniteNumber(frame.temperature_delta_ms),
+      tempSyncTargetMs: readFiniteNumber(frame.temp_sync_target_ms) ?? readTempSyncTargetMs(analysis),
+    });
+  }
+  return null;
+}
+
+function trendEmptyStateFromDiagnostic(input: {
+  frameIndex: number | null;
+  syncStatus: string | null;
+  detectionStatus: string | null;
+  temperatureDeltaMs: number | null;
+  tempSyncTargetMs: number | null;
+}): TrendEmptyState {
+  const diagnostics = [
+    input.syncStatus ? `Current sync status: ${input.syncStatus}` : "",
+    input.temperatureDeltaMs !== null ? `Delta=${input.temperatureDeltaMs.toFixed(0)} ms` : "",
+    input.tempSyncTargetMs !== null ? `tolerance=${input.tempSyncTargetMs.toFixed(0)} ms` : "",
+  ].filter(Boolean).join(", ");
+  return {
+    kind: "status_rugs_only",
+    title: "No formal temperature-distance points",
+    detail: `The status markers below the x axis are diagnostics and are not used for formal analysis.${diagnostics ? ` ${diagnostics}.` : ""}`,
+    syncStatus: input.syncStatus,
+    detectionStatus: input.detectionStatus,
+    frameIndex: input.frameIndex,
+    temperatureDeltaMs: input.temperatureDeltaMs,
+    tempSyncTargetMs: input.tempSyncTargetMs,
+  };
+}
+
+function readTempSyncTargetMs(analysis: AnalysisCurveSource): number | null {
+  return readFiniteNumber(analysis.sync_config?.temp_sync_target_ms) ??
+    readFiniteNumber(analysis.config_snapshot?.temp_sync_target_ms);
 }
 
 function readString(value: unknown): string | null {
@@ -877,6 +976,7 @@ export function buildAnalysisAfasModel(
     position: scaleLinear(value, yRange.min, yRange.max, plot.bottom, plot.top),
     label: formatRunTrendTick(value, yRange)
   }));
+  const hasPoints = smoothedPoints.length > 0 || rawPoints.length > 0;
 
   return {
     width,
@@ -898,7 +998,8 @@ export function buildAnalysisAfasModel(
     xRange,
     yRange,
     summary: buildAnalysisAfasSummary(analysis, rawData.length, smoothedData.length),
-    hasPoints: smoothedPoints.length > 0 || rawPoints.length > 0
+    emptyState: hasPoints ? null : buildAnalysisEmptyState(analysis),
+    hasPoints
   };
 }
 

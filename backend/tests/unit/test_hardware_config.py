@@ -5,6 +5,15 @@ from pathlib import Path
 from yyt1771_g3.core.hardware_config import load_hardware_config
 
 
+def test_load_hardware_config_defaults_real_hardware_sync_tolerance_to_serial_window(tmp_path: Path) -> None:
+    config_path = tmp_path / "realcamera_temp.local.yaml"
+    config_path.write_text("{}", encoding="utf-8")
+
+    config = load_hardware_config(config_path)
+
+    assert config.run.temp_sync_target_ms == 1000.0
+
+
 def test_load_hardware_config_merges_starter_style_camera_and_temp_settings(tmp_path: Path) -> None:
     config_path = tmp_path / "realcamera_temp.local.yaml"
     config_path.write_text(

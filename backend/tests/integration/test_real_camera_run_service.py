@@ -6,9 +6,17 @@ from types import SimpleNamespace
 import numpy as np
 
 from yyt1771_g3.camera.base import CameraFrame
-from yyt1771_g3.core.enums import DetectorType, ObjectClass, WidthMode
-from yyt1771_g3.core.models import DetectorConfig, MeasurementDefinition, RotatedROI
-from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
+from yyt1771_g3.core.enums import DetectionStatus, DetectorType, ObjectClass, TemperatureSyncStatus, WidthMode
+from yyt1771_g3.core.models import (
+    ABPoint,
+    ABPoints,
+    DetectionCandidate,
+    DetectionResult,
+    DetectorConfig,
+    MeasurementDefinition,
+    RotatedROI,
+)
+from yyt1771_g3.services.real_camera_run_service import _attach_temperature, iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureReading
 
@@ -68,6 +76,20 @@ class FakeTemperatureController:
 
     def close(self) -> None:
         self.closed = True
+
+
+class OffsetTemperatureController(FakeTemperatureController):
+    def __init__(self, offset_ms: int) -> None:
+        super().__init__()
+        self.offset_ms = offset_ms
+
+    def read_temperature(self) -> TemperatureReading:
+        self.index += 1
+        return TemperatureReading(
+            timestamp_ms=1000 + self.index * 100 + self.offset_ms,
+            celsius=20.0 + self.index,
+            source="lu92xx_modbus_rtu",
+        )
 
 
 class PowerAsStartTemperatureController(FakeTemperatureController):
@@ -135,6 +157,72 @@ class PartiallyFailingTemperatureController:
         self.closed = True
 
 
+def _valid_detection(frame_index: int = 1, distance: float = 51.0) -> DetectionResult:
+    candidate = DetectionCandidate(
+        candidate_id=f"candidate-{frame_index}",
+        axis_position_px=float(frame_index),
+        width_px=distance,
+        a=ABPoint(x=0.0, y=0.0),
+        b=ABPoint(x=0.0, y=distance),
+        confidence=0.95,
+    )
+    return DetectionResult(
+        frame_index=frame_index,
+        detection_status=DetectionStatus.VALID,
+        ab_points=ABPoints(a=candidate.a, b=candidate.b),
+        distance_px=distance,
+        raw_best_candidate=candidate,
+        selected_candidate=candidate,
+    )
+
+
+def _real_camera_measurement(max_frames: int = 2) -> MeasurementDefinition:
+    return MeasurementDefinition(
+        measurement_id="real-camera-sync-test",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=max_frames,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+        ),
+    )
+
+
+def test_attach_temperature_honors_real_hardware_sync_tolerance() -> None:
+    detection = _valid_detection()
+
+    ten_ms_ok = _attach_temperature(
+        detection,
+        frame_timestamp_ms=1000,
+        temperature=TemperatureReading(timestamp_ms=1010, celsius=17.5, source="lu92xx_modbus_rtu"),
+        ok_delta_ms=10.0,
+    )
+    ten_ms_stale = _attach_temperature(
+        detection,
+        frame_timestamp_ms=1000,
+        temperature=TemperatureReading(timestamp_ms=1100, celsius=17.5, source="lu92xx_modbus_rtu"),
+        ok_delta_ms=10.0,
+    )
+    thousand_ms_ok = _attach_temperature(
+        detection,
+        frame_timestamp_ms=1000,
+        temperature=TemperatureReading(timestamp_ms=1100, celsius=17.5, source="lu92xx_modbus_rtu"),
+        ok_delta_ms=1000.0,
+    )
+
+    assert ten_ms_ok.temperature_sync_status == TemperatureSyncStatus.TEMP_SYNC_OK
+    assert ten_ms_ok.temperature_delta_ms == 10.0
+    assert ten_ms_stale.temperature_sync_status == TemperatureSyncStatus.TEMP_SYNC_STALE
+    assert ten_ms_stale.temperature_delta_ms == 100.0
+    assert thousand_ms_ok.temperature_sync_status == TemperatureSyncStatus.TEMP_SYNC_OK
+    assert thousand_ms_ok.temperature_delta_ms == 100.0
+
+
 def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     measurement = MeasurementDefinition(
@@ -171,6 +259,26 @@ def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Pat
 
     restored = run_store.read_run_manifest(result.manifest.run_id)
     assert restored == result.manifest
+
+
+def test_real_camera_run_default_sync_tolerance_accepts_serial_temperature_window(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+
+    result = run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        temperature_controller=OffsetTemperatureController(offset_ms=100),
+        measurement=_real_camera_measurement(max_frames=2),
+        max_frames=2,
+        target_fps=10.0,
+    )
+
+    assert result.manifest.config_snapshot["temp_sync_target_ms"] == 1000.0
+    assert [item.temperature_delta_ms for item in result.manifest.detection_results] == [100.0, 100.0]
+    assert {item.temperature_sync_status for item in result.manifest.detection_results} == {
+        TemperatureSyncStatus.TEMP_SYNC_OK
+    }
+    assert len(result.analysis.temperature_distance) == 2
 
 
 def test_real_camera_stream_without_frame_limit_saves_partial_run_on_close(tmp_path: Path) -> None:
@@ -215,6 +323,42 @@ def test_real_camera_stream_without_frame_limit_saves_partial_run_on_close(tmp_p
     assert source.closed is True
     assert temperature.stopped is True
     assert temperature.closed is True
+
+
+def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_points(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+
+    ok_events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=FakeCameraSource(),
+            temperature_controller=OffsetTemperatureController(offset_ms=100),
+            measurement=_real_camera_measurement(max_frames=2),
+            max_frames=2,
+            target_fps=10.0,
+            temp_sync_target_ms=1000.0,
+        )
+    )
+    stale_events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=FakeCameraSource(),
+            temperature_controller=OffsetTemperatureController(offset_ms=100),
+            measurement=_real_camera_measurement(max_frames=2),
+            max_frames=2,
+            target_fps=10.0,
+            temp_sync_target_ms=10.0,
+        )
+    )
+
+    assert len(ok_events[-1]["analysis_result"]["temperature_distance"]) == 2
+    assert ok_events[0]["sync_config"]["temp_sync_target_ms"] == 1000.0
+    assert ok_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
+    assert ok_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_OK"
+    assert stale_events[-1]["analysis_result"]["temperature_distance"] == []
+    assert stale_events[0]["sync_config"]["temp_sync_target_ms"] == 10.0
+    assert stale_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
+    assert stale_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_STALE"
 
 
 def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) -> None:

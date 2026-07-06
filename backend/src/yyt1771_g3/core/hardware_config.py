@@ -7,6 +7,7 @@ from typing import Any
 
 
 HARDWARE_CONFIG_ENV = "YYT1771_G3_HARDWARE_CONFIG"
+DEFAULT_TEMP_SYNC_TARGET_MS = 1000.0
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,7 @@ class TempConfig:
 @dataclass(frozen=True)
 class RunHardwareConfig:
     measurement_target_hz: float = 10.0
-    temp_sync_target_ms: float = 10.0
+    temp_sync_target_ms: float = DEFAULT_TEMP_SYNC_TARGET_MS
     save_raw_frames: bool = True
 
 
@@ -225,7 +226,7 @@ def _control_config(payload: dict[str, Any]) -> TempControlConfig:
 def _run_config(payload: dict[str, Any]) -> RunHardwareConfig:
     return RunHardwareConfig(
         measurement_target_hz=float(payload.get("measurement_target_hz", 10.0) or 10.0),
-        temp_sync_target_ms=float(payload.get("temp_sync_target_ms", 10.0) or 10.0),
+        temp_sync_target_ms=float(payload.get("temp_sync_target_ms", DEFAULT_TEMP_SYNC_TARGET_MS) or DEFAULT_TEMP_SYNC_TARGET_MS),
         save_raw_frames=bool(payload.get("save_raw_frames", True)),
     )
 

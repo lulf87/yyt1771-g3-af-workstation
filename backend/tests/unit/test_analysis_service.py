@@ -18,7 +18,7 @@ from yyt1771_g3.core.models import (
     RunManifest,
 )
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
-from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
 
 
 def _valid_detection(
@@ -81,6 +81,20 @@ def test_temperature_distance_curve_uses_only_ok_or_interpolated_points() -> Non
     assert [point.frame_index for point in analysis.temperature_time] == [1, 2, 3]
     assert [point.frame_index for point in analysis.temperature_distance] == [1, 2]
     assert analysis.all_frames == manifest.detection_results
+
+
+def test_curve_points_for_detection_excludes_stale_temperature_from_formal_curve() -> None:
+    ok_detection = _valid_detection(1, 20.0, TemperatureSyncStatus.TEMP_SYNC_OK, 10.0)
+    stale_detection = _valid_detection(2, 21.0, TemperatureSyncStatus.TEMP_SYNC_STALE, 11.0)
+
+    ok_points = curve_points_for_detection(ok_detection)
+    stale_points = curve_points_for_detection(stale_detection)
+
+    assert ok_points["temperature_distance"] is not None
+    assert ok_points["temperature_distance"].frame_index == 1
+    assert stale_points["distance_time"] is not None
+    assert stale_points["temperature_time"] is not None
+    assert stale_points["temperature_distance"] is None
 
 
 def test_analysis_result_includes_afas_preprocessing_and_tangent_result() -> None:

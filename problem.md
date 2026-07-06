@@ -86,6 +86,7 @@
 | P-0068 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera run | 真实相机实时测量使用同步请求且默认 160 帧上限，导致界面像卡住且无法手动停止 | 2026-07-06 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX Run 页无帧数上限、逐帧更新、手动 Stop 保存 partial run 浏览器复测已通过 |
 | P-0069 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / dev server / browser retest | Vite dev server 可返回 HTML 但请求源码模块时挂起，阻塞真实浏览器复测 | 2026-07-06 | 2026-07-06 | Codex | 根因是 frontend/node_modules 中 Babel 文件为 macOS dataless 占位文件；重建 node_modules 后浏览器加载恢复 |
 | P-0070 | RESOLVED_BROWSER_VERIFIED | P0 | backend / temperature / real camera run safety | Real camera run 启动温控时 start_output 会覆盖 UI 设置的温控功率，可能把 0% 拉回 startup_power_percent | 2026-07-06 | 2026-07-06 | Codex | 已改为 power_nonzero 控制器不调用 start_output，0% 不启动输出；真实硬件读回 0% 并完成 Run→Stop 复测 |
+| P-0071 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera temperature sync | 真实相机 + 真实温控默认 10ms 同步容差导致全部 TEMP_SYNC_STALE，温度-距离曲线为空且状态标记易误解 | 2026-07-06 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX Run→Stop→Analysis 浏览器复测已通过，默认容差 1000ms，60/60 正式温度-距离点 |
 
 ---
 
@@ -205,6 +206,72 @@ Run 页应逐帧显示真实相机画面、distance 和 temperature-distance 趋
 - Actual: Run 页显示 `无帧数上限` 和 `手动停止或达到目标温度`；run `run-real_camera-20260706T113434641353Z` 实时更新至第 145 帧后手动 Stop，页面显示 `145 / 145`，`GET /api/runs/run-real_camera-20260706T113434641353Z` 返回 manifest/analysis；`stop_reason = manual_stop_requested`，`max_frames = None`，`temperature_power_percent = 0.0`；LU92XX 输出功率读回 `0.0%`。
 - Result: PASS
 - Evidence: `output/playwright/g3-real-camera-stop-saved-20260706.png`, `output/dev/backend-8034-realhardware.log`, `output/runs/run-real_camera-20260706T113434641353Z/run_manifest.json`, `output/runs/run-real_camera-20260706T113434641353Z/analysis_result.json`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0071 — 真实相机 + 真实温控默认 10ms 同步容差导致全部 TEMP_SYNC_STALE，温度-距离曲线为空且状态标记易误解
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, `frontend/src/curves.ts`, `frontend/src/main.tsx`
+- Found date: 2026-07-06
+- Last update: 2026-07-06
+
+#### Problem
+
+真实相机 + LU92XX 真实温控实时测量时，UI 能显示正温度和检测距离，但每帧温度同步状态为 `TEMP_SYNC_STALE`，导致正式 `temperature_distance` 点数为 0。Run 页只剩 x 轴下方橙色状态标记，用户容易误解为曲线掉到 x 轴下方；Stop 后 Analysis 页仍显示原始点数 0、平滑点数 0、AFAS 不可用。
+
+根因是 `run_real_camera()` / `iter_real_camera_run_events()` 和硬件配置默认 `temp_sync_target_ms=10.0`，而真实串口/Modbus 读温通常超过 10ms。正式分析规则仍应只允许 `TEMP_SYNC_OK` / `TEMP_SYNC_INTERPOLATED`，不能把 `TEMP_SYNC_STALE` 纳入正式点。
+
+#### Expected
+
+```text
+真实硬件默认同步容差适合串口温控，例如 1000ms。
+真实相机帧和温控读数在合理窗口内采集时，应标记 TEMP_SYNC_OK 并生成正式 temperature_distance 点。
+TEMP_SYNC_STALE 仍不得进入正式 Af 曲线。
+Run 页和 Analysis 页在无正式点但有状态标记/同步异常时，必须明确提示状态标记不参与正式分析，并显示 Δt 和容差。
+run manifest config_snapshot 必须保存 temp_sync_target_ms。
+```
+
+#### Resolution log
+
+- 2026-07-06: 新增后端回归测试覆盖 `_attach_temperature` 的 10ms stale / 1000ms OK、`curve_points_for_detection` 排除 stale、真实相机 fake camera/temp 100ms offset 在 1000ms 下生成正式点且 10ms 下为空。
+- 2026-07-06: 将真实相机运行路径默认 `temp_sync_target_ms` 和真实硬件配置默认值改为 `1000.0`，保留显式 10ms 覆盖能力；`run_manifest.config_snapshot` 继续保存实际容差。
+- 2026-07-06: 新增 `core/timebase.now_ms()`，Hik MVS camera source、LU92XX Modbus 温控和模拟相机统一使用同一主机 epoch 毫秒时间基准。
+- 2026-07-06: Real camera stream frame event 增加 `sync_config.temp_sync_target_ms`，前端 Run value strip 显示 `Sync Δt` 和 `Sync tolerance`。
+- 2026-07-06: Run/Analysis 曲线模型新增 empty-state 诊断：当无正式温度-距离点但存在状态标记或同步/检测异常帧时，提示状态标记在 x 轴下方且不参与正式分析，并显示同步状态、Δt 和容差。
+- 2026-07-06: 自动化验证通过：`PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/unit/test_analysis_service.py backend/tests/unit/test_hardware_config.py -q`（24 passed）；`PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_camera_lazy_import.py backend/tests/unit/test_lu92xx_modbus.py -q`（9 passed）；`npm test -- curveSpecs.test.mjs`（52 passed）；`./node_modules/.bin/tsc --noEmit`（passed）。
+- 2026-07-06: 真实硬件 API smoke 通过：`run-real_camera-20260706T131346996008Z` 使用真实 Hik 相机 + LU92XX，`temperature_power_percent=0.0`，`temp_sync_target_ms=1000.0`，2/2 帧 `TEMP_SYNC_OK`，Δt 13ms，正式 temperature-distance 点数 2。
+
+#### Browser retest log
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5179/`
+- Backend URL: `http://127.0.0.1:8035/`
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-11210`
+- Page: Setup / Run / Analysis
+- Steps: 先下发并读回温控输出功率 `0.0%`；打开 Setup，选择真实相机；确认相机正常、温控读数正常、温控功率 0%；进入 Run，使用 ROI `center=(1024,682), size=900×420, angle=0`；开始真实相机测量，观察实时温度、distance、同步状态、Δt、容差和 temperature-distance 曲线；点击 Stop；进入 Analysis。
+- Expected: 默认同步容差为 1000ms；真实串口读温窗口内帧标记为 `TEMP_SYNC_OK`；Run 页温度-距离点随有效帧增加，曲线显示；Stop 后 Analysis 页保留正式点和 AFAS 预处理点；温控功率保持 0%。
+- Actual: Run `run-real_camera-20260706T131830886655Z` 手动停止后保存 60 帧；`config_snapshot.temp_sync_target_ms=1000.0`，`temperature_power_percent=0.0`，全部同步状态为 `TEMP_SYNC_OK`，Δt 范围 12-13ms，VALID 帧 60，正式 temperature-distance 点 60，Analysis 页显示正式点 60、原始点 60、平滑点 3；LU92XX 输出功率读回 `0.0%`。
+- Result: PASS
+- Evidence: `output/playwright/g3-real-camera-sync-tolerance-valid-analysis-20260706.png`, `output/runs/run-real_camera-20260706T131830886655Z/run_manifest.json`, `output/runs/run-real_camera-20260706T131830886655Z/analysis_result.json`, `output/dev/backend-8035-sync-tolerance.log`, `output/dev/frontend-5179-sync-tolerance.log`
+
+#### Additional diagnostic retest
+
+- Retest date: 2026-07-06
+- Browser: Playwright Chrome
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-11210`
+- Page: Run / Analysis
+- Steps: 使用较宽默认 ROI `1269.76×381.92` 启动真实相机测量并手动停止。
+- Actual: Run `run-real_camera-20260706T131608408466Z` 中全部同步状态为 `TEMP_SYNC_OK`，Δt 范围 12-74ms，容差 1000ms；因当前 ROI/画面下 detector 未识别目标，VALID 帧 0、正式点 0；Run 和 Analysis 页显示“暂无正式温度-距离点”，并说明 x 轴下方为状态标记、不参与正式分析，同时显示同步状态、Δt 和容差。
+- Result: PASS for empty-state diagnostic behavior; detector ROI validity was not treated as this issue's root cause.
+- Evidence: `output/playwright/g3-real-camera-sync-tolerance-analysis-20260706.png`, `output/runs/run-real_camera-20260706T131608408466Z/run_manifest.json`, `output/runs/run-real_camera-20260706T131608408466Z/analysis_result.json`
 
 #### Current status
 

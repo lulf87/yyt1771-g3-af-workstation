@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import threading
-import time
 from typing import Protocol
 
 from yyt1771_g3.core.hardware_config import SerialPortConfig, TempConfig, TempRegisterConfig
+from yyt1771_g3.core.timebase import now_ms
 from yyt1771_g3.temperature.base import TemperatureReading
 
 
@@ -65,7 +65,7 @@ class LU92XXModbusRtuController:
             signed=register.signed,
         )
         return TemperatureReading(
-            timestamp_ms=int(time.time() * 1000),
+            timestamp_ms=now_ms(),
             celsius=float(raw_value) * register.decode_scale,
             source="lu92xx_modbus_rtu",
         )

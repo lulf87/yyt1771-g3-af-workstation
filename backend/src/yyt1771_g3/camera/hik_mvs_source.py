@@ -5,13 +5,13 @@ import importlib
 import os
 from pathlib import Path
 import sys
-import time
 import types
 from typing import Any
 
 import numpy as np
 
 from yyt1771_g3.camera.base import CameraFrame, CameraUnavailableError
+from yyt1771_g3.core.timebase import now_ms
 
 
 HIK_MVS_PYTHON_MODULE = "MvCameraControl_class"
@@ -507,7 +507,7 @@ def _positive_int_or_none(value: Any) -> int | None:
 
 
 def timestamp_ms() -> int:
-    return int(time.time() * 1000)
+    return now_ms()
 
 
 __all__ = ["CameraUnavailableError", "HikMvsCameraSource"]

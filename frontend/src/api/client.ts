@@ -187,6 +187,7 @@ export type DetectionResult = {
   temperature_delta_ms: number | null;
   temperature_source: string;
   temperature_sampled_this_frame: boolean;
+  temp_sync_target_ms?: number | null;
 };
 
 export type DiagnosticImageInfo = {
@@ -278,6 +279,12 @@ export type AnalysisResult = {
   afas_analysis: Record<string, unknown>;
   export_artifacts: ExportArtifact[];
   created_at: string;
+  sync_config?: SyncConfig;
+  config_snapshot?: Record<string, unknown>;
+};
+
+export type SyncConfig = {
+  temp_sync_target_ms?: number | null;
 };
 
 export type AfasPreprocessingParameters = {
@@ -325,6 +332,7 @@ export type LiveOfflineFrameEvent = {
   frame_record: FrameRecord;
   temperature_record: TemperatureRecord;
   detection_result: DetectionResult;
+  sync_config?: SyncConfig;
   curve_points: {
     distance_time: CurvePoint | null;
     temperature_time: CurvePoint | null;
