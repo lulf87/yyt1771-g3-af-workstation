@@ -27,6 +27,7 @@ import {
   downloadRunExportBundle,
   frameIndexImageUrl,
   frameImageUrl,
+  getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
   getRunAvailability,
@@ -60,6 +61,7 @@ import {
   type LiveOfflineFrameEvent,
   type OfflineDatasetListItem,
   type OfflineDatasetSummary,
+  type OperatorSourceStatus,
   type ProbeResponse,
   type RealCameraSetupProbeResponse,
   type RunResponse,
@@ -550,6 +552,9 @@ function App() {
   const [measurement, setMeasurement] = useState<MeasurementDefinition | null>(null);
   const [operatorSettings, setOperatorSettings] = useState<OperatorConfirmedSettings | null>(null);
   const [operatorStartMessage, setOperatorStartMessage] = useState("");
+  const [operatorSourceStatus, setOperatorSourceStatus] = useState<OperatorSourceStatus | null>(null);
+  const [operatorSourceStatusError, setOperatorSourceStatusError] = useState("");
+  const [loadingOperatorSourceStatus, setLoadingOperatorSourceStatus] = useState(false);
   const [importedRun, setImportedRun] = useState<ImportedRunView | null>(null);
   const [frameIndex, setFrameIndex] = useState(1);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
@@ -580,10 +585,53 @@ function App() {
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
   const pageForSetupEffects = pageForSetupSourceEffects(page);
+  const operatorRealHardwareAvailable = operatorSourceStatus?.real_hardware_available === true;
 
   useEffect(() => {
     void refreshDatasets();
   }, []);
+
+  useEffect(() => {
+    if (uiMode !== "operator") return;
+    void refreshOperatorSourceStatus();
+  }, [uiMode, operatorDataSource]);
+
+  useEffect(() => {
+    if (uiMode !== "operator" || operatorDataSource !== "real_camera") return;
+    if (operatorSourceStatus == null) return;
+    if (operatorSourceStatus.real_hardware_available) {
+      if (setupSource === "real_camera" && !cameraPreviewUrl && !previewingCamera) {
+        setCameraPreviewState((current) => resumeLivePreview(current));
+        window.setTimeout(() => {
+          if (measurementRef.current?.source === "real_camera") {
+            void previewRealCameraFrame("live", { clearProbe: false });
+          }
+        }, 0);
+      }
+      return;
+    }
+    setCameraPreview(null);
+    setCameraPreviewUrl("");
+    setCameraPreviewError(null);
+    setCameraPreviewRefreshStatus("unavailable");
+    setCameraPreviewState((current) =>
+      current
+        ? {
+            ...current,
+            cameraStatus: "unavailable",
+            mode: "live"
+          }
+        : current
+    );
+    setProbe((current) => (current?.dataset_id === "real_camera" ? null : current));
+  }, [
+    uiMode,
+    operatorDataSource,
+    operatorSourceStatus?.real_hardware_available,
+    setupSource,
+    cameraPreviewUrl,
+    previewingCamera
+  ]);
 
   useEffect(() => {
     setPage((current) => normalizePageForUiMode(uiMode, current));
@@ -623,6 +671,7 @@ function App() {
   }, [pageForSetupEffects, setupSource, temperatureStatus, temperatureError, checkingTemperature]);
 
   useEffect(() => {
+    if (uiMode === "operator" && operatorDataSource === "real_camera" && !operatorRealHardwareAvailable) return;
     if (!shouldPollRealCameraPreview(pageForSetupEffects, setupSource, cameraPreviewState)) return;
     if (runningCamera || probing) return;
     let cancelled = false;
@@ -655,7 +704,10 @@ function App() {
     cameraPreviewState?.cameraStatus,
     measurement?.detector_config.setup_preview_fps,
     runningCamera,
-    probing
+    probing,
+    uiMode,
+    operatorDataSource,
+    operatorRealHardwareAvailable
   ]);
 
   useEffect(() => {
@@ -712,6 +764,19 @@ function App() {
     }
   }
 
+  async function refreshOperatorSourceStatus() {
+    setLoadingOperatorSourceStatus(true);
+    setOperatorSourceStatusError("");
+    try {
+      setOperatorSourceStatus(await getOperatorSourceStatus());
+    } catch (err) {
+      setOperatorSourceStatus(null);
+      setOperatorSourceStatusError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingOperatorSourceStatus(false);
+    }
+  }
+
   function changeUiMode(nextMode: UiMode) {
     setUiMode(nextMode);
     persistUiMode(window.localStorage, nextMode);
@@ -763,10 +828,19 @@ function App() {
   async function runOperatorRealCameraSetupProbe() {
     const currentMeasurement = measurementRef.current;
     if (!currentMeasurement) return;
+    if (!operatorRealHardwareAvailable) {
+      setOperatorStartMessage(t("Real hardware unavailable"));
+      setError("");
+      setProbe(null);
+      return;
+    }
     setProbing(true);
     setError("");
     try {
-      const response = await probeRealCameraSetupFrame(currentMeasurement);
+      const response = await probeRealCameraSetupFrame(currentMeasurement, {
+        operatorMode: true,
+        operatorDataSource: "real_camera"
+      });
       applyRealCameraProbeResponse(response, "live");
       setProbe(response);
       setCameraPreviewRefreshStatus("ok");
@@ -788,6 +862,11 @@ function App() {
   async function runOperatorProbeCurrentFrame() {
     if (operatorDataSource === "offline_dataset") {
       await runProbe(frameIndex);
+      return;
+    }
+    if (!operatorRealHardwareAvailable) {
+      setOperatorStartMessage(t("Real hardware unavailable"));
+      setProbe(null);
       return;
     }
     await runOperatorRealCameraSetupProbe();
@@ -953,13 +1032,21 @@ function App() {
       measurementRef.current = next;
       return next;
     });
-    if (source === "real_camera") {
+    const canPreviewRealCamera =
+      source === "real_camera" &&
+      (uiMode !== "operator" || operatorSourceStatus?.real_hardware_available === true);
+    if (canPreviewRealCamera) {
       setCameraPreviewState((current) => resumeLivePreview(current));
       window.setTimeout(() => {
         if (measurementRef.current?.source === "real_camera") {
           void previewRealCameraFrame("live", { clearProbe: false });
         }
       }, 0);
+    } else if (source === "real_camera" && uiMode === "operator") {
+      setCameraPreview(null);
+      setCameraPreviewUrl("");
+      setCameraPreviewError(null);
+      setCameraPreviewRefreshStatus("unavailable");
     }
   }
 
@@ -1022,9 +1109,14 @@ function App() {
   }
 
   function startOperatorRealCameraRun() {
+    if (!operatorRealHardwareAvailable) {
+      setOperatorStartMessage(t("Real hardware unavailable"));
+      setError("");
+      return;
+    }
     const settings = operatorSettings ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
     const validation = validateOperatorStart({
-      cameraOk: (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "") === "ok",
+      cameraOk: operatorRealHardwareAvailable,
       measurement,
       settings: settings ?? {
         targetTemperatureC: null,
@@ -1046,7 +1138,10 @@ function App() {
     };
     applyMeasurement(confirmedMeasurement);
     setOperatorStartMessage("");
-    void startRealCameraRunWithMeasurement(confirmedMeasurement);
+    void startRealCameraRunWithMeasurement(confirmedMeasurement, {
+      operatorMode: true,
+      operatorDataSource: "real_camera"
+    });
   }
 
   async function importOperatorRunExport(file: File) {
@@ -1068,6 +1163,13 @@ function App() {
     mode: RealCameraPreviewMode = cameraPreviewState?.mode ?? "live",
     options: { clearProbe?: boolean } = {}
   ): Promise<boolean> {
+    if (uiMode === "operator" && operatorDataSource === "real_camera" && !operatorRealHardwareAvailable) {
+      setCameraPreview(null);
+      setCameraPreviewUrl("");
+      setCameraPreviewError(null);
+      setCameraPreviewRefreshStatus("unavailable");
+      return false;
+    }
     const clearProbe = options.clearProbe ?? true;
     if (cameraPreviewRequestInFlightRef.current) return false;
     cameraPreviewRequestInFlightRef.current = true;
@@ -1188,7 +1290,10 @@ function App() {
     await startRealCameraRunWithMeasurement(measurement);
   }
 
-  async function startRealCameraRunWithMeasurement(measurementForRun: MeasurementDefinition) {
+  async function startRealCameraRunWithMeasurement(
+    measurementForRun: MeasurementDefinition,
+    options: { operatorMode?: boolean; operatorDataSource?: OperatorDataSource } = {}
+  ) {
     const controller = new AbortController();
     runAbortRef.current = controller;
     setRunningCamera(true);
@@ -1226,7 +1331,9 @@ function App() {
       const response = await streamRealCameraRun(measurementForRun, {
         targetFps: measurementForRun.detector_config.live_offline_fps ?? 8,
         cameraProfile: buildRealCameraRunCameraProfile(measurementForRun),
-        signal: controller.signal
+        signal: controller.signal,
+        operatorMode: options.operatorMode,
+        operatorDataSource: options.operatorDataSource
       }, (event) => {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
@@ -1416,6 +1523,9 @@ function App() {
               datasets={datasets}
               selectedId={selectedId}
               operatorDataSource={operatorDataSource}
+              operatorSourceStatus={operatorSourceStatus}
+              operatorSourceStatusError={operatorSourceStatusError}
+              loadingOperatorSourceStatus={loadingOperatorSourceStatus}
               onSelectedDataset={setSelectedId}
               onOperatorDataSource={chooseOperatorDataSource}
               probe={probe}
@@ -1530,6 +1640,9 @@ function PageContent({
   datasets,
   selectedId,
   operatorDataSource,
+  operatorSourceStatus,
+  operatorSourceStatusError,
+  loadingOperatorSourceStatus,
   onSelectedDataset,
   onOperatorDataSource,
   probe,
@@ -1584,6 +1697,9 @@ function PageContent({
   datasets: OfflineDatasetListItem[];
   selectedId: string;
   operatorDataSource: OperatorDataSource;
+  operatorSourceStatus: OperatorSourceStatus | null;
+  operatorSourceStatusError: string;
+  loadingOperatorSourceStatus: boolean;
   onSelectedDataset: (datasetId: string) => void;
   onOperatorDataSource: (source: OperatorDataSource) => void;
   probe: ProbeResponse | null;
@@ -1761,6 +1877,9 @@ function PageContent({
         selectedDataset={dataset}
         selectedDatasetId={selectedId}
         operatorDataSource={operatorDataSource}
+        operatorSourceStatus={operatorSourceStatus}
+        operatorSourceStatusError={operatorSourceStatusError}
+        loadingOperatorSourceStatus={loadingOperatorSourceStatus}
         onSelectedDataset={onSelectedDataset}
         onOperatorDataSource={onOperatorDataSource}
         probe={displayedProbe}
@@ -1902,6 +2021,9 @@ function OperatorRunPage({
   selectedDataset,
   selectedDatasetId,
   operatorDataSource,
+  operatorSourceStatus,
+  operatorSourceStatusError,
+  loadingOperatorSourceStatus,
   onSelectedDataset,
   onOperatorDataSource,
   probe,
@@ -1943,6 +2065,9 @@ function OperatorRunPage({
   selectedDataset: OfflineDatasetListItem;
   selectedDatasetId: string;
   operatorDataSource: OperatorDataSource;
+  operatorSourceStatus: OperatorSourceStatus | null;
+  operatorSourceStatusError: string;
+  loadingOperatorSourceStatus: boolean;
   onSelectedDataset: (datasetId: string) => void;
   onOperatorDataSource: (source: OperatorDataSource) => void;
   probe: ProbeResponse | null;
@@ -1973,29 +2098,37 @@ function OperatorRunPage({
   const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
   const operatorRunActive = runningCamera || runningOffline;
   const isOfflineSource = operatorDataSource === "offline_dataset";
+  const isRealCameraMode = operatorDataSource === "real_camera";
+  const realHardwareAvailable = operatorSourceStatus?.real_hardware_available === true;
+  const canUseRealCamera = isRealCameraMode && realHardwareAvailable;
+  const canUseOfflineDataset = isOfflineSource && Boolean(selectedDatasetId);
   const sourceProvenance = currentSourceProvenance({
     operatorDataSource,
     selectedDataset,
-    cameraPreview,
-    probe,
-    liveRun,
-    runResult
+    cameraPreview: canUseRealCamera ? cameraPreview : null,
+    probe: isOfflineSource || canUseRealCamera ? probe : null,
+    liveRun: isOfflineSource || canUseRealCamera ? liveRun : null,
+    runResult: isOfflineSource || canUseRealCamera ? runResult : null,
+    sourceStatus: operatorSourceStatus
   });
-  const setupProbeDetection = !operatorRunActive && probe ? probe.detection_result : null;
-  const latestRunResultDetection = runResult?.run_manifest.detection_results.length
+  const canShowCurrentSourceData = canUseOfflineDataset || canUseRealCamera;
+  const setupProbeDetection = canShowCurrentSourceData && !operatorRunActive && probe ? probe.detection_result : null;
+  const latestRunResultDetection = canShowCurrentSourceData && runResult?.run_manifest.detection_results.length
     ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
     : null;
   const latestDetection =
-    liveRun?.detectionResult ??
+    (canShowCurrentSourceData ? liveRun?.detectionResult : null) ??
     setupProbeDetection ??
     latestRunResultDetection;
   const setupProbeFrameUrl = setupProbeDetection ? probe?.image_data_url ?? (isOfflineSource ? activeFrameUrl : cameraPreviewUrl) : "";
-  const latestRunResultFrameUrl = runResult?.run_manifest.run_id && latestRunResultDetection
+  const latestRunResultFrameUrl = canShowCurrentSourceData && runResult?.run_manifest.run_id && latestRunResultDetection
     ? runFrameImageUrl(runResult.run_manifest.run_id, latestRunResultDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
     : "";
   const latestFrameUrl =
-    liveRun?.frameUrl ??
-    (setupProbeFrameUrl || latestRunResultFrameUrl || activeFrameUrl);
+    canShowCurrentSourceData
+      ? liveRun?.frameUrl ??
+        (setupProbeFrameUrl || latestRunResultFrameUrl || (isOfflineSource || canUseRealCamera ? activeFrameUrl : ""))
+      : "";
   const latestFrameShape =
     liveRun?.frameShape ??
     (setupProbeDetection ? probe?.frame.shape ?? cameraPreview?.shape ?? activeSourceShape : null) ??
@@ -2014,11 +2147,19 @@ function OperatorRunPage({
     ...serialPorts.map((port) => port.device || port.name)
   ]);
   const currentTemperature = temperatureStatus?.reading.celsius ?? latestDetection?.temperature_celsius ?? null;
-  const cameraOk = (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "") === "ok";
+  const cameraOk = canUseRealCamera && (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "ok") === "ok";
   const hasMeasurementRoi = measurement.roi.width > 0 && measurement.roi.height > 0;
-  const probeCurrentFrameDisabled = probing || operatorRunActive || (!isOfflineSource && !cameraOk) || !hasMeasurementRoi;
+  const probeCurrentFrameDisabled =
+    probing || operatorRunActive || !hasMeasurementRoi || (isRealCameraMode && !realHardwareAvailable);
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
-  const startButtonLabel = operatorStartButtonLabel(operatorDataSource, sourceProvenance);
+  const startButtonLabel = operatorStartButtonLabel(operatorDataSource);
+  const startDisabled = operatorRunActive || (isRealCameraMode && !realHardwareAvailable) || (isOfflineSource && !canUseOfflineDataset);
+  const titleLabel = isOfflineSource ? "Offline dataset test" : "Real camera test";
+  const sourceBadgeLabel = isOfflineSource
+    ? "Offline dataset / simulated material"
+    : realHardwareAvailable
+      ? "Real camera + real temperature controller"
+      : "Real hardware unavailable";
 
   function changeObjectClass(value: string) {
     const option = OBJECT_CLASS_OPTIONS.find((item) => item.value === value);
@@ -2034,7 +2175,12 @@ function OperatorRunPage({
   return (
     <div className="operatorRunGrid">
       <section className="toolPanel operatorControlPanel">
-        <h2>{t("Live Test")}</h2>
+        <div className="operatorModeHeader">
+          <h2>{t(titleLabel)}</h2>
+          <span className={realHardwareAvailable || isOfflineSource ? "operatorSourceBadge" : "operatorSourceBadge warning"}>
+            {t(sourceBadgeLabel)}
+          </span>
+        </div>
         <OperatorSourceControls
           datasets={datasets}
           selectedDataset={selectedDataset}
@@ -2044,6 +2190,13 @@ function OperatorRunPage({
           onDataset={onSelectedDataset}
           onSource={onOperatorDataSource}
         />
+        {isRealCameraMode && !realHardwareAvailable ? (
+          <RealHardwareUnavailableCard
+            loading={loadingOperatorSourceStatus}
+            sourceStatus={operatorSourceStatus}
+            statusError={operatorSourceStatusError}
+          />
+        ) : null}
         <div className="controlStack">
           <h3>{t("Test object")}</h3>
           <label className="field">
@@ -2068,21 +2221,31 @@ function OperatorRunPage({
         <div className="controlStack operatorCameraStatus">
           <h3>{isOfflineSource ? t("Offline material") : t("Camera")}</h3>
           {isOfflineSource ? (
-            <dl className="metricGrid compact">
-              <Metric label="Source" value={uiDatasetLabel(language, selectedDataset)} />
-              <Metric label="Current frame" value={probe?.frame.frame_index ?? t("Not probed")} />
-            </dl>
+            <>
+              <dl className="metricGrid compact">
+                <Metric label="Source" value={uiDatasetLabel(language, selectedDataset)} />
+                <Metric label="Current frame" value={probe?.frame.frame_index ?? t("Not probed")} />
+              </dl>
+              <div className="inlineWarning">
+                {t("Offline/simulated material is active. Use this only for UI or algorithm debugging; it is not real test data.")}
+              </div>
+            </>
           ) : (
             <dl className="metricGrid compact">
-              <Metric label="Camera status" value={cameraOk ? "ok" : "Camera unavailable"} />
-              <Metric label="Live display" value={cameraPreviewState?.mode === "frozen" ? "Paused" : "Live"} />
+              <Metric label="Camera status" value={realHardwareAvailable ? "ok" : "Real hardware unavailable"} />
+              <Metric label="Current camera backend" value={operatorSourceStatus?.camera_label || operatorSourceStatus?.camera_backend || "None"} />
+              <Metric label="Current temperature backend" value={operatorSourceStatus?.temperature_backend || "None"} />
+              <Metric label="Real camera" value={operatorSourceStatus?.real_camera_available ? "ok" : "unavailable"} />
+              <Metric label="Real temperature controller" value={operatorSourceStatus?.real_temperature_available ? "ok" : "unavailable"} />
+              {realHardwareAvailable ? <Metric label="Live display" value={cameraPreviewState?.mode === "frozen" ? "Paused" : "Live"} /> : null}
             </dl>
           )}
-          {!isOfflineSource && cameraPreviewError && !cameraOk ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
+          {!isOfflineSource && cameraPreviewError && !cameraOk && realHardwareAvailable ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
           <button
             className="primaryButton"
             disabled={probeCurrentFrameDisabled}
             onClick={onProbeRealCameraSetup}
+            title={isRealCameraMode && !realHardwareAvailable ? t("Real hardware unavailable") : undefined}
             type="button"
           >
             <SquareDashedMousePointer size={16} aria-hidden="true" />
@@ -2103,7 +2266,7 @@ function OperatorRunPage({
           temperatureError={temperatureError}
           checkingTemperature={checkingTemperature}
           loadingSerialPorts={loadingSerialPorts}
-          simulatedMode={isOfflineSource}
+          mode={isOfflineSource ? "offline_dataset" : realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
           onPatch={onOperatorSettingsPatch}
           onConfirm={onOperatorSettingsConfirm}
           onReadCurrentTemperature={onReadCurrentTemperature}
@@ -2122,7 +2285,13 @@ function OperatorRunPage({
         </details>
         {operatorStartMessage ? <div className="inlineWarning">{operatorStartMessage}</div> : null}
         <div className="operatorRunActions">
-          <button className="primaryButton" disabled={operatorRunActive} onClick={onOperatorStartRun} type="button">
+          <button
+            className="primaryButton"
+            disabled={startDisabled}
+            onClick={onOperatorStartRun}
+            title={isRealCameraMode && !realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            type="button"
+          >
             <Play size={16} aria-hidden="true" />
             {operatorRunActive ? t("Running") : t(startButtonLabel)}
           </button>
@@ -2133,7 +2302,13 @@ function OperatorRunPage({
         </div>
       </section>
       <section className="operatorVisualStack">
-        {latestFrameUrl ? (
+        {isRealCameraMode && !realHardwareAvailable ? (
+          <RealHardwareUnavailableCard
+            loading={loadingOperatorSourceStatus}
+            sourceStatus={operatorSourceStatus}
+            statusError={operatorSourceStatusError}
+          />
+        ) : latestFrameUrl ? (
           <FrameCanvas
             title={latestFrameTitle}
             imageUrl={latestFrameUrl}
@@ -2152,11 +2327,12 @@ function OperatorRunPage({
             previewError={cameraPreviewError}
           />
         )}
+        {isRealCameraMode && !realHardwareAvailable ? null : (
         <section className="toolPanel operatorTrendPanel">
           <div className="runTrendHeader">
             <div>
               <h2>{t("Live Trend")}</h2>
-              <p>{provenanceLabel(sourceProvenance, language)}</p>
+              <p>{t(sourceBadgeLabel)}</p>
             </div>
             <div className="runTrendStatusLabel">{liveRun?.status === "running" ? t("Current run so far") : t("Full run")}</div>
           </div>
@@ -2172,6 +2348,7 @@ function OperatorRunPage({
             <div className="statusBlock">{t("No formal temperature-distance points operator")}</div>
           )}
         </section>
+        )}
       </section>
     </div>
   );
@@ -2240,6 +2417,39 @@ function OperatorSourceControls({
   );
 }
 
+function RealHardwareUnavailableCard({
+  loading,
+  sourceStatus,
+  statusError
+}: {
+  loading: boolean;
+  sourceStatus: OperatorSourceStatus | null;
+  statusError: string;
+}) {
+  const t = useUiText();
+  return (
+    <section className="operatorHardwareErrorCard" aria-live="polite">
+      <h3>{t("Real hardware unavailable")}</h3>
+      <p>{t("Real camera selected but service is not connected to a real camera and real temperature controller.")}</p>
+      <p>{t("Check hardware configuration or switch to Offline dataset for simulated debugging.")}</p>
+      <dl className="metricGrid compact">
+        <Metric label="Current camera backend" value={sourceStatus?.camera_label || sourceStatus?.camera_backend || (loading ? "Loading" : "None")} />
+        <Metric label="Current temperature backend" value={sourceStatus?.temperature_backend || (loading ? "Loading" : "None")} />
+        <Metric label="Real camera" value={sourceStatus?.real_camera_available ? "ok" : "unavailable"} />
+        <Metric label="Real temperature controller" value={sourceStatus?.real_temperature_available ? "ok" : "unavailable"} />
+      </dl>
+      {statusError ? <div className="inlineError">{statusError}</div> : null}
+      {sourceStatus?.errors.length ? (
+        <ul className="operatorWarningList compactList">
+          {sourceStatus.errors.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function OperatorTemperaturePanel({
   currentTemperature,
   operatorSettings,
@@ -2248,7 +2458,7 @@ function OperatorTemperaturePanel({
   temperatureError,
   checkingTemperature,
   loadingSerialPorts,
-  simulatedMode,
+  mode,
   onPatch,
   onConfirm,
   onReadCurrentTemperature,
@@ -2261,7 +2471,7 @@ function OperatorTemperaturePanel({
   temperatureError: SetupTemperatureError | null;
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
-  simulatedMode: boolean;
+  mode: "offline_dataset" | "real_camera_available" | "real_camera_unavailable";
   onPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onConfirm: () => void;
   onReadCurrentTemperature: () => void;
@@ -2269,11 +2479,17 @@ function OperatorTemperaturePanel({
 }) {
   const language = useUiLanguage();
   const t = useUiText();
+  const simulatedMode = mode === "offline_dataset";
+  const hardwareUnavailable = mode === "real_camera_unavailable";
   return (
     <div className="controlStack operatorTemperaturePanel">
       <h3>{t("Temperature Control")}</h3>
-      {simulatedMode ? (
-        <div className="inlineWarning">{t("No real temperature controller is connected in simulated mode.")}</div>
+      {simulatedMode || hardwareUnavailable ? (
+        <div className={hardwareUnavailable ? "inlineError" : "inlineWarning"}>
+          {hardwareUnavailable
+            ? t("Real hardware unavailable")
+            : t("Offline dataset mode does not connect to a real temperature controller.")}
+        </div>
       ) : (
         <>
           <div className="operatorTemperatureReadout">
@@ -2300,7 +2516,11 @@ function OperatorTemperaturePanel({
       {!simulatedMode ? (
         <label className="field">
           <span>{t("Temperature serial port")}</span>
-          <select onChange={(event) => onPatch({ serialPort: event.target.value || null })} value={operatorSettings.serialPort ?? ""}>
+          <select
+            disabled={hardwareUnavailable}
+            onChange={(event) => onPatch({ serialPort: event.target.value || null })}
+            value={operatorSettings.serialPort ?? ""}
+          >
             <option value="">{t("Configured/default")}</option>
             {serialPortOptions.map((port) => (
               <option key={port} value={port}>
@@ -2315,14 +2535,14 @@ function OperatorTemperaturePanel({
           {t("Confirm test settings")}
         </button>
         {!simulatedMode ? (
-          <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
+          <button className="secondaryButton" disabled={loadingSerialPorts || hardwareUnavailable} onClick={onRefreshSerialPorts} type="button">
             <Usb size={16} aria-hidden="true" />
             {loadingSerialPorts ? t("Scanning") : t("Refresh ports")}
           </button>
         ) : null}
       </div>
       {!simulatedMode ? (
-        <button className="secondaryButton compactOperatorButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
+        <button className="secondaryButton compactOperatorButton" disabled={checkingTemperature || hardwareUnavailable} onClick={onReadCurrentTemperature} type="button">
           <Thermometer size={16} aria-hidden="true" />
           {checkingTemperature ? t("Reading") : t("Read temp")}
         </button>
@@ -5645,7 +5865,8 @@ function currentSourceProvenance({
   cameraPreview,
   probe,
   liveRun,
-  runResult
+  runResult,
+  sourceStatus
 }: {
   operatorDataSource: OperatorDataSource;
   selectedDataset: OfflineDatasetListItem;
@@ -5653,6 +5874,7 @@ function currentSourceProvenance({
   probe: ProbeResponse | null;
   liveRun: LiveRunState | null;
   runResult: RunResponse | null;
+  sourceStatus?: OperatorSourceStatus | null;
 }): SourceProvenance {
   if (operatorDataSource === "offline_dataset") {
     return (
@@ -5669,6 +5891,7 @@ function currentSourceProvenance({
     runResult?.analysis_result.provenance ??
     probe?.provenance ??
     cameraPreview?.provenance ??
+    sourceStatus?.provenance ??
     unknownFallbackProvenance()
   );
 }
@@ -5700,11 +5923,8 @@ function sourceProvenanceWarning(
   return "";
 }
 
-function operatorStartButtonLabel(
-  source: OperatorDataSource,
-  provenance: SourceProvenance | null | undefined
-): string {
-  if (source === "offline_dataset" || provenance?.camera_is_simulated) {
+function operatorStartButtonLabel(source: OperatorDataSource): string {
+  if (source === "offline_dataset") {
     return "Start simulated test";
   }
   return "Start live test";

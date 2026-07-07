@@ -21,7 +21,8 @@ test("operator mode has a fresh current-frame probe handler", () => {
     "async function runOperatorProbeCurrentFrame()"
   );
 
-  assert.match(handler, /await probeRealCameraSetupFrame\(currentMeasurement\);/);
+  assert.match(handler, /if \(!operatorRealHardwareAvailable\)/);
+  assert.match(handler, /await probeRealCameraSetupFrame\(currentMeasurement, \{\s+operatorMode: true,\s+operatorDataSource: "real_camera"\s+\}\);/s);
   assert.match(handler, /applyRealCameraProbeResponse\(response, "live"\);/);
   assert.match(handler, /setProbe\(response\);/);
   assert.doesNotMatch(handler, /framePngDataUrl/);
@@ -38,6 +39,7 @@ test("operator current-frame probe dispatches real camera and offline dataset so
   assert.match(mainSource, /return stored === "offline_dataset" \|\| stored === "real_camera" \? stored : "real_camera";/);
   assert.match(dispatcher, /if \(operatorDataSource === "offline_dataset"\)/);
   assert.match(dispatcher, /await runProbe\(frameIndex\);/);
+  assert.match(dispatcher, /if \(!operatorRealHardwareAvailable\)/);
   assert.match(dispatcher, /await runOperatorRealCameraSetupProbe\(\);/);
 });
 
@@ -55,11 +57,39 @@ test("operator run page receives probe state and wires the current-frame probe b
   assert.match(operatorPage, /probing: boolean;/);
   assert.match(operatorPage, /onProbeRealCameraSetup: \(\) => void;/);
   assert.match(operatorPage, /const operatorRunActive = runningCamera \|\| runningOffline;/);
-  assert.match(operatorPage, /const probeCurrentFrameDisabled = probing \|\| operatorRunActive/);
+  assert.match(
+    operatorPage,
+    /const probeCurrentFrameDisabled =\s+probing \|\| operatorRunActive \|\| !hasMeasurementRoi \|\| \(isRealCameraMode && !realHardwareAvailable\);/
+  );
   assert.match(operatorPage, /disabled=\{probeCurrentFrameDisabled\}/);
   assert.match(operatorPage, /onClick=\{onProbeRealCameraSetup\}/);
   assert.match(operatorPage, /probing \? t\("Probing"\) : t\("Probe current frame"\)/);
   assert.match(operatorPage, /Single-frame probing is disabled during a live test/);
+});
+
+test("operator real-camera mode requires real hardware before showing frames or enabling actions", () => {
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+  const buttonLabelHelper = sourceSlice(
+    "function operatorStartButtonLabel(",
+    "function operatorDatasetOptionLabel("
+  );
+
+  assert.match(mainSource, /const \[operatorSourceStatus, setOperatorSourceStatus\] = useState<OperatorSourceStatus \| null>\(null\);/);
+  assert.match(mainSource, /getOperatorSourceStatus\(\)/);
+  assert.match(mainSource, /operatorDataSource === "real_camera" && !operatorRealHardwareAvailable/);
+  assert.match(operatorPage, /const realHardwareAvailable = operatorSourceStatus\?\.real_hardware_available === true;/);
+  assert.match(operatorPage, /const canUseRealCamera = isRealCameraMode && realHardwareAvailable;/);
+  assert.match(operatorPage, /const canUseOfflineDataset = isOfflineSource && Boolean\(selectedDatasetId\);/);
+  assert.match(operatorPage, /isRealCameraMode && !realHardwareAvailable \? \(/);
+  assert.match(operatorPage, /<RealHardwareUnavailableCard/);
+  assert.match(operatorPage, /const startDisabled = operatorRunActive \|\| \(isRealCameraMode && !realHardwareAvailable\)/);
+  assert.match(operatorPage, /title=\{isRealCameraMode && !realHardwareAvailable \? t\("Real hardware unavailable"\) : undefined\}/);
+  assert.match(operatorPage, /\(isOfflineSource \|\| canUseRealCamera \? activeFrameUrl : ""\)/);
+  assert.doesNotMatch(buttonLabelHelper, /camera_is_simulated/);
+  assert.match(buttonLabelHelper, /if \(source === "offline_dataset"\)/);
 });
 
 test("operator current-frame probe result drives image overlay without engineering diagnostics card", () => {
@@ -68,8 +98,8 @@ test("operator current-frame probe result drives image overlay without engineeri
     "function OperatorSourceControls({"
   );
 
-  assert.match(operatorPage, /const setupProbeDetection = !operatorRunActive && probe \? probe\.detection_result : null;/);
-  assert.match(operatorPage, /liveRun\?\.detectionResult \?\?\s+setupProbeDetection/s);
+  assert.match(operatorPage, /const setupProbeDetection = canShowCurrentSourceData && !operatorRunActive && probe \? probe\.detection_result : null;/);
+  assert.match(operatorPage, /\(canShowCurrentSourceData \? liveRun\?\.detectionResult : null\) \?\?\s+setupProbeDetection/s);
   assert.match(operatorPage, /probe\?\.image_data_url \?\? \(isOfflineSource \? activeFrameUrl : cameraPreviewUrl\)/);
   assert.match(operatorPage, /abPoints=\{latestDetection\?\.ab_points \?\? null\}/);
   assert.match(operatorPage, /debugArtifacts=\{latestDetection\?\.debug_artifacts \?\? null\}/);

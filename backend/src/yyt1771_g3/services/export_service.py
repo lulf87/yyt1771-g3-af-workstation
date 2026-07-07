@@ -105,6 +105,9 @@ def _write_json(export_dir: Path, manifest: RunManifest, analysis: AnalysisResul
     source_notice = _source_notice(manifest)
     if source_notice:
         payload["source_notice"] = source_notice
+    source_validity = _source_validity(manifest)
+    if source_validity:
+        payload["source_validity"] = source_validity
     path.write_text(
         json.dumps(
             payload,
@@ -184,6 +187,9 @@ def _write_parameters_json(export_dir: Path, manifest: RunManifest) -> ExportArt
     source_notice = _source_notice(manifest)
     if source_notice:
         payload["source_notice"] = source_notice
+    source_validity = _source_validity(manifest)
+    if source_validity:
+        payload["source_validity"] = source_validity
     path.write_text(
         json.dumps(
             payload,
@@ -212,6 +218,24 @@ def _source_notice(manifest: RunManifest) -> dict[str, str] | None:
         return {
             "zh": "模拟数据，仅用于调试，不代表真实测试结果。",
             "en": "Simulated data for debugging only; it does not represent a real test result.",
+        }
+    return None
+
+
+def _source_validity(manifest: RunManifest) -> dict[str, str] | None:
+    provenance = manifest.provenance or {}
+    overall_kind = str(provenance.get("overall_kind") or "")
+    if manifest.operator_data_source == "real_camera" and overall_kind != "real_hardware":
+        return {
+            "status": "forbidden",
+            "reason_zh": "真实相机模式的来源不是完整真实硬件，不能作为真实测试结果导出。",
+            "reason_en": "Real-camera mode provenance is not complete real hardware; this export is forbidden as a real test result.",
+        }
+    if manifest.operator_data_source == "offline_dataset" or overall_kind in {"offline", "simulated"}:
+        return {
+            "status": "simulated_debug_only",
+            "reason_zh": "模拟数据，仅用于调试，不代表真实测试结果。",
+            "reason_en": "Simulated data, for debugging only; not a real test result.",
         }
     return None
 

@@ -148,6 +148,23 @@ export type SourceProvenance = {
   imported_from_provenance?: SourceProvenance;
 };
 
+export type OperatorSourceStatus = {
+  real_hardware_available: boolean;
+  real_camera_available: boolean;
+  real_temperature_available: boolean;
+  camera_is_simulated: boolean;
+  temperature_is_simulated: boolean;
+  camera_label: string;
+  camera_serial: string;
+  camera_backend?: string;
+  temperature_backend: string;
+  temperature_serial_port_configured?: boolean;
+  offline_datasets_available: boolean;
+  errors: string[];
+  warnings: string[];
+  provenance?: SourceProvenance;
+};
+
 export type MeasurementDefinition = {
   measurement_id: string;
   source: "offline_dataset" | "real_camera";
@@ -712,6 +729,8 @@ export async function probeRealCameraSetupFrame(
     framePngDataUrl?: string;
     frameTimestampMs?: number | null;
     cameraMeta?: Record<string, unknown>;
+    operatorMode?: boolean;
+    operatorDataSource?: "real_camera" | "offline_dataset";
   }
 ): Promise<RealCameraSetupProbeResponse> {
   const response = await fetch(`${API_BASE}/api/camera/setup-probe`, {
@@ -721,7 +740,9 @@ export async function probeRealCameraSetupFrame(
       measurement_definition: backendMeasurementDefinition(measurementDefinition),
       frame_png_data_url: options?.framePngDataUrl,
       frame_timestamp_ms: options?.frameTimestampMs,
-      camera_meta: options?.cameraMeta
+      camera_meta: options?.cameraMeta,
+      operator_mode: options?.operatorMode,
+      operator_data_source: options?.operatorDataSource
     })
   });
   if (!response.ok) {
@@ -832,6 +853,10 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
   return requestJson<CameraPreviewResponse>("/api/camera/preview");
 }
 
+export async function getOperatorSourceStatus(): Promise<OperatorSourceStatus> {
+  return requestJson<OperatorSourceStatus>("/api/operator/source-status");
+}
+
 export async function releaseRealCameraPreview(): Promise<CameraPreviewReleaseResponse> {
   const response = await fetch(`${API_BASE}/api/camera/preview/release`, { method: "POST" });
   if (!response.ok) {
@@ -859,7 +884,13 @@ export async function listTemperatureSerialPorts(): Promise<SerialPortInfo[]> {
 
 export async function createRealCameraRun(
   measurementDefinition: MeasurementDefinition,
-  options: { maxFrames?: number; targetFps: number; cameraProfile?: Record<string, unknown> }
+  options: {
+    maxFrames?: number;
+    targetFps: number;
+    cameraProfile?: Record<string, unknown>;
+    operatorMode?: boolean;
+    operatorDataSource?: "real_camera" | "offline_dataset";
+  }
 ): Promise<RunResponse> {
   const response = await fetch(`${API_BASE}/api/real-camera-runs`, {
     method: "POST",
@@ -868,6 +899,8 @@ export async function createRealCameraRun(
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
       camera_profile: options.cameraProfile ?? { pixel_format: "mono8" },
+      operator_mode: options.operatorMode,
+      operator_data_source: options.operatorDataSource,
       measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
@@ -880,7 +913,14 @@ export async function createRealCameraRun(
 
 export async function streamRealCameraRun(
   measurementDefinition: MeasurementDefinition,
-  options: { maxFrames?: number; targetFps: number; cameraProfile?: Record<string, unknown>; signal?: AbortSignal },
+  options: {
+    maxFrames?: number;
+    targetFps: number;
+    cameraProfile?: Record<string, unknown>;
+    signal?: AbortSignal;
+    operatorMode?: boolean;
+    operatorDataSource?: "real_camera" | "offline_dataset";
+  },
   onEvent: (event: RealCameraRunStreamEvent) => void
 ): Promise<RunResponse> {
   const response = await fetch(`${API_BASE}/api/real-camera-runs/stream`, {
@@ -891,6 +931,8 @@ export async function streamRealCameraRun(
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
       camera_profile: options.cameraProfile ?? { pixel_format: "mono8" },
+      operator_mode: options.operatorMode,
+      operator_data_source: options.operatorDataSource,
       measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });

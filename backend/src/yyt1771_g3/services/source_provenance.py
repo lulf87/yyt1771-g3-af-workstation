@@ -5,6 +5,8 @@ from typing import Any
 
 
 SIMULATED_MARKERS = ("simulated", "simulation", "dataset", "fake", "mock")
+REAL_CAMERA_BACKENDS = ("hik_gige_mvs", "hik_mvs", "gige_vision")
+REAL_TEMPERATURE_BACKENDS = ("lu92xx_modbus_rtu",)
 
 
 def unknown_provenance() -> dict[str, Any]:
@@ -128,6 +130,69 @@ def camera_runtime_provenance(
         display_label_zh=_runtime_label_zh(overall_kind, camera_is_simulated, temp_is_simulated),
         display_label_en=_runtime_label_en(overall_kind, camera_is_simulated, temp_is_simulated),
     )
+
+
+def operator_source_status(
+    *,
+    camera_profile: Any | None = None,
+    camera_meta: dict[str, Any] | None = None,
+    temperature_backend: str | None = None,
+    temperature_source: str | None = None,
+    temperature_serial_port: str | None = None,
+    offline_datasets_available: bool = False,
+    offline_dataset_error: str = "",
+) -> dict[str, Any]:
+    provenance = camera_runtime_provenance(
+        camera_profile=camera_profile,
+        camera_meta=camera_meta,
+        temperature_backend=temperature_backend,
+        temperature_source=temperature_source,
+    )
+    profile = _mapping(camera_profile)
+    camera_backend = str(provenance.get("camera_backend") or profile.get("backend") or "").strip()
+    camera_transport = str(profile.get("transport") or "").strip()
+    temperature = str(provenance.get("temperature_backend") or temperature_backend or temperature_source or "").strip()
+    serial_configured = bool(str(temperature_serial_port or "").strip())
+
+    real_camera_backend = _normalized(camera_backend) in REAL_CAMERA_BACKENDS or _normalized(camera_transport) in REAL_CAMERA_BACKENDS
+    real_temperature_backend = _normalized(temperature) in REAL_TEMPERATURE_BACKENDS
+    camera_is_simulated = bool(provenance.get("camera_is_simulated", False))
+    temperature_is_simulated = bool(provenance.get("temperature_is_simulated", False))
+    real_camera_available = real_camera_backend and not camera_is_simulated
+    real_temperature_available = real_temperature_backend and not temperature_is_simulated and serial_configured
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not real_camera_available:
+        if camera_is_simulated:
+            errors.append("camera backend is simulated")
+        if not real_camera_backend:
+            errors.append("camera backend is not a supported real hardware backend")
+    if not real_temperature_available:
+        if temperature_is_simulated:
+            errors.append("temperature backend is simulated")
+        if not real_temperature_backend:
+            errors.append("temperature backend is not a supported real controller backend")
+        if real_temperature_backend and not serial_configured:
+            errors.append("temperature serial port is not configured")
+    if offline_dataset_error:
+        warnings.append(offline_dataset_error)
+
+    return {
+        "real_hardware_available": real_camera_available and real_temperature_available,
+        "real_camera_available": real_camera_available,
+        "real_temperature_available": real_temperature_available,
+        "camera_is_simulated": camera_is_simulated,
+        "temperature_is_simulated": temperature_is_simulated,
+        "camera_label": str(provenance.get("camera_label") or ""),
+        "camera_serial": str(provenance.get("camera_serial") or ""),
+        "camera_backend": camera_backend,
+        "temperature_backend": temperature,
+        "temperature_serial_port_configured": serial_configured,
+        "offline_datasets_available": offline_datasets_available,
+        "errors": errors,
+        "warnings": warnings,
+        "provenance": provenance,
+    }
 
 
 def normalize_provenance(value: Any) -> dict[str, Any]:
@@ -323,3 +388,7 @@ def _contains_marker(value: str) -> bool:
 
 def _lower_blob(*values: str) -> str:
     return " ".join(value.lower() for value in values if value)
+
+
+def _normalized(value: str) -> str:
+    return value.strip().lower()

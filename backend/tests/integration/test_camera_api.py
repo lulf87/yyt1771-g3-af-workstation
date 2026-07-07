@@ -535,6 +535,171 @@ class FakeApiTemperatureController:
         self.closed = True
 
 
+def _operator_measurement_payload(measurement_id: str = "operator-real-camera") -> dict[str, object]:
+    return {
+        "measurement_id": measurement_id,
+        "source": "real_camera",
+        "object_class": "A_BALLOON_ENVELOPE",
+        "detector": "BalloonEnvelopeDetector",
+        "width_mode": "max_width",
+        "measurement_coordinates": "source_pixel",
+        "roi": {
+            "type": "rotated_rect",
+            "center_x": 60.0,
+            "center_y": 35.0,
+            "width": 70.0,
+            "height": 40.0,
+            "angle_deg": 0.0,
+        },
+        "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 1},
+    }
+
+
+class _FakeOfflineRegistry:
+    def list_offline_datasets(self) -> list[dict[str, object]]:
+        return [{"id": "golden_a_20260522_dev_lab"}]
+
+
+def test_operator_source_status_reports_real_hardware_config(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, SerialPortConfig, TempConfig
+
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="hik_gige_mvs",
+                model="MV-CA060-11GM",
+                serial_number="DEV-001",
+            ),
+            temp=TempConfig(
+                backend="lu92xx_modbus_rtu",
+                serial=SerialPortConfig(port="/dev/tty.usbserial"),
+            ),
+        ),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/operator/source-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["real_hardware_available"] is True
+    assert payload["real_camera_available"] is True
+    assert payload["real_temperature_available"] is True
+    assert payload["camera_is_simulated"] is False
+    assert payload["temperature_is_simulated"] is False
+
+
+def test_operator_source_status_reports_simulated_camera_and_temperature(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig
+
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="simulated",
+                model="G3 simulated dataset camera",
+                serial_number="SIM-DATASET-golden_a_20260522_dev_lab",
+                simulated_dataset_id="golden_a_20260522_dev_lab",
+            ),
+            temp=TempConfig(backend="simulated_temperature"),
+        ),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/operator/source-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["real_hardware_available"] is False
+    assert payload["real_camera_available"] is False
+    assert payload["real_temperature_available"] is False
+    assert payload["camera_is_simulated"] is True
+    assert payload["temperature_is_simulated"] is True
+    assert payload["camera_serial"] == "SIM-DATASET-golden_a_20260522_dev_lab"
+
+
+def test_operator_real_camera_setup_probe_rejects_simulated_backend(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig
+
+    api_main._reset_preview_camera_source()
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="simulated",
+                model="G3 simulated dataset camera",
+                serial_number="SIM-DATASET-golden_a_20260522_dev_lab",
+                simulated_dataset_id="golden_a_20260522_dev_lab",
+            ),
+            temp=TempConfig(backend="simulated_temperature"),
+        ),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/camera/setup-probe",
+        json={
+            "operator_mode": True,
+            "operator_data_source": "real_camera",
+            "measurement_definition": _operator_measurement_payload("operator-real-probe-guard"),
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "requires real camera and real temperature controller" in detail["message"]
+    assert detail["source_status"]["real_hardware_available"] is False
+    assert detail["source_status"]["camera_is_simulated"] is True
+    assert detail["source_status"]["temperature_is_simulated"] is True
+
+
+def test_operator_real_camera_run_rejects_simulated_backend(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig
+
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="simulated",
+                model="G3 simulated dataset camera",
+                serial_number="SIM-DATASET-golden_a_20260522_dev_lab",
+                simulated_dataset_id="golden_a_20260522_dev_lab",
+            ),
+            temp=TempConfig(backend="simulated_temperature"),
+        ),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/real-camera-runs",
+        json={
+            "operator_mode": True,
+            "operator_data_source": "real_camera",
+            "max_frames": 1,
+            "target_fps": 8.0,
+            "camera_profile": {"backend": "simulated", "pixel_format": "mono8"},
+            "measurement_definition": _operator_measurement_payload("operator-real-run-guard"),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["source_status"]["real_hardware_available"] is False
+
+
 def test_temperature_status_endpoint_reads_configured_controller(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
     from yyt1771_g3.api import main as api_main

@@ -93,6 +93,7 @@
 | P-0075 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / operator mode / export import | 需要新增实际使用界面模式并支持导出文件历史导入 | 2026-07-07 | 2026-07-07 | Codex | Operator Mode Run→Stop→Results Export→History Import + Engineering Mode 浏览器复测已通过 |
 | P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
 | P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
+| P-0078 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator mode / source guard | Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端 | 2026-07-07 | 2026-07-07 | Codex | sim-sim 下已验证 Operator 真机源显示真实硬件不可用且禁用 probe/run；离线源可 probe；工程模式真实相机调试未受影响 |
 
 ---
 
@@ -8039,6 +8040,111 @@ Result: PASS.
   - `output/playwright/p0077_operator_source_prompt_removed_20260707.png`
 
 #### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0078 — Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/services/source_provenance.py`, `backend/src/yyt1771_g3/services/export_service.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户明确要求 Operator Mode / 实际使用模式的数据来源语义必须严格：
+
+```text
+operatorDataSource === "real_camera" 表示真实硬件测试，必须同时连接真实相机和真实 LU92XX 温控。
+operatorDataSource === "offline_dataset" 表示离线/模拟素材测试，不连接真实相机和真实温控。
+```
+
+修复前在 Operator Mode 选择“真实相机”时，如果后端运行在 `sim-sim` 或 simulated dataset camera 配置，页面仍可能显示 `G3 simulated dataset camera` / `SIM-DATASET-golden_a_20260522_dev_lab` 的画面，并允许检测当前帧或开始实时测试。这会把工程调试路径包装成实际使用路径。
+
+#### Expected
+
+```text
+Operator 真实相机模式：
+- 后端 `/api/operator/source-status` 能报告 real_hardware_available、real_camera_available、real_temperature_available、模拟标记和当前 backend。
+- 当前配置为模拟相机或模拟温控时，UI 显示“真实硬件不可用”，不显示模拟相机画面，不显示模拟趋势。
+- “检测当前帧”和“开始实时测试”禁用，按钮提示“真实硬件不可用”。
+- 后端在 operator_mode=true 且 operator_data_source=real_camera 的 setup-probe / real-camera run 请求上强制校验，模拟相机或模拟温控返回 409。
+
+Operator 离线数据集模式：
+- 继续使用离线素材下拉框、离线 probe 和离线/模拟 run。
+- 不要求真实温控串口，不下发真实温控设置。
+- 显示离线/模拟 warning。
+
+工程模式：
+- 不受 Operator 严格校验影响，仍可用 simulated camera 调试 real-camera 接口。
+```
+
+#### Actual
+
+修复前 Operator 真实相机源会把 simulated dataset camera 的实时 preview/probe 作为真实相机画面显示；开始按钮还会根据 provenance 自动降级为“开始模拟测试”，而不是把该状态视为真实硬件配置错误。
+
+#### Suspected cause
+
+Operator 的 `operatorDataSource` 与后端实际 provenance 混在一起使用，前端用 camera preview / active frame 作为画面兜底，后端真实相机 API 也没有区分 Operator 严格调用与工程调试调用。
+
+#### Fix summary
+
+已修复并完成浏览器复测：
+
+- 后端新增 `/api/operator/source-status`，基于相机 backend、simulated_dataset_id、model/serial 模拟标记、温控 backend 和串口配置返回真实硬件可用性。
+- 后端 `RealCameraSetupProbeRequest` / `RealCameraRunRequest` 增加 `operator_mode` 和 `operator_data_source`；仅当 `operator_mode=true && operator_data_source="real_camera"` 时启用严格 guard，模拟相机或模拟温控返回 409。
+- 前端新增 `getOperatorSourceStatus()`，Operator 真实相机模式不可用时停止 preview polling，清空模拟 preview/probe，显示“真实硬件不可用”错误卡，禁用 probe/run。
+- Operator 离线模式保留离线素材 warning、离线 probe/run 和“开始模拟测试”。
+- 导出中为 `operator_data_source="real_camera"` 但 provenance 非 `real_hardware` 的结果写入 `source_validity.status="forbidden"`，避免被误读为真实硬件结果。
+
+#### Tests run
+
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_source_provenance.py backend/tests/integration/test_camera_api.py backend/tests/integration/test_export_service.py -q`
+  - Result: PASS, 36 passed.
+- `cd frontend && npm test -- operatorProbeUi.test.mjs`
+  - Result: PASS, 76 passed.
+- `cd frontend && ./node_modules/.bin/tsc --noEmit`
+  - Result: PASS, exit 0.
+- `cd frontend && npm run build`
+  - Result: PASS, `tsc && vite build` completed.
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright HeadlessChrome 149.0.0.0
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Hardware profile: `scripts/g3_fast_start.sh sim-sim --restart --no-open`
+- Page: Operator / 实际使用 `实时测试`; Engineering / 工程模式 `测量配置`
+- Steps:
+  1. 启动 `sim-sim`，确认 `/api/health`、`/api/offline-datasets`、`/api/operator/source-status` 和前端响应正常。
+  2. 打开 Operator 模式，保持数据来源为“真实相机”。
+  3. 检查“真实硬件不可用”错误卡、当前相机后端、当前温控后端、真实相机/真实温控可用性、检测当前帧按钮和开始实时测试按钮。
+  4. 切换到“离线数据集”，点击“检测当前帧”。
+  5. 切换到工程模式，再切到工程模式中的“真实相机”，点击“检测当前帧”。
+- Expected:
+  - Operator 真实相机源在模拟相机/模拟温控下显示“真实硬件不可用”，不显示模拟相机帧或实时趋势，“检测当前帧”和“开始实时测试”禁用，按钮文案仍为“开始实时测试”。
+  - Operator 离线源显示离线/模拟 warning，不连接真实温控，允许离线 probe，按钮文案为“开始模拟测试”。
+  - 工程模式不受 Operator 严格 guard 影响，仍可使用 simulated dataset camera 调试 real-camera 接口。
+- Actual:
+  - `/api/operator/source-status` 返回 `real_hardware_available=false`、`camera_is_simulated=true`、`temperature_is_simulated=true`、`camera_backend=simulated`、`temperature_backend=simulated`。
+  - Operator 真实相机源显示“当前选择了“真实相机”，但服务未连接真实相机和真实温控。”和切换离线数据集提示，显示 `G3 simulated camera` / `simulated` backend；DOM 断言确认无 frame/canvas、probe/run 禁用、实时趋势隐藏、按钮仍为“开始实时测试”。
+  - Operator 离线源显示离线/模拟 warning 和“离线数据集模式下不连接真实温控设备。”；点击 probe 后显示“当前帧检测有效: 测量距离 988.00 像素”及 A/B overlay。
+  - 工程模式真实相机页显示 `G3 simulated dataset camera`，检测按钮可用；点击 probe 后检测结果更新，无 Operator 真实硬件不可用错误卡。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0078_operator_real_hardware_unavailable_20260707.png`
+  - `output/playwright/p0078_operator_offline_probe_20260707.png`
+  - `output/playwright/p0078_engineering_mode_preserved_20260707.png`
+
+#### Current status
 
 RESOLVED_BROWSER_VERIFIED
 
