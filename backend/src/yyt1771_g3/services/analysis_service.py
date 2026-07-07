@@ -56,6 +56,8 @@ def build_analysis_result(
     return AnalysisResult(
         analysis_id=analysis_id or f"{manifest.run_id}-analysis",
         run_id=manifest.run_id,
+        operator_data_source=manifest.operator_data_source,
+        provenance=manifest.provenance,
         all_frames=manifest.detection_results,
         distance_time=distance_time,
         raw_distance_time=raw_distance_time,

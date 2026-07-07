@@ -362,6 +362,63 @@ input {
   border-bottom: 0;
 }
 
+.operatorSourceHint {
+  color: #5c6a78;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sourceProvenanceBadge {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #cfd8e2;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  color: #263442;
+}
+
+.sourceProvenanceBadge.compact {
+  display: inline-grid;
+  justify-self: start;
+  padding: 7px 10px;
+}
+
+.sourceProvenanceBadge[data-kind="real_hardware"] {
+  border-color: #9ecfbd;
+  background: #f0fbf6;
+}
+
+.sourceProvenanceBadge[data-kind="offline"],
+.sourceProvenanceBadge[data-kind="simulated"],
+.sourceProvenanceBadge[data-kind="mixed"] {
+  border-color: #e6c66c;
+  background: #fff8df;
+}
+
+.sourceProvenanceBadge[data-kind="imported"] {
+  border-color: #b8c6d7;
+  background: #f3f7fb;
+}
+
+.sourceProvenanceKind {
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.sourceProvenanceDetails,
+.sourceProvenanceWarning {
+  color: #52606d;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sourceProvenanceWarning {
+  color: #8a5e07;
+  font-weight: 720;
+}
+
 .operatorCameraStatus .metricGrid.compact,
 .operatorSummaryMetrics.metricGrid.compact {
   grid-template-columns: repeat(2, minmax(0, 1fr));

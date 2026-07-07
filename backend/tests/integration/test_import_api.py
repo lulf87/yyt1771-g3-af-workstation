@@ -72,6 +72,7 @@ def test_import_api_accepts_project_json_export() -> None:
     assert body["measurement_definition"]["object_class"] == "A_BALLOON_ENVELOPE"
     assert body["analysis_result"]["temperature_distance"][0]["frame_index"] == 1
     assert body["frame_summary"]["temperature_distance_points"] == 1
+    assert body["provenance"]["overall_kind"] == "imported"
 
 
 def test_import_api_rejects_unknown_upload() -> None:

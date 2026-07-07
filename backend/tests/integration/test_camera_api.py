@@ -75,6 +75,8 @@ def test_camera_preview_endpoint_uses_simulated_camera_backend(monkeypatch) -> N
     assert payload["shape"] == [80, 120]
     assert payload["pixel_format"] == "mono8"
     assert payload["camera_meta"]["backend"] == "simulated"
+    assert payload["provenance"]["camera_is_simulated"] is True
+    assert payload["provenance"]["overall_kind"] == "mixed"
     assert payload["image_data_url"].startswith("data:image/png;base64,")
 
 
@@ -182,6 +184,8 @@ def test_real_camera_run_endpoint_uses_simulated_camera_backend(monkeypatch, tmp
     assert payload["run_manifest"]["frame_records"][0]["source"] == "simulated"
     assert payload["run_manifest"]["frame_records"][0]["camera_meta"]["backend"] == "simulated"
     assert payload["run_manifest"]["config_snapshot"]["camera_profile"]["backend"] == "simulated"
+    assert payload["run_manifest"]["operator_data_source"] == "real_camera"
+    assert payload["run_manifest"]["provenance"]["camera_is_simulated"] is True
 
 
 def test_camera_preview_png_endpoint_returns_frame_from_lazy_sdk(monkeypatch) -> None:  # noqa: ANN001

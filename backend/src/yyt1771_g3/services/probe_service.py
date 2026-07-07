@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 import numpy as np
 
+from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.models import DetectionResult, MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import OfflineDatasetRegistry
+from yyt1771_g3.services.source_provenance import offline_dataset_provenance
 from yyt1771_g3.temperature.sync import sync_temperature_for_frame
 from yyt1771_g3.vision.detectors import detect_frame
 
@@ -41,6 +44,8 @@ def probe_offline_frame(
             else None,
             "status": detection.detection_status.value,
         },
+        "image_data_url": _array_to_png_data_url(frame.array),
+        "provenance": offline_dataset_provenance(dataset_id),
     }
 
 
@@ -114,3 +119,7 @@ def _int_or_none(value: Any) -> int | None:
         return int(float(str(value)))
     except ValueError:
         return None
+
+
+def _array_to_png_data_url(array: np.ndarray) -> str:
+    return "data:image/png;base64," + base64.b64encode(array_to_png_bytes(array)).decode("ascii")

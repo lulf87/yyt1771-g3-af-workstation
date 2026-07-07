@@ -65,8 +65,14 @@ import {
   type RunResponse,
   type RotatedROI,
   type SerialPortInfo,
+  type SourceProvenance,
   type TemperatureStatusResponse
 } from "./api/client";
+import {
+  SourceProvenanceBadge,
+  provenanceLabel,
+  provenanceNeedsSimulatedWarning
+} from "./components/operator/SourceProvenanceBadge";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -183,6 +189,8 @@ function useUiText(): (text: string) => string {
 type LiveRunState = {
   runId: string;
   datasetId: string;
+  operatorDataSource: OperatorDataSource;
+  provenance: SourceProvenance | null;
   status: "running" | "complete" | "stopped";
   frameIndex: number;
   frameUrl: string;
@@ -193,6 +201,10 @@ type LiveRunState = {
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
 };
+
+type OperatorDataSource = "offline_dataset" | "real_camera";
+
+const OPERATOR_SOURCE_STORAGE_KEY = "yyt1771-g3-operator-source";
 
 type DetectionResultSource = "stabilized" | "raw";
 
@@ -505,14 +517,33 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   { key: "live_offline_fps", label: "Live offline fps", type: "float", min: 0.5, max: 30, step: 0.5, group: "Run", advanced: true, title: "Playback speed for live offline runs." }
 ];
 
+function readInitialOperatorDataSource(): OperatorDataSource {
+  try {
+    const stored = window.localStorage.getItem(OPERATOR_SOURCE_STORAGE_KEY);
+    return stored === "offline_dataset" || stored === "real_camera" ? stored : "real_camera";
+  } catch {
+    return "real_camera";
+  }
+}
+
+function persistOperatorDataSource(source: OperatorDataSource): void {
+  try {
+    window.localStorage.setItem(OPERATOR_SOURCE_STORAGE_KEY, source);
+  } catch {
+    return;
+  }
+}
+
 function App() {
   const initialUiMode = useMemo(() => readInitialUiMode(), []);
+  const initialOperatorDataSource = useMemo(() => readInitialOperatorDataSource(), []);
   const [uiMode, setUiMode] = useState<UiMode>(initialUiMode);
   const [page, setPage] = useState<Page>(() => defaultPageForUiMode(initialUiMode));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
   const [setupSource, setSetupSource] = useState<SetupSourceKind>(() =>
-    initialUiMode === "operator" ? "real_camera" : "offline_dataset"
+    initialUiMode === "operator" ? initialOperatorDataSource : "offline_dataset"
   );
+  const [operatorDataSource, setOperatorDataSource] = useState<OperatorDataSource>(initialOperatorDataSource);
   const [datasets, setDatasets] = useState<OfflineDatasetListItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [summary, setSummary] = useState<OfflineDatasetSummary | null>(null);
@@ -557,9 +588,9 @@ function App() {
   useEffect(() => {
     setPage((current) => normalizePageForUiMode(uiMode, current));
     if (uiMode === "operator") {
-      chooseSetupSource("real_camera");
+      chooseSetupSource(operatorDataSource);
     }
-  }, [uiMode]);
+  }, [uiMode, operatorDataSource]);
 
   useEffect(() => {
     window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, language);
@@ -628,9 +659,9 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!measurement || setupSource !== "real_camera") return;
+    if (!measurement) return;
     setOperatorSettings((current) => current ?? createOperatorSettingsDraft(measurement));
-  }, [measurement, setupSource]);
+  }, [measurement]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -754,8 +785,17 @@ function App() {
     }
   }
 
-  async function startLiveOfflineRun() {
-    if (!measurement || !selectedId) return;
+  async function runOperatorProbeCurrentFrame() {
+    if (operatorDataSource === "offline_dataset") {
+      await runProbe(frameIndex);
+      return;
+    }
+    await runOperatorRealCameraSetupProbe();
+  }
+
+  async function startLiveOfflineRun(measurementOverride?: MeasurementDefinition) {
+    const measurementForRun = measurementOverride ?? measurement;
+    if (!measurementForRun || !selectedId) return;
     const controller = new AbortController();
     runAbortRef.current = controller;
     setRunning(true);
@@ -765,8 +805,8 @@ function App() {
     liveRunIdRef.current = null;
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialLiveRun(selectedId, frameIndex, selectedDataset?.frame_count ?? frameIndex));
-    const runPreviewFps = Math.round(clamp(Number(measurement.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurement.detector_config.run_result_batch_size ?? 10), 1, 100));
+    const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
+    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
     const maxBatchWaitMs = 180;
     let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
@@ -789,9 +829,9 @@ function App() {
     };
 
     try {
-      const response = await streamLiveOfflineRun(selectedId, measurement, {
+      const response = await streamLiveOfflineRun(selectedId, measurementForRun, {
         startFrame: frameIndex,
-        targetFps: measurement.detector_config.live_offline_fps ?? 8,
+        targetFps: measurementForRun.detector_config.live_offline_fps ?? 8,
         signal: controller.signal
       }, (event) => {
         if (event.event === "frame") {
@@ -819,6 +859,8 @@ function App() {
               ? {
                   ...current,
                   status: "complete",
+                  operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
+                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length
@@ -839,12 +881,12 @@ function App() {
             const partialResult = await waitForStoppedRun(stoppedRunId);
             applyStoppedRunResult(partialResult);
           } catch (fetchErr) {
-            if (measurement && selectedId && liveRunProcessedFramesRef.current > 0) {
+            if (measurementForRun && selectedId && liveRunProcessedFramesRef.current > 0) {
               try {
-                const partialResult = await createLiveOfflineRun(selectedId, measurement, {
+                const partialResult = await createLiveOfflineRun(selectedId, measurementForRun, {
                   startFrame: frameIndex,
                   maxFrames: liveRunProcessedFramesRef.current,
-                  targetFps: measurement.detector_config.live_offline_fps ?? 8
+                  targetFps: measurementForRun.detector_config.live_offline_fps ?? 8
                 });
                 applyStoppedRunResult(partialResult);
               } catch (fallbackErr) {
@@ -875,6 +917,8 @@ function App() {
               ...current,
               status: "stopped",
               runId: partialResult.run_manifest.run_id,
+              operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
+              provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
               analysis: partialResult.analysis_result,
               processedFrames: partialResult.run_manifest.frame_records.length,
               totalFrames: partialResult.run_manifest.config_snapshot.max_frames as number
@@ -919,6 +963,12 @@ function App() {
     }
   }
 
+  function chooseOperatorDataSource(source: OperatorDataSource) {
+    setOperatorDataSource(source);
+    persistOperatorDataSource(source);
+    setOperatorStartMessage("");
+  }
+
   function patchOperatorSettings(patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) {
     setOperatorSettings((current) => {
       const draft = current ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
@@ -933,6 +983,42 @@ function App() {
       return draft ? confirmOperatorSettings(draft) : draft;
     });
     setOperatorStartMessage("");
+  }
+
+  function startOperatorRun() {
+    if (operatorDataSource === "offline_dataset") {
+      startOperatorOfflineRun();
+      return;
+    }
+    startOperatorRealCameraRun();
+  }
+
+  function startOperatorOfflineRun() {
+    const settings = operatorSettings ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
+    const validation = validateOperatorStart({
+      cameraOk: true,
+      measurement,
+      settings: settings ?? {
+        targetTemperatureC: null,
+        temperaturePowerPercent: 100,
+        serialPort: null,
+        confirmedAt: null,
+        dirty: true
+      },
+      serialPortRequired: false
+    });
+    if (!validation.ok) {
+      setOperatorStartMessage(localizeOperatorStartMessage(validation.message, language));
+      return;
+    }
+    if (!measurement || !settings) return;
+    const confirmedMeasurement = {
+      ...applyConfirmedSettingsToMeasurement(measurement, settings),
+      source: "offline_dataset" as const
+    };
+    applyMeasurement(confirmedMeasurement);
+    setOperatorStartMessage("");
+    void startLiveOfflineRun(confirmedMeasurement);
   }
 
   function startOperatorRealCameraRun() {
@@ -954,7 +1040,10 @@ function App() {
       return;
     }
     if (!measurement || !settings) return;
-    const confirmedMeasurement = applyConfirmedSettingsToMeasurement(measurement, settings);
+    const confirmedMeasurement = {
+      ...applyConfirmedSettingsToMeasurement(measurement, settings),
+      source: "real_camera" as const
+    };
     applyMeasurement(confirmedMeasurement);
     setOperatorStartMessage("");
     void startRealCameraRunWithMeasurement(confirmedMeasurement);
@@ -1164,6 +1253,8 @@ function App() {
               ? {
                   ...current,
                   status: "complete",
+                  operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
+                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length,
@@ -1209,6 +1300,8 @@ function App() {
               ...current,
               status: "stopped",
               runId: partialResult.run_manifest.run_id,
+              operatorDataSource: partialResult.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
+              provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
               analysis: partialResult.analysis_result,
               processedFrames: partialResult.run_manifest.frame_records.length,
               totalFrames: partialResult.run_manifest.frame_records.length,
@@ -1320,6 +1413,11 @@ function App() {
               frameUrl={frameUrl}
               setupSource={setupSource}
               onSetupSource={chooseSetupSource}
+              datasets={datasets}
+              selectedId={selectedId}
+              operatorDataSource={operatorDataSource}
+              onSelectedDataset={setSelectedId}
+              onOperatorDataSource={chooseOperatorDataSource}
               probe={probe}
               runResult={runResult}
               liveRun={liveRun}
@@ -1343,12 +1441,12 @@ function App() {
               importedRun={importedRun}
               onOperatorSettingsPatch={patchOperatorSettings}
               onOperatorSettingsConfirm={confirmCurrentOperatorSettings}
-              onOperatorStartRun={startOperatorRealCameraRun}
+              onOperatorStartRun={startOperatorRun}
               onImportRunExport={importOperatorRunExport}
               onImportedRun={setImportedRun}
               onProbe={runProbe}
               onProbeRealCameraSetup={runRealCameraSetupProbe}
-              onOperatorProbeCurrentFrame={runOperatorRealCameraSetupProbe}
+              onOperatorProbeCurrentFrame={runOperatorProbeCurrentFrame}
               onStartRun={startLiveOfflineRun}
               onStopRun={stopLiveOfflineRun}
               onPreviewRealCamera={refreshRealCameraSetupFrame}
@@ -1429,6 +1527,11 @@ function PageContent({
   frameUrl,
   setupSource,
   onSetupSource,
+  datasets,
+  selectedId,
+  operatorDataSource,
+  onSelectedDataset,
+  onOperatorDataSource,
   probe,
   runResult,
   liveRun,
@@ -1478,6 +1581,11 @@ function PageContent({
   frameUrl: string;
   setupSource: SetupSourceKind;
   onSetupSource: (source: SetupSourceKind) => void;
+  datasets: OfflineDatasetListItem[];
+  selectedId: string;
+  operatorDataSource: OperatorDataSource;
+  onSelectedDataset: (datasetId: string) => void;
+  onOperatorDataSource: (source: OperatorDataSource) => void;
   probe: ProbeResponse | null;
   runResult: RunResponse | null;
   liveRun: LiveRunState | null;
@@ -1582,14 +1690,9 @@ function PageContent({
   }
   const isSetup = page === "setup";
   const isOperatorRun = page === "operatorRun";
-  const isRealCameraSetup = (isSetup || isOperatorRun) && setupSource === "real_camera";
-  const activeFrameTitle = isRealCameraSetup
-    ? `${t("Real camera")} · ${cameraPreviewState?.mode === "frozen" ? t("Frozen frame") : t("Live camera frame")}`
-    : `${uiDatasetLabel(language, dataset)} · ${t("frame")} ${frameIndex}`;
-  const activeFrameUrl = isRealCameraSetup ? cameraPreviewUrl : frameUrl;
-  const activeSourceShape = isRealCameraSetup ? cameraPreview?.shape ?? cameraPreviewState?.shape ?? summary.first_frame.shape : summary.first_frame.shape;
-  const shouldRefreshAfterRoiCommit = shouldRefreshRealCameraFrameAfterRoiCommit(setupPageForEffects, setupSource, cameraPreviewState);
-  const frozenSetupMessage = frozenFrameSetupChangeMessage(setupPageForEffects, setupSource, cameraPreviewState, language);
+  const isRealCameraSetup =
+    (isSetup && setupSource === "real_camera") ||
+    (isOperatorRun && operatorDataSource === "real_camera");
   const displayedProbe = isRealCameraSetup
     ? probe?.dataset_id === "real_camera"
       ? probe
@@ -1597,6 +1700,15 @@ function PageContent({
     : probe?.dataset_id === "real_camera"
       ? null
       : probe;
+  const activeFrameTitle = isRealCameraSetup
+    ? `${t("Real camera")} · ${cameraPreviewState?.mode === "frozen" ? t("Frozen frame") : t("Live camera frame")}`
+    : `${uiDatasetLabel(language, dataset)} · ${t("frame")} ${frameIndex}`;
+  const activeFrameUrl = isRealCameraSetup ? cameraPreviewUrl : displayedProbe?.image_data_url ?? frameUrl;
+  const activeSourceShape = isRealCameraSetup
+    ? cameraPreview?.shape ?? cameraPreviewState?.shape ?? summary.first_frame.shape
+    : displayedProbe?.frame.shape ?? summary.first_frame.shape;
+  const shouldRefreshAfterRoiCommit = shouldRefreshRealCameraFrameAfterRoiCommit(setupPageForEffects, setupSource, cameraPreviewState);
+  const frozenSetupMessage = frozenFrameSetupChangeMessage(setupPageForEffects, setupSource, cameraPreviewState, language);
 
   function scheduleRealCameraSetupRefresh(change: RealCameraSetupChange) {
     if (!shouldRefreshRealCameraFrameAfterSetupChange(setupPageForEffects, setupSource, cameraPreviewState, change)) return;
@@ -1644,6 +1756,13 @@ function PageContent({
         cameraPreviewState={cameraPreviewState}
         activeSourceShape={activeSourceShape}
         activeFrameTitle={activeFrameTitle}
+        activeFrameUrl={activeFrameUrl}
+        datasets={datasets}
+        selectedDataset={dataset}
+        selectedDatasetId={selectedId}
+        operatorDataSource={operatorDataSource}
+        onSelectedDataset={onSelectedDataset}
+        onOperatorDataSource={onOperatorDataSource}
         probe={displayedProbe}
         probing={probing}
         operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
@@ -1654,6 +1773,7 @@ function PageContent({
         checkingTemperature={checkingTemperature}
         loadingSerialPorts={loadingSerialPorts}
         runningCamera={runningCamera}
+        runningOffline={running}
         liveRun={liveRun}
         runResult={runResult}
         onOperatorSettingsPatch={onOperatorSettingsPatch}
@@ -1777,6 +1897,13 @@ function OperatorRunPage({
   cameraPreviewState,
   activeSourceShape,
   activeFrameTitle,
+  activeFrameUrl,
+  datasets,
+  selectedDataset,
+  selectedDatasetId,
+  operatorDataSource,
+  onSelectedDataset,
+  onOperatorDataSource,
   probe,
   probing,
   operatorSettings,
@@ -1787,6 +1914,7 @@ function OperatorRunPage({
   checkingTemperature,
   loadingSerialPorts,
   runningCamera,
+  runningOffline,
   liveRun,
   runResult,
   onOperatorSettingsPatch,
@@ -1810,6 +1938,13 @@ function OperatorRunPage({
   cameraPreviewState: RealCameraPreviewState | null;
   activeSourceShape: number[];
   activeFrameTitle: string;
+  activeFrameUrl: string;
+  datasets: OfflineDatasetListItem[];
+  selectedDataset: OfflineDatasetListItem;
+  selectedDatasetId: string;
+  operatorDataSource: OperatorDataSource;
+  onSelectedDataset: (datasetId: string) => void;
+  onOperatorDataSource: (source: OperatorDataSource) => void;
   probe: ProbeResponse | null;
   probing: boolean;
   operatorSettings: OperatorConfirmedSettings;
@@ -1820,6 +1955,7 @@ function OperatorRunPage({
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
   runningCamera: boolean;
+  runningOffline: boolean;
   liveRun: LiveRunState | null;
   runResult: RunResponse | null;
   onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
@@ -1835,7 +1971,18 @@ function OperatorRunPage({
   const language = useUiLanguage();
   const t = useUiText();
   const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
-  const setupProbeDetection = !runningCamera && probe?.dataset_id === "real_camera" ? probe.detection_result : null;
+  const operatorRunActive = runningCamera || runningOffline;
+  const isOfflineSource = operatorDataSource === "offline_dataset";
+  const sourceProvenance = currentSourceProvenance({
+    operatorDataSource,
+    selectedDataset,
+    cameraPreview,
+    probe,
+    liveRun,
+    runResult
+  });
+  const sourceWarning = operatorSourceWarning(operatorDataSource, sourceProvenance, language);
+  const setupProbeDetection = !operatorRunActive && probe ? probe.detection_result : null;
   const latestRunResultDetection = runResult?.run_manifest.detection_results.length
     ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
     : null;
@@ -1843,24 +1990,24 @@ function OperatorRunPage({
     liveRun?.detectionResult ??
     setupProbeDetection ??
     latestRunResultDetection;
-  const setupProbeFrameUrl = setupProbeDetection ? cameraPreviewUrl : "";
+  const setupProbeFrameUrl = setupProbeDetection ? probe?.image_data_url ?? (isOfflineSource ? activeFrameUrl : cameraPreviewUrl) : "";
   const latestRunResultFrameUrl = runResult?.run_manifest.run_id && latestRunResultDetection
     ? runFrameImageUrl(runResult.run_manifest.run_id, latestRunResultDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
     : "";
   const latestFrameUrl =
     liveRun?.frameUrl ??
-    (setupProbeFrameUrl || latestRunResultFrameUrl || cameraPreviewUrl);
+    (setupProbeFrameUrl || latestRunResultFrameUrl || activeFrameUrl);
   const latestFrameShape =
     liveRun?.frameShape ??
     (setupProbeDetection ? probe?.frame.shape ?? cameraPreview?.shape ?? activeSourceShape : null) ??
     runResult?.run_manifest.frame_records[runResult.run_manifest.frame_records.length - 1]?.shape ??
     activeSourceShape;
   const latestFrameTitle = liveRun?.detectionResult
-    ? `${t("Real camera run")} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
+    ? `${provenanceLabel(sourceProvenance, language)} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
     : setupProbeDetection
       ? `${t("Current frame probe")} · ${t("frame")} ${setupProbeDetection.frame_index}`
-      : latestDetection
-        ? `${t("Real camera run")} · ${t("frame")} ${latestDetection.frame_index}`
+    : latestDetection
+        ? `${provenanceLabel(sourceProvenance, language)} · ${t("frame")} ${latestDetection.frame_index}`
         : activeFrameTitle;
   const serialPortOptions = uniqueStrings([
     operatorSettings.serialPort ?? "",
@@ -1870,8 +2017,9 @@ function OperatorRunPage({
   const currentTemperature = temperatureStatus?.reading.celsius ?? latestDetection?.temperature_celsius ?? null;
   const cameraOk = (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "") === "ok";
   const hasMeasurementRoi = measurement.roi.width > 0 && measurement.roi.height > 0;
-  const probeCurrentFrameDisabled = probing || runningCamera || !cameraOk || !hasMeasurementRoi;
+  const probeCurrentFrameDisabled = probing || operatorRunActive || (!isOfflineSource && !cameraOk) || !hasMeasurementRoi;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
+  const startButtonLabel = operatorStartButtonLabel(operatorDataSource, sourceProvenance);
 
   function changeObjectClass(value: string) {
     const option = OBJECT_CLASS_OPTIONS.find((item) => item.value === value);
@@ -1888,11 +2036,21 @@ function OperatorRunPage({
     <div className="operatorRunGrid">
       <section className="toolPanel operatorControlPanel">
         <h2>{t("Live Test")}</h2>
+        <OperatorSourceControls
+          datasets={datasets}
+          selectedDataset={selectedDataset}
+          selectedDatasetId={selectedDatasetId}
+          source={operatorDataSource}
+          disabled={operatorRunActive}
+          onDataset={onSelectedDataset}
+          onSource={onOperatorDataSource}
+        />
+        <SourceProvenanceBadge provenance={sourceProvenance} language={language} warning={sourceWarning} />
         <div className="controlStack">
           <h3>{t("Test object")}</h3>
           <label className="field">
             <span>{t("Object class")}</span>
-            <select disabled={runningCamera} onChange={(event) => changeObjectClass(event.target.value)} value={measurement.object_class}>
+            <select disabled={operatorRunActive} onChange={(event) => changeObjectClass(event.target.value)} value={measurement.object_class}>
               {OBJECT_CLASS_OPTIONS.filter((option) => option.value !== "D_RESERVED_OBJECT").map((option) => (
                 <option key={option.value} value={option.value}>
                   {uiObjectClass(language, option.value)}
@@ -1910,12 +2068,19 @@ function OperatorRunPage({
           </details>
         </div>
         <div className="controlStack operatorCameraStatus">
-          <h3>{t("Camera")}</h3>
-          <dl className="metricGrid compact">
-            <Metric label="Camera status" value={cameraOk ? "ok" : "Camera unavailable"} />
-            <Metric label="Live display" value={cameraPreviewState?.mode === "frozen" ? "Paused" : "Live"} />
-          </dl>
-          {cameraPreviewError && !cameraOk ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
+          <h3>{isOfflineSource ? t("Offline material") : t("Camera")}</h3>
+          {isOfflineSource ? (
+            <dl className="metricGrid compact">
+              <Metric label="Source" value={uiDatasetLabel(language, selectedDataset)} />
+              <Metric label="Current frame" value={probe?.frame.frame_index ?? t("Not probed")} />
+            </dl>
+          ) : (
+            <dl className="metricGrid compact">
+              <Metric label="Camera status" value={cameraOk ? "ok" : "Camera unavailable"} />
+              <Metric label="Live display" value={cameraPreviewState?.mode === "frozen" ? "Paused" : "Live"} />
+            </dl>
+          )}
+          {!isOfflineSource && cameraPreviewError && !cameraOk ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
           <button
             className="primaryButton"
             disabled={probeCurrentFrameDisabled}
@@ -1925,7 +2090,7 @@ function OperatorRunPage({
             <SquareDashedMousePointer size={16} aria-hidden="true" />
             {probing ? t("Probing") : t("Probe current frame")}
           </button>
-          {runningCamera ? <div className="inlineWarning">{t("Single-frame probing is disabled during a live test")}</div> : null}
+          {operatorRunActive ? <div className="inlineWarning">{t("Single-frame probing is disabled during a live test")}</div> : null}
           {setupProbeSummary ? (
             <div className={setupProbeDetection?.detection_status === "VALID" ? "inlineSuccess" : "inlineWarning"}>
               {setupProbeSummary}
@@ -1940,6 +2105,7 @@ function OperatorRunPage({
           temperatureError={temperatureError}
           checkingTemperature={checkingTemperature}
           loadingSerialPorts={loadingSerialPorts}
+          simulatedMode={isOfflineSource}
           onPatch={onOperatorSettingsPatch}
           onConfirm={onOperatorSettingsConfirm}
           onReadCurrentTemperature={onReadCurrentTemperature}
@@ -1958,17 +2124,18 @@ function OperatorRunPage({
         </details>
         {operatorStartMessage ? <div className="inlineWarning">{operatorStartMessage}</div> : null}
         <div className="operatorRunActions">
-          <button className="primaryButton" disabled={runningCamera} onClick={onOperatorStartRun} type="button">
+          <button className="primaryButton" disabled={operatorRunActive} onClick={onOperatorStartRun} type="button">
             <Play size={16} aria-hidden="true" />
-            {runningCamera ? t("Running") : t("Start live test")}
+            {operatorRunActive ? t("Running") : t(startButtonLabel)}
           </button>
-          <button className="secondaryButton" disabled={!runningCamera} onClick={onStopRun} type="button">
+          <button className="secondaryButton" disabled={!operatorRunActive} onClick={onStopRun} type="button">
             <Square size={16} aria-hidden="true" />
             {t("Stop test")}
           </button>
         </div>
       </section>
       <section className="operatorVisualStack">
+        <SourceProvenanceBadge provenance={sourceProvenance} language={language} compact warning={sourceWarning} />
         {latestFrameUrl ? (
           <FrameCanvas
             title={latestFrameTitle}
@@ -1977,9 +2144,9 @@ function OperatorRunPage({
             roi={measurement.roi}
             abPoints={latestDetection?.ab_points ?? null}
             debugArtifacts={latestDetection?.debug_artifacts ?? null}
-            onRoiChange={runningCamera ? undefined : onRoiChange}
-            onRoiCommit={runningCamera ? undefined : onRoiCommit}
-            readOnly={runningCamera}
+            onRoiChange={operatorRunActive ? undefined : onRoiChange}
+            onRoiCommit={operatorRunActive ? undefined : onRoiCommit}
+            readOnly={operatorRunActive}
           />
         ) : (
           <PreviewPlaceholder
@@ -1992,8 +2159,9 @@ function OperatorRunPage({
           <div className="runTrendHeader">
             <div>
               <h2>{t("Live Trend")}</h2>
-              <p>{t("Real camera run")}</p>
+              <p>{provenanceLabel(sourceProvenance, language)}</p>
             </div>
+            <SourceProvenanceBadge provenance={sourceProvenance} language={language} compact />
             <div className="runTrendStatusLabel">{liveRun?.status === "running" ? t("Current run so far") : t("Full run")}</div>
           </div>
           {latestAnalysis ? (
@@ -2013,6 +2181,69 @@ function OperatorRunPage({
   );
 }
 
+function OperatorSourceControls({
+  datasets,
+  selectedDataset,
+  selectedDatasetId,
+  source,
+  disabled,
+  onDataset,
+  onSource
+}: {
+  datasets: OfflineDatasetListItem[];
+  selectedDataset: OfflineDatasetListItem;
+  selectedDatasetId: string;
+  source: OperatorDataSource;
+  disabled: boolean;
+  onDataset: (datasetId: string) => void;
+  onSource: (source: OperatorDataSource) => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  return (
+    <div className="controlStack operatorSourceControls">
+      <h3>{t("Data source")}</h3>
+      <div className="segmented wide" aria-label={t("Data source")}>
+        <button
+          className={source === "offline_dataset" ? "active" : ""}
+          disabled={disabled}
+          onClick={() => onSource("offline_dataset")}
+          type="button"
+        >
+          <Database size={15} aria-hidden="true" />
+          {t("Offline dataset")}
+        </button>
+        <button
+          className={source === "real_camera" ? "active" : ""}
+          disabled={disabled}
+          onClick={() => onSource("real_camera")}
+          type="button"
+        >
+          <Camera size={15} aria-hidden="true" />
+          {t("Real camera")}
+        </button>
+      </div>
+      {source === "offline_dataset" ? (
+        <label className="field">
+          <span>{t("Offline material")}</span>
+          <select disabled={disabled} onChange={(event) => onDataset(event.target.value)} value={selectedDatasetId}>
+            {datasets.map((dataset) => (
+              <option key={dataset.id} value={dataset.id}>
+                {operatorDatasetOptionLabel(dataset, language)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <div className="operatorSourceHint">{uiText(language, "Real camera source uses the live camera API.")}</div>
+      )}
+      {source === "offline_dataset" ? (
+        <div className="operatorSourceHint">{uiDatasetLabel(language, selectedDataset)}</div>
+      ) : null}
+    </div>
+  );
+}
+
 function OperatorTemperaturePanel({
   currentTemperature,
   operatorSettings,
@@ -2021,6 +2252,7 @@ function OperatorTemperaturePanel({
   temperatureError,
   checkingTemperature,
   loadingSerialPorts,
+  simulatedMode,
   onPatch,
   onConfirm,
   onReadCurrentTemperature,
@@ -2033,6 +2265,7 @@ function OperatorTemperaturePanel({
   temperatureError: SetupTemperatureError | null;
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
+  simulatedMode: boolean;
   onPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onConfirm: () => void;
   onReadCurrentTemperature: () => void;
@@ -2043,11 +2276,17 @@ function OperatorTemperaturePanel({
   return (
     <div className="controlStack operatorTemperaturePanel">
       <h3>{t("Temperature Control")}</h3>
-      <div className="operatorTemperatureReadout">
-        <span>{formatTemperatureValue(currentTemperature, language)}</span>
-        <small>{temperatureStatus?.temperature_status ? uiStatus(language, temperatureStatus.temperature_status) : t("Not read")}</small>
-      </div>
-      {temperatureError ? <div className="inlineError">{temperatureError.message}</div> : null}
+      {simulatedMode ? (
+        <div className="inlineWarning">{t("No real temperature controller is connected in simulated mode.")}</div>
+      ) : (
+        <>
+          <div className="operatorTemperatureReadout">
+            <span>{formatTemperatureValue(currentTemperature, language)}</span>
+            <small>{temperatureStatus?.temperature_status ? uiStatus(language, temperatureStatus.temperature_status) : t("Not read")}</small>
+          </div>
+          {temperatureError ? <div className="inlineError">{temperatureError.message}</div> : null}
+        </>
+      )}
       <div className="twoColumnControls">
         <NullableNumberField
           label="Target temperature"
@@ -2062,30 +2301,36 @@ function OperatorTemperaturePanel({
           onChange={(value) => onPatch({ temperaturePowerPercent: clamp(value, 0, 100) })}
         />
       </div>
-      <label className="field">
-        <span>{t("Temperature serial port")}</span>
-        <select onChange={(event) => onPatch({ serialPort: event.target.value || null })} value={operatorSettings.serialPort ?? ""}>
-          <option value="">{t("Configured/default")}</option>
-          {serialPortOptions.map((port) => (
-            <option key={port} value={port}>
-              {port}
-            </option>
-          ))}
-        </select>
-      </label>
+      {!simulatedMode ? (
+        <label className="field">
+          <span>{t("Temperature serial port")}</span>
+          <select onChange={(event) => onPatch({ serialPort: event.target.value || null })} value={operatorSettings.serialPort ?? ""}>
+            <option value="">{t("Configured/default")}</option>
+            {serialPortOptions.map((port) => (
+              <option key={port} value={port}>
+                {port}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <div className="buttonPair">
         <button className="primaryButton" onClick={onConfirm} type="button">
           {t("Confirm test settings")}
         </button>
-        <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
-          <Usb size={16} aria-hidden="true" />
-          {loadingSerialPorts ? t("Scanning") : t("Refresh ports")}
-        </button>
+        {!simulatedMode ? (
+          <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
+            <Usb size={16} aria-hidden="true" />
+            {loadingSerialPorts ? t("Scanning") : t("Refresh ports")}
+          </button>
+        ) : null}
       </div>
-      <button className="secondaryButton compactOperatorButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
-        <Thermometer size={16} aria-hidden="true" />
-        {checkingTemperature ? t("Reading") : t("Read temp")}
-      </button>
+      {!simulatedMode ? (
+        <button className="secondaryButton compactOperatorButton" disabled={checkingTemperature} onClick={onReadCurrentTemperature} type="button">
+          <Thermometer size={16} aria-hidden="true" />
+          {checkingTemperature ? t("Reading") : t("Read temp")}
+        </button>
+      ) : null}
       <div className={operatorSettings.dirty || !operatorSettings.confirmedAt ? "inlineWarning" : "inlineSuccess"}>
         {operatorSettingsSummary(operatorSettings, language)}
       </div>
@@ -2183,6 +2428,12 @@ function OperatorResultsPage({
   );
   const analysis = currentAnalysis ?? importedRun?.analysis_result ?? null;
   const isImported = !currentAnalysis && importedRun?.analysis_result;
+  const resultProvenance =
+    runResult?.run_manifest.provenance ??
+    liveRun?.provenance ??
+    importedRun?.provenance ??
+    null;
+  const resultSourceWarning = sourceProvenanceWarning(resultProvenance, language);
 
   async function exportCurrentRun() {
     if (!currentRunId) return;
@@ -2203,11 +2454,12 @@ function OperatorResultsPage({
     <div className="operatorResultsGrid">
       <section className="toolPanel operatorResultSummary">
         <h2>{t("Results / Export")}</h2>
+        <SourceProvenanceBadge provenance={resultProvenance} language={language} compact warning={resultSourceWarning} />
         <dl className="metricGrid compact operatorSummaryMetrics">
           <Metric label="Run" value={currentRunId ?? importedRun?.run_manifest?.run_id ?? importedRun?.filename ?? "No run selected"} />
           <Metric label="AFAS status" value={readAfasStatus(analysis)} />
           <Metric label="Formal temp-distance points" value={analysis?.temperature_distance.length ?? importedRun?.frame_summary.temperature_distance_points ?? 0} />
-          <Metric label="Source" value={isImported ? "Imported file" : "Current run so far"} />
+          <Metric label="Source" value={resultProvenance ? provenanceLabel(resultProvenance, language) : isImported ? "Imported file" : "Current run so far"} />
         </dl>
         {analysis ? <OperatorAfasSummary analysis={analysis} /> : null}
         <button
@@ -2256,8 +2508,10 @@ function ImportedRunSummary({ view }: { view: ImportedRunView }) {
   const language = useUiLanguage();
   const measurement = view.measurement_definition;
   const analysis = view.analysis_result;
+  const sourceWarning = sourceProvenanceWarning(view.provenance, language);
   return (
     <div className="importedRunSummary">
+      <SourceProvenanceBadge provenance={view.provenance} language={language} compact warning={sourceWarning} />
       <dl className="metricGrid compact operatorSummaryMetrics">
         <Metric label="File" value={view.filename} />
         <Metric label="Run" value={view.run_manifest?.run_id ?? analysis?.run_id ?? "None"} />
@@ -5389,12 +5643,150 @@ function createDefaultMeasurement(
   };
 }
 
+function currentSourceProvenance({
+  operatorDataSource,
+  selectedDataset,
+  cameraPreview,
+  probe,
+  liveRun,
+  runResult
+}: {
+  operatorDataSource: OperatorDataSource;
+  selectedDataset: OfflineDatasetListItem;
+  cameraPreview: CameraPreviewResponse | null;
+  probe: ProbeResponse | null;
+  liveRun: LiveRunState | null;
+  runResult: RunResponse | null;
+}): SourceProvenance {
+  if (operatorDataSource === "offline_dataset") {
+    return (
+      liveRun?.provenance ??
+      runResult?.run_manifest.provenance ??
+      runResult?.analysis_result.provenance ??
+      probe?.provenance ??
+      offlineFallbackProvenance(selectedDataset)
+    );
+  }
+  return (
+    liveRun?.provenance ??
+    runResult?.run_manifest.provenance ??
+    runResult?.analysis_result.provenance ??
+    probe?.provenance ??
+    cameraPreview?.provenance ??
+    unknownFallbackProvenance()
+  );
+}
+
+function operatorSourceWarning(
+  source: OperatorDataSource,
+  provenance: SourceProvenance | null | undefined,
+  language: UiLanguage
+): string {
+  if (source === "offline_dataset") {
+    return uiText(
+      language,
+      "Offline/simulated material is active. Use this only for UI or algorithm debugging; it is not real test data."
+    );
+  }
+  if (provenance?.camera_is_simulated) {
+    return uiText(language, "Current camera backend is simulated. Do not use this as real test data.");
+  }
+  return sourceProvenanceWarning(provenance, language);
+}
+
+function sourceProvenanceWarning(
+  provenance: SourceProvenance | null | undefined,
+  language: UiLanguage
+): string {
+  const warningSource =
+    provenance?.overall_kind === "imported" && provenance.imported_from_provenance
+      ? provenance.imported_from_provenance
+      : provenance;
+  if (!warningSource) return "";
+  if (warningSource.overall_kind === "mixed") {
+    return uiText(
+      language,
+      "Mixed source mode is active. Some data comes from simulated devices; do not use as a formal test result."
+    );
+  }
+  if (warningSource.overall_kind === "offline" || warningSource.overall_kind === "simulated") {
+    return uiText(
+      language,
+      "Offline/simulated material is active. Use this only for UI or algorithm debugging; it is not real test data."
+    );
+  }
+  if (provenanceNeedsSimulatedWarning(warningSource)) {
+    return uiText(language, "Current source includes simulated hardware. Do not use this as real test data.");
+  }
+  return "";
+}
+
+function operatorStartButtonLabel(
+  source: OperatorDataSource,
+  provenance: SourceProvenance | null | undefined
+): string {
+  if (source === "offline_dataset" || provenance?.camera_is_simulated) {
+    return "Start simulated test";
+  }
+  return "Start live test";
+}
+
+function operatorDatasetOptionLabel(dataset: OfflineDatasetListItem, language: UiLanguage): string {
+  const captureId = dataset.label.includes("：")
+    ? dataset.label.split("：").pop() || dataset.id
+    : dataset.id.replace(/^golden_[ac]_/, "");
+  if (language === "zh") {
+    const prefix = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "C 类多细支/多线束" : "A 类球囊/网状结构";
+    return `${prefix}：${captureId}`;
+  }
+  const prefix = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "C bundle" : "A balloon/mesh";
+  return `${prefix}: ${captureId}`;
+}
+
+function offlineFallbackProvenance(dataset: OfflineDatasetListItem): SourceProvenance {
+  return {
+    acquisition_source: "offline_dataset",
+    camera_backend: "offline_dataset",
+    camera_backend_kind: "simulated_dataset",
+    camera_is_simulated: true,
+    camera_label: dataset.label || dataset.id,
+    camera_serial: "",
+    simulated_dataset_id: dataset.id,
+    temperature_backend: "offline_temperature_csv",
+    temperature_backend_kind: "simulated",
+    temperature_is_simulated: true,
+    overall_kind: "offline",
+    display_label_zh: "离线/模拟素材",
+    display_label_en: "Offline/simulated material"
+  };
+}
+
+function unknownFallbackProvenance(): SourceProvenance {
+  return {
+    acquisition_source: "unknown",
+    camera_backend: "",
+    camera_backend_kind: "unknown",
+    camera_is_simulated: false,
+    camera_label: "",
+    camera_serial: "",
+    simulated_dataset_id: "",
+    temperature_backend: "",
+    temperature_backend_kind: "unknown",
+    temperature_is_simulated: false,
+    overall_kind: "unknown",
+    display_label_zh: "未知来源",
+    display_label_en: "Unknown source"
+  };
+}
+
 function createInitialLiveRun(datasetId: string, startFrame: number, frameCount: number): LiveRunState {
   const totalFrames = Math.max(1, frameCount - startFrame + 1);
   const runId = `pending-${datasetId}-${Date.now()}`;
   return {
     runId,
     datasetId,
+    operatorDataSource: "offline_dataset",
+    provenance: null,
     status: "running",
     frameIndex: startFrame,
     frameUrl: frameIndexImageUrl(datasetId, startFrame, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
@@ -5412,6 +5804,8 @@ function createInitialRealCameraLiveRun(): LiveRunState {
   return {
     runId,
     datasetId: "real_camera",
+    operatorDataSource: "real_camera",
+    provenance: null,
     status: "running",
     frameIndex: 0,
     frameUrl: "",
@@ -5447,6 +5841,8 @@ function updateLiveRunFromFrame(
   const previous = current ?? {
     runId,
     datasetId: event.dataset_id,
+    operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
+    provenance: event.provenance ?? null,
     status: "running" as const,
     frameIndex: event.frame_index,
     frameUrl: apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
@@ -5471,6 +5867,8 @@ function updateLiveRunFromFrame(
     ...previous,
     runId,
     datasetId: event.dataset_id,
+    operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : event.operator_data_source === "offline_dataset" ? "offline_dataset" : previous.operatorDataSource,
+    provenance: event.provenance ?? previous.provenance,
     status: "running",
     frameIndex: refreshPreview ? event.frame_index : previous.frameIndex,
     frameUrl: refreshPreview ? apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }) : previous.frameUrl,

@@ -33,6 +33,7 @@ from yyt1771_g3.services.run_detector_policy import (
     measurement_for_detector_mode,
     should_rerun_with_enhanced,
 )
+from yyt1771_g3.services.source_provenance import camera_runtime_provenance
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureController, TemperatureReading
 from yyt1771_g3.vision.detectors import detect_frame_with_state
@@ -60,6 +61,7 @@ def run_real_camera(
     target_fps: float | None = None,
     camera_profile: dict[str, Any] | None = None,
     temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
+    temperature_backend: str = "",
     save_raw_frames: bool = False,
     save_preview_frames: bool = True,
     preview_max_width: int = 1200,
@@ -129,6 +131,7 @@ def run_real_camera(
         target_fps=target_fps,
         camera_profile=camera_profile,
         temp_sync_target_ms=temp_sync_target_ms,
+        temperature_backend=temperature_backend,
         save_raw_frames=save_raw_frames,
         save_preview_frames=save_preview_frames,
         preview_max_width=preview_max_width,
@@ -146,6 +149,7 @@ def iter_real_camera_run_events(
     target_fps: float | None = None,
     camera_profile: dict[str, Any] | None = None,
     temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
+    temperature_backend: str = "",
     save_raw_frames: bool = False,
     save_preview_frames: bool = True,
     preview_max_width: int = 1200,
@@ -215,6 +219,7 @@ def iter_real_camera_run_events(
                     processed_frames=len(frame_records),
                 ),
                 temp_sync_target_ms=temp_sync_target_ms,
+                temperature_backend=temperature_backend,
                 save_raw_frames=save_raw_frames,
                 save_preview_frames=save_preview_frames,
             )
@@ -237,6 +242,7 @@ def iter_real_camera_run_events(
             target_fps=target_fps,
             camera_profile=camera_profile,
             temp_sync_target_ms=temp_sync_target_ms,
+            temperature_backend=temperature_backend,
             save_raw_frames=save_raw_frames,
             save_preview_frames=save_preview_frames,
             preview_max_width=preview_max_width,
@@ -263,6 +269,7 @@ def iter_real_camera_run_events(
                     target_fps=target_fps,
                     camera_profile=camera_profile,
                     temp_sync_target_ms=temp_sync_target_ms,
+                    temperature_backend=temperature_backend,
                     save_raw_frames=save_raw_frames,
                     save_preview_frames=save_preview_frames,
                     preview_max_width=preview_max_width,
@@ -287,26 +294,39 @@ def _save_real_camera_run_result(
     target_fps: float | None,
     camera_profile: dict[str, Any] | None,
     temp_sync_target_ms: float,
+    temperature_backend: str,
     save_raw_frames: bool,
     save_preview_frames: bool,
     preview_max_width: int,
     stop_reason: str,
 ) -> RealCameraRunResult:
+    first_frame = frame_records[0] if frame_records else None
+    first_temperature = temperature_records[0] if temperature_records else None
+    provenance = camera_runtime_provenance(
+        camera_profile=camera_profile,
+        camera_meta=first_frame.camera_meta if first_frame is not None else None,
+        temperature_backend=temperature_backend,
+        temperature_source=first_temperature.source if first_temperature is not None else "",
+    )
     manifest = RunManifest(
         run_id=run_id,
         dataset_id="real_camera",
         measurement_definition=measurement,
+        operator_data_source="real_camera",
+        provenance=provenance,
         frame_records=frame_records,
         temperature_records=temperature_records,
         detection_results=detection_results,
         config_snapshot={
             "mode": "real_camera_run",
+            "operator_data_source": "real_camera",
+            "provenance": provenance,
             "max_frames": max_frames,
             "processed_frames": len(frame_records),
             "stop_reason": stop_reason,
             "target_fps": target_fps or measurement.detector_config.live_offline_fps,
             "camera_profile": camera_profile or {},
-            "temperature_backend": temperature_records[-1].source if temperature_records else "",
+            "temperature_backend": temperature_backend or (temperature_records[-1].source if temperature_records else ""),
             "target_temperature_celsius": measurement.detector_config.target_temperature_celsius,
             "temperature_power_percent": measurement.detector_config.temperature_power_percent,
             "temp_sync_target_ms": temp_sync_target_ms,
@@ -565,6 +585,7 @@ def _frame_event(
     curve_points: dict[str, CurvePoint | None],
     afas_preprocessing: dict[str, Any],
     temp_sync_target_ms: float,
+    temperature_backend: str,
     save_raw_frames: bool,
     save_preview_frames: bool,
 ) -> dict[str, Any]:
@@ -577,6 +598,12 @@ def _frame_event(
         "event": "frame",
         "run_id": run_id,
         "dataset_id": "real_camera",
+        "operator_data_source": "real_camera",
+        "provenance": camera_runtime_provenance(
+            camera_meta=frame_record.camera_meta,
+            temperature_backend=temperature_backend,
+            temperature_source=temperature_record.source,
+        ),
         "frame_index": frame_record.frame_index,
         "frame_count": frame_limit or 0,
         "total_frames": frame_limit or 0,

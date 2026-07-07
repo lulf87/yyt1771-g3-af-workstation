@@ -87,6 +87,9 @@ def test_live_offline_run_api_creates_and_reads_run(tmp_path: Path, monkeypatch)
     payload = response.json()
     run_id = payload["run_manifest"]["run_id"]
     assert len(payload["run_manifest"]["detection_results"]) == 2
+    assert payload["run_manifest"]["operator_data_source"] == "offline_dataset"
+    assert payload["run_manifest"]["provenance"]["overall_kind"] == "offline"
+    assert payload["analysis_result"]["provenance"]["overall_kind"] == "offline"
     assert len(payload["analysis_result"]["temperature_distance"]) == 2
 
     read_response = client.get(f"/api/runs/{run_id}")

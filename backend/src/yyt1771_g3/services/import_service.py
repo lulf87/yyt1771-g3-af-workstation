@@ -10,6 +10,12 @@ from zipfile import BadZipFile, ZipFile
 
 from pydantic import BaseModel, Field
 
+from yyt1771_g3.services.source_provenance import (
+    imported_file_provenance,
+    infer_provenance_from_export_payload,
+    operator_data_source_from_provenance,
+)
+
 
 class RunExportImportError(ValueError):
     """Raised when an uploaded file is not a readable G3 export."""
@@ -25,6 +31,8 @@ class ImportedFrameSummary(BaseModel):
 class ImportedRunView(BaseModel):
     filename: str
     warnings: list[str] = Field(default_factory=list)
+    operator_data_source: str = ""
+    provenance: dict[str, Any] = Field(default_factory=dict)
     run_manifest: dict[str, Any] | None = None
     analysis_result: dict[str, Any] | None = None
     measurement_definition: dict[str, Any] | None = None
@@ -75,11 +83,9 @@ def _import_zip(filename: str, content: bytes) -> ImportedRunView:
             temperature_distance_png = archive.read("temperature_distance.png")
         else:
             warnings.append("file does not include temperature_distance.png")
-        if "parameters.json" in names and not _measurement_from_payload(payload):
-            payload = {
-                **payload,
-                "measurement_definition": _read_json_bytes(archive.read("parameters.json"), "parameters.json"),
-            }
+        if "parameters.json" in names:
+            parameters_payload = _read_json_bytes(archive.read("parameters.json"), "parameters.json")
+            payload = _merge_parameters_payload(payload, parameters_payload)
         elif "parameters.json" not in names:
             warnings.append("file does not include parameters.json")
         return _view_from_payload(
@@ -109,9 +115,13 @@ def _view_from_payload(
         analysis_result=analysis_result,
         frame_rows=frame_rows,
     )
+    source_provenance = infer_provenance_from_export_payload(payload)
+    operator_data_source = _operator_data_source_from_payload(payload, source_provenance)
     return ImportedRunView(
         filename=filename,
         warnings=warnings,
+        operator_data_source=operator_data_source,
+        provenance=imported_file_provenance(source_provenance),
         run_manifest=run_manifest,
         analysis_result=analysis_result,
         measurement_definition=measurement_definition,
@@ -121,13 +131,56 @@ def _view_from_payload(
 
 
 def _measurement_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    direct = _dict_or_none(payload.get("measurement_definition"))
+    direct = _measurement_from_container(payload.get("measurement_definition"))
     if direct is not None:
         return direct
     run_manifest = _dict_or_none(payload.get("run_manifest"))
     if run_manifest is not None:
-        return _dict_or_none(run_manifest.get("measurement_definition"))
+        return _measurement_from_container(run_manifest.get("measurement_definition"))
     return None
+
+
+def _measurement_from_container(value: Any) -> dict[str, Any] | None:
+    direct = _dict_or_none(value)
+    if direct is None:
+        return None
+    nested = _dict_or_none(direct.get("measurement_definition"))
+    return nested or direct
+
+
+def _merge_parameters_payload(
+    payload: dict[str, Any],
+    parameters_payload: dict[str, Any],
+) -> dict[str, Any]:
+    measurement = _measurement_from_container(parameters_payload)
+    merged = dict(payload)
+    if measurement is not None and not _measurement_from_payload(payload):
+        merged["measurement_definition"] = measurement
+    if "operator_data_source" not in merged and isinstance(parameters_payload.get("operator_data_source"), str):
+        merged["operator_data_source"] = parameters_payload["operator_data_source"]
+    if "provenance" not in merged and isinstance(parameters_payload.get("provenance"), dict):
+        merged["provenance"] = parameters_payload["provenance"]
+    return merged
+
+
+def _operator_data_source_from_payload(
+    payload: dict[str, Any],
+    provenance: dict[str, Any],
+) -> str:
+    direct = payload.get("operator_data_source")
+    if isinstance(direct, str) and direct:
+        return direct
+    run_manifest = _dict_or_none(payload.get("run_manifest"))
+    if run_manifest is not None:
+        manifest_source = run_manifest.get("operator_data_source")
+        if isinstance(manifest_source, str) and manifest_source:
+            return manifest_source
+    inferred = operator_data_source_from_provenance(provenance)
+    if inferred:
+        return inferred
+    measurement = _measurement_from_payload(payload)
+    source = (measurement or {}).get("source")
+    return source if isinstance(source, str) else ""
 
 
 def _frame_summary(

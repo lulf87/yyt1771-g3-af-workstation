@@ -131,6 +131,23 @@ export type DetectorConfig = {
   temperature_serial_port?: string;
 };
 
+export type SourceProvenance = {
+  acquisition_source: "offline_dataset" | "camera_runtime" | "imported_file" | "unknown" | string;
+  camera_backend: string;
+  camera_backend_kind: "real_hardware" | "simulated_dataset" | "mock" | "unknown" | string;
+  camera_is_simulated: boolean;
+  camera_label: string;
+  camera_serial: string;
+  simulated_dataset_id: string;
+  temperature_backend: string;
+  temperature_backend_kind: "real_hardware" | "simulated" | "mock" | "unknown" | string;
+  temperature_is_simulated: boolean;
+  overall_kind: "real_hardware" | "simulated" | "mixed" | "offline" | "imported" | "unknown" | string;
+  display_label_zh: string;
+  display_label_en: string;
+  imported_from_provenance?: SourceProvenance;
+};
+
 export type MeasurementDefinition = {
   measurement_id: string;
   source: "offline_dataset" | "real_camera";
@@ -213,6 +230,8 @@ export type ProbeResponse = {
     ab_points: { a: ABPoint; b: ABPoint } | null;
     status: string;
   };
+  image_data_url?: string;
+  provenance?: SourceProvenance;
 };
 
 export type FrameRecord = {
@@ -239,6 +258,8 @@ export type RunManifest = {
   run_id: string;
   dataset_id: string;
   measurement_definition: MeasurementDefinition;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   frame_records: FrameRecord[];
   temperature_records: TemperatureRecord[];
   detection_results: DetectionResult[];
@@ -269,6 +290,8 @@ export type ExportArtifact = {
 export type AnalysisResult = {
   analysis_id: string;
   run_id: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   all_frames: DetectionResult[];
   distance_time: CurvePoint[];
   raw_distance_time: CurvePoint[];
@@ -326,6 +349,8 @@ export type LiveOfflineFrameEvent = {
   event: "frame";
   run_id: string;
   dataset_id: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   frame_index: number;
   frame_count: number;
   total_frames: number;
@@ -384,6 +409,7 @@ export type CameraPreviewResponse = {
   pixel_format: string;
   camera_meta: Record<string, unknown>;
   image_data_url?: string;
+  provenance?: SourceProvenance;
 };
 
 export type RealCameraSetupProbeResponse = ProbeResponse &
@@ -418,6 +444,8 @@ export type ImportedFrameSummary = {
 export type ImportedRunView = {
   filename: string;
   warnings: string[];
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   run_manifest: RunManifest | null;
   analysis_result: AnalysisResult | null;
   measurement_definition: MeasurementDefinition | null;

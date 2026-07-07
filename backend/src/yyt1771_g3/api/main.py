@@ -24,6 +24,7 @@ from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import HardwareConfig, load_hardware_config
 from yyt1771_g3.core.image_io import array_to_png_bytes
+from yyt1771_g3.core.enums import MeasurementSource
 from yyt1771_g3.core.models import MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import (
     DatasetAccessError,
@@ -33,6 +34,7 @@ from yyt1771_g3.services.offline_dataset import (
     load_dataset_registry,
 )
 from yyt1771_g3.services.probe_service import probe_offline_frame, probe_setup_frame
+from yyt1771_g3.services.source_provenance import camera_runtime_provenance
 from yyt1771_g3.services.live_offline_run_service import (
     iter_live_offline_run_events,
     read_run,
@@ -316,7 +318,7 @@ def probe_current_frame(request: ProbeRequest) -> dict[str, Any]:
             registry,
             request.dataset_id,
             request.frame_index,
-            request.measurement_definition,
+            _measurement_with_source(request.measurement_definition, MeasurementSource.OFFLINE_DATASET),
         )
     except DatasetNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -361,6 +363,15 @@ def _run_store() -> RunStore:
     return RunStore()
 
 
+def _measurement_with_source(
+    measurement: MeasurementDefinition,
+    source: MeasurementSource,
+) -> MeasurementDefinition:
+    if measurement.source == source:
+        return measurement
+    return measurement.model_copy(update={"source": source})
+
+
 @app.post("/api/live-offline-runs")
 def create_live_offline_run(request: LiveOfflineRunRequest) -> dict[str, Any]:
     try:
@@ -368,7 +379,7 @@ def create_live_offline_run(request: LiveOfflineRunRequest) -> dict[str, Any]:
             _registry(),
             _run_store(),
             dataset_id=request.dataset_id,
-            measurement=request.measurement_definition,
+            measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.OFFLINE_DATASET),
             start_frame=request.start_frame,
             max_frames=request.max_frames,
             target_fps=request.target_fps,
@@ -397,7 +408,7 @@ def stream_live_offline_run(request: LiveOfflineRunRequest) -> StreamingResponse
                 _registry(),
                 _run_store(),
                 dataset_id=request.dataset_id,
-                measurement=request.measurement_definition,
+                measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.OFFLINE_DATASET),
                 start_frame=request.start_frame,
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
@@ -555,6 +566,11 @@ def preview_real_camera() -> dict[str, Any]:
         "pixel_format": str(frame.camera_meta.get("pixel_format", config.camera.pixel_format)),
         "camera_meta": frame.camera_meta,
         "image_data_url": _array_to_png_data_url(frame.array),
+        "provenance": camera_runtime_provenance(
+            camera_profile=config.camera.to_profile(),
+            camera_meta=frame.camera_meta,
+            temperature_backend=_temperature_backend(config),
+        ),
     }
 
 
@@ -590,6 +606,7 @@ def release_real_camera_preview() -> dict[str, str]:
 @app.post("/api/camera/setup-probe")
 def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[str, Any]:
     try:
+        config = _hardware_config()
         if request.frame_png_data_url:
             frame = _camera_frame_from_data_url(
                 request.frame_png_data_url,
@@ -598,16 +615,16 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
             )
         else:
             # Omitting frame_png_data_url captures a fresh preview frame and probes that exact frame.
-            config = _hardware_config()
             camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
             with _camera_operation("setup_probe_capture", blocking=False):
                 with _camera_preview_lock:
                     source = _get_preview_camera_source(camera_profile)
                     frame = source.preview_frame()
+        camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
         payload = probe_setup_frame(
             dataset_id="real_camera",
             frame_array=frame.array,
-            measurement=request.measurement_definition,
+            measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
             frame_index=1,
             frame_timestamp_ms=frame.timestamp_ms,
             camera_meta=frame.camera_meta,
@@ -623,6 +640,11 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
                 "ip": str(frame.camera_meta.get("ip", "")),
                 "pixel_format": str(frame.camera_meta.get("pixel_format", "")),
                 "image_data_url": _array_to_png_data_url(frame.array),
+                "provenance": camera_runtime_provenance(
+                    camera_profile=camera_profile,
+                    camera_meta=frame.camera_meta,
+                    temperature_backend=_temperature_backend(config),
+                ),
             }
         )
         return payload
@@ -728,11 +750,12 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
                 _run_store(),
                 camera_source=_build_camera_source(camera_profile),
                 temperature_controller=temperature_controller,
-                measurement=request.measurement_definition,
+                measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
                 camera_profile=camera_profile,
                 temp_sync_target_ms=run_config.run.temp_sync_target_ms,
+                temperature_backend=run_config.temp.backend,
                 save_raw_frames=run_config.run.save_raw_frames,
                 save_preview_frames=run_config.run.save_preview_frames,
                 preview_max_width=run_config.run.preview_max_width,
@@ -774,11 +797,12 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
                 _run_store(),
                 camera_source=_build_camera_source(camera_profile),
                 temperature_controller=temperature_controller,
-                measurement=request.measurement_definition,
+                measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
                 camera_profile=camera_profile,
                 temp_sync_target_ms=run_config.run.temp_sync_target_ms,
+                temperature_backend=run_config.temp.backend,
                 save_raw_frames=run_config.run.save_raw_frames,
                 save_preview_frames=run_config.run.save_preview_frames,
                 preview_max_width=run_config.run.preview_max_width,
@@ -950,6 +974,11 @@ def _array_to_png(array: np.ndarray, max_width: int | None = None) -> bytes:
 
 def _array_to_png_data_url(array: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(_array_to_png(array)).decode("ascii")
+
+
+def _temperature_backend(config: Any) -> str:
+    temp = getattr(config, "temp", None)
+    return str(getattr(temp, "backend", "") or "")
 
 
 def _camera_frame_from_data_url(

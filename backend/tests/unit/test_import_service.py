@@ -88,6 +88,9 @@ def test_import_run_export_zip_reads_project_export_bundle(tmp_path: Path) -> No
     assert view.frame_summary.total_frames == 2
     assert view.frame_summary.valid_frames == 1
     assert view.frame_summary.temperature_distance_points == 1
+    assert view.operator_data_source == "offline_dataset"
+    assert view.provenance["overall_kind"] == "imported"
+    assert view.provenance["imported_from_provenance"]["overall_kind"] == "offline"
     assert view.frame_summary.invalid_reason_counts == {"NO_TARGET": 1}
     assert view.temperature_distance_image_data_url is not None
     assert view.temperature_distance_image_data_url.startswith("data:image/png;base64,")
@@ -108,6 +111,7 @@ def test_import_run_export_json_reads_structured_export_payload(tmp_path: Path) 
     assert view.run_manifest["run_id"] == manifest.run_id
     assert view.analysis_result is not None
     assert view.frame_summary.temperature_distance_points == 1
+    assert view.provenance["overall_kind"] == "imported"
     assert "file does not include frame_results.csv" in view.warnings
     assert "file does not include temperature_distance.png" in view.warnings
 

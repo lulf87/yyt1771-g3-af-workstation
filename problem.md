@@ -91,6 +91,7 @@
 | P-0073 | RESOLVED_BROWSER_VERIFIED | P1 | dev startup / hardware profile selection | “启动一下”需要重复探索命令且冷启动/模式切换过慢 | 2026-07-07 | 2026-07-07 | Codex | `scripts/g3_fast_start.sh` 支持 real-real / real-simtemp / sim-sim，复用启动为亚秒级，Playwright 页面加载复测已通过 |
 | P-0074 | RESOLVED_BROWSER_VERIFIED | P0 | backend / real camera storage / export | 真实采集默认每帧保存完整 raw `.npy`，长时间运行会快速占满磁盘 | 2026-07-07 | 2026-07-07 | Codex | 模拟相机+模拟温控真实浏览器 Run→Stop→Analysis→Export 复测通过，217 帧 raw_frame_count=0，仅保存 latest preview |
 | P-0075 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / operator mode / export import | 需要新增实际使用界面模式并支持导出文件历史导入 | 2026-07-07 | 2026-07-07 | Codex | Operator Mode Run→Stop→Results Export→History Import + Engineering Mode 浏览器复测已通过 |
+| P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
 
 ---
 
@@ -7830,6 +7831,127 @@ Playwright Chromium browser retest during P-0067
 #### Final status
 
 OPEN
+
+
+---
+
+### P-0076 — Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/components/operator/SourceProvenanceBadge.tsx`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/services/source_provenance.py`, `backend/src/yyt1771_g3/services/export_service.py`, `backend/src/yyt1771_g3/services/import_service.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+Operator Mode / 实际使用模式原先没有简化数据来源选择器，也不能清楚区分离线/模拟素材、真实相机接口、模拟相机后端、混合模式和导入结果。即使走 `/api/camera/*` real_camera 接口，底层也可能是 `G3 simulated dataset camera` / `SIM-DATASET-*`，UI 若只按前端 source 显示“真实相机”会误导操作者。导出和导入也需要保留来源，否则模拟结果导入后可能被误认为真实测试。
+
+#### Expected
+
+```text
+Operator Mode 保留简化“数据来源”选择，可选离线数据集或真实相机，选择写入 localStorage。
+前端只显示操作者需要的紧凑素材/相机状态，不删除工程模式完整能力。
+后端返回权威 provenance，覆盖 preview、setup-probe、probe、run stream、manifest、analysis、export、import。
+real_camera 接口如果实际是 simulated dataset camera，UI 必须显示模拟相机/模拟温控警告，开始按钮不得暗示真实测试。
+offline/simulated/mixed/imported 结果在 Run、趋势、结果导出和历史导入页面都必须显示来源 badge / warning。
+“检测当前帧”在 real_camera 和 offline_dataset 两种来源下都可用，且检测和 overlay 来自同一帧。
+导出 `run_export.json` 与 `parameters.json` 必须包含 `operator_data_source`、`provenance`，模拟/离线导出还必须包含“模拟数据，仅用于调试，不代表真实测试结果。”提示。
+```
+
+#### Actual
+
+修复前 Operator Mode 缺少来源选择；真实相机接口与真实硬件语义混在一起；模拟相机后端和离线素材没有统一后端 provenance；导出/导入无法完整保留并展示来源。
+
+#### Root cause
+
+来源语义分散在前端 setup source、dataset id、camera profile、frame camera_meta 和导出文件结构中，没有统一的后端权威 provenance 结构。Operator Mode 复用了部分工程模式状态，但缺少操作者专用的简化 source selector、source badge 和 offline/current-frame probe 分发逻辑。
+
+#### Fix summary
+
+- 新增 `backend/src/yyt1771_g3/services/source_provenance.py`，统一生成/推断 offline、camera runtime、imported、unknown provenance，并识别 simulated dataset camera、mock/fake backend、simulated temperature 和 mixed 模式。
+- `RunManifest` / `AnalysisResult` 增加 `operator_data_source` 与 `provenance`，analysis 继承 manifest 来源。
+- `/api/camera/preview`、`/api/camera/setup-probe`、offline probe、real-camera run stream、live offline run、manifest、analysis、export、import 均携带 provenance。
+- 导出 `run_export.json` / `parameters.json` 写入 `operator_data_source`、`provenance`；offline/simulated/mixed 写入 `source_notice`，其中离线/模拟导出包含“模拟数据，仅用于调试，不代表真实测试结果。”。
+- import 支持新 wrapper 版和旧 measurement-only `parameters.json`，旧导出无 provenance 时从 dataset、camera_meta、temperature source 推断；导入视图显示 `imported_file` provenance 并保留原始来源。
+- Operator Mode 增加简化数据来源 segmented control，使用 `localStorage["yyt1771-g3-operator-source"]` 持久化。
+- Operator 离线模式只显示紧凑素材下拉、离线/模拟 warning、简化温控区域；真实相机模式保留相机状态和真实温控控制。
+- Operator “检测当前帧”根据来源分发：real camera 使用 `/api/camera/setup-probe` 后端原子抓取最新帧并检测；offline 使用 `/api/probe` 当前帧，二者都更新同帧图像、overlay 和 provenance。
+- 新增 `SourceProvenanceBadge`，在 Operator Run、画面卡片、趋势、Results/Export、History Import 显示来源；导入模拟导出时显示“导入结果”且继续显示底层离线/模拟 warning。
+- 工程模式原有离线数据集卡片列表、完整数据来源切换、帧导航、检测当前帧、ROI/温控/高级参数保持可用。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m py_compile backend/src/yyt1771_g3/services/export_service.py
+Result: PASS.
+
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_export_service.py -q
+Result: PASS, 3 passed.
+
+cd frontend && npm test -- --runInBand
+Result: PASS, 72 passed.
+
+cd frontend && npm run build
+Result: PASS.
+
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests -q
+Result: PASS, 152 passed in 114.59s.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` hardware profile; `golden_a_20260522_dev_lab`
+- Page: Operator Mode / 实时测试; Operator Results / Export; Operator History Import; Engineering Mode / 测量配置
+- Steps:
+  1. Start/restart app with `scripts/g3_fast_start.sh sim-sim --restart --no-open`.
+  2. Open Operator Mode in real-camera source while backend profile is simulated camera + simulated temperature.
+  3. Verify badge shows “模拟相机 + 模拟温控”, details include `G3 simulated dataset camera`, `SIM-DATASET-golden_a_20260522_dev_lab`, and warning says current camera backend is simulated.
+  4. Click real-camera “检测当前帧” and verify right canvas uses returned current-frame image + overlay from setup-probe.
+  5. Switch Operator source to “离线数据集”.
+  6. Verify compact offline material dropdown appears, temperature panel says simulated mode does not connect real temperature controller, badge shows “离线/模拟素材” and no stale camera model/serial.
+  7. Click offline “检测当前帧” and verify `/api/probe` returns current frame image, A/B overlay, formal measurement band, and offline provenance.
+  8. Confirm settings, click “开始模拟测试”, verify source selector/probe are disabled during run and trend card shows offline provenance.
+  9. Stop run, open Results / Export, verify source badge and formal point count, then export zip from browser.
+  10. Inspect downloaded zip and verify both `run_export.json` and `parameters.json` contain `operator_data_source=offline_dataset`, `provenance.overall_kind=offline`, and `source_notice.zh=模拟数据，仅用于调试，不代表真实测试结果。`
+  11. Open History Import, upload exported zip, verify imported view shows “导入结果” badge, preserves original dataset details, displays offline/simulated warning, and does not mark the import as real hardware.
+  12. Switch to Engineering Mode and verify full dataset rail, engineering source selector, frame controls, “检测当前帧”, ROI, temperature, and advanced detector controls remain available.
+  13. Inspect browser console warnings/errors.
+- Expected:
+  - Operator source selector is available and persisted.
+  - real_camera source does not imply real hardware when backend provenance is simulated.
+  - Offline source uses compact operator UI, not engineering dataset cards.
+  - Current-frame probe, run, trend, results, export, and import all carry/display correct provenance.
+  - Exported simulated/offline artifacts include machine-readable provenance and human-readable simulated-data notice.
+  - Engineering Mode remains unchanged.
+- Actual:
+  - All expected checks passed.
+  - Real-camera source with sim backend showed “模拟相机 + 模拟温控” and warning; start button showed “开始模拟测试”.
+  - Offline source showed “离线/模拟素材”; probe returned valid distance and same-frame overlay.
+  - Offline live run reached 448 formal temperature-distance points and retained offline provenance in trend/results.
+  - Export zip contained `run_export.json`, `parameters.json`, `frame_results.csv`, `temperature_distance.png`, and `roi_ab_overlay.png`; JSON provenance and `source_notice` were verified.
+  - History Import displayed “导入结果” plus underlying offline/simulated warning.
+  - Engineering Mode still displayed complete dataset cards, source switch, probe button, ROI/temperature/advanced controls.
+  - Playwright console check returned 0 warnings and 0 errors after the final flow.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0069_operator_real_simulated_probe_20260707.png`
+  - `output/playwright/p0069_operator_offline_probe_20260707.png`
+  - `output/playwright/p0069_operator_offline_run_20260707.png`
+  - `output/playwright/p0069_operator_results_export_20260707.png`
+  - `output/playwright/p0069_operator_offline_export_20260707.zip`
+  - `output/playwright/p0069_operator_import_20260707.png`
+  - `output/playwright/p0069_engineering_mode_preserved_20260707.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
 
 
 ---

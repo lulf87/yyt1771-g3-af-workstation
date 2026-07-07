@@ -96,12 +96,18 @@ def _write_csv(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
 
 def _write_json(export_dir: Path, manifest: RunManifest, analysis: AnalysisResult) -> ExportArtifact:
     path = export_dir / "run_export.json"
+    payload = {
+        "operator_data_source": manifest.operator_data_source,
+        "provenance": manifest.provenance,
+        "run_manifest": manifest.model_dump(mode="json"),
+        "analysis_result": analysis.model_dump(mode="json"),
+    }
+    source_notice = _source_notice(manifest)
+    if source_notice:
+        payload["source_notice"] = source_notice
     path.write_text(
         json.dumps(
-            {
-                "run_manifest": manifest.model_dump(mode="json"),
-                "analysis_result": analysis.model_dump(mode="json"),
-            },
+            payload,
             ensure_ascii=False,
             indent=2,
         ),
@@ -170,11 +176,44 @@ def _write_overlay_png(export_dir: Path, manifest: RunManifest) -> ExportArtifac
 
 def _write_parameters_json(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
     path = export_dir / "parameters.json"
+    payload = {
+        "measurement_definition": manifest.measurement_definition.model_dump(mode="json"),
+        "operator_data_source": manifest.operator_data_source,
+        "provenance": manifest.provenance,
+    }
+    source_notice = _source_notice(manifest)
+    if source_notice:
+        payload["source_notice"] = source_notice
     path.write_text(
-        manifest.measurement_definition.model_dump_json(indent=2),
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return _artifact("parameters_json", path, manifest.run_id)
+
+
+def _source_notice(manifest: RunManifest) -> dict[str, str] | None:
+    provenance = manifest.provenance or {}
+    overall_kind = str(provenance.get("overall_kind") or "")
+    if overall_kind == "mixed":
+        return {
+            "zh": "当前为混合模式，部分数据来自模拟设备，请勿作为正式测试结果。",
+            "en": "Mixed source mode is active. Some data comes from simulated devices; do not use as a formal test result.",
+        }
+    if (
+        manifest.operator_data_source == "offline_dataset"
+        or overall_kind in {"offline", "simulated"}
+        or bool(provenance.get("camera_is_simulated"))
+        or bool(provenance.get("temperature_is_simulated"))
+    ):
+        return {
+            "zh": "模拟数据，仅用于调试，不代表真实测试结果。",
+            "en": "Simulated data for debugging only; it does not represent a real test result.",
+        }
+    return None
 
 
 def _artifact(artifact_type: str, path: Path, run_id: str) -> ExportArtifact:
