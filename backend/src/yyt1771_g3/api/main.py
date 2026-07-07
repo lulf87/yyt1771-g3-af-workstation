@@ -43,6 +43,7 @@ from yyt1771_g3.services.export_service import export_run, export_run_bundle
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
 from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
+from yyt1771_g3.temperature.simulated import SimulatedTemperatureController
 
 
 @asynccontextmanager
@@ -801,6 +802,8 @@ def stop_real_camera_run(run_id: str) -> dict[str, Any]:
 
 
 def build_temperature_controller(config: HardwareConfig):  # noqa: ANN201
+    if config.temp.backend in {"simulated", "simulated_temperature", "mock", "fake"}:
+        return SimulatedTemperatureController(config.temp)
     if config.temp.backend != "lu92xx_modbus_rtu":
         return None
     if not config.temp.serial.port.strip():

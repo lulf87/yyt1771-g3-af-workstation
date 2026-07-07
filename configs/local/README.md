@@ -7,6 +7,8 @@
 ```text
 configs/local/offline_datasets.local.json
 configs/local/realcamera_temp.local.yaml
+configs/local/realcamera_simtemp.local.yaml
+configs/local/simcamera_simtemp.local.yaml
 ```
 
 该文件记录 G3 的本地 golden/offline datasets：
@@ -31,3 +33,11 @@ cp configs/hardware/realcamera_temp.example.yaml configs/local/realcamera_temp.l
 ```
 
 然后在 `configs/local/realcamera_temp.local.yaml` 中填写本机 Hik MVS SDK 路径、相机筛选信息和 LU92XX 串口。源码和前端请求只读取 profile，不写死本机路径。
+
+快速启动三种硬件组合：
+
+```bash
+scripts/g3_fast_start.sh real-real     # 真实相机 + 真实温控
+scripts/g3_fast_start.sh real-simtemp  # 真实相机 + 内置模拟温控
+scripts/g3_fast_start.sh sim-sim       # 内置模拟相机 + 内置模拟温控
+```

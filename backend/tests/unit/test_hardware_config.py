@@ -79,3 +79,30 @@ run:
     assert config.temp.register_map.output_power.encode_scale == 256.0
     assert config.run.measurement_target_hz == 10.0
     assert config.run.temp_sync_target_ms == 10.0
+
+
+def test_load_hardware_config_reads_simulated_temperature_settings(tmp_path: Path) -> None:
+    config_path = tmp_path / "simcamera_simtemp.local.yaml"
+    config_path.write_text(
+        """
+camera:
+  backend: simulated
+temp:
+  backend: simulated
+  protocol: software
+  simulated_start_celsius: 23.5
+  simulated_step_celsius: 0.25
+run:
+  temp_sync_target_ms: 10
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_hardware_config(config_path)
+
+    assert config.camera.backend == "simulated"
+    assert config.temp.backend == "simulated"
+    assert config.temp.protocol == "software"
+    assert config.temp.simulated_start_celsius == 23.5
+    assert config.temp.simulated_step_celsius == 0.25
+    assert config.run.temp_sync_target_ms == 10.0

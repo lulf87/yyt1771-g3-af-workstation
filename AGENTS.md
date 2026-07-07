@@ -348,6 +348,35 @@ Hik MVS SDK 不得在应用启动或普通 import 阶段强制加载。
 
 当用户要求“帮我启动”“启动真机”“真实相机启动”“真实相机 + 真实温控启动”或类似操作时，Codex 必须优先使用以下固定流程，不得每次重新探索启动方式。
 
+#### 6.4.0 快速启动优先入口
+
+纯启动请求属于运行操作。用户只说“启动一下”“帮我启动”或要求切换硬件组合时，不要重新全文探索启动命令；优先使用固定快速脚本：
+
+```bash
+cd /Users/lulingfeng/Documents/工作/开发/奥氏体2025.6.3
+scripts/g3_fast_start.sh real-real
+```
+
+可选模式：
+
+```text
+real-real     真实 Hik 相机 + 真实 LU92XX 温控
+real-simtemp  真实 Hik 相机 + 内置模拟温控
+sim-sim       内置模拟相机 + 内置模拟温控
+```
+
+脚本负责：
+
+```text
+1. 选择对应 configs/local/*.local.yaml 硬件 profile。
+2. 复用已经健康且 profile 匹配的后端/前端。
+3. 只在 profile 不匹配且确认是本项目进程时重启服务。
+4. 验证 /api/health、/api/offline-datasets、/api/hardware/profile 和前端 HTTP 响应。
+5. 打开 http://127.0.0.1:5176/。
+```
+
+只有快速脚本失败、端口被无关服务占用、或用户要求手工排查时，才回退到下面的手工启动流程。
+
 标准后端端口：
 
 ```text

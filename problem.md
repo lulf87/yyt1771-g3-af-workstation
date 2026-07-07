@@ -88,6 +88,7 @@
 | P-0070 | RESOLVED_BROWSER_VERIFIED | P0 | backend / temperature / real camera run safety | Real camera run 启动温控时 start_output 会覆盖 UI 设置的温控功率，可能把 0% 拉回 startup_power_percent | 2026-07-06 | 2026-07-06 | Codex | 已改为 power_nonzero 控制器不调用 start_output，0% 不启动输出；真实硬件读回 0% 并完成 Run→Stop 复测 |
 | P-0071 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera temperature sync | 真实相机 + 真实温控默认 10ms 同步容差导致全部 TEMP_SYNC_STALE，温度-距离曲线为空且状态标记易误解 | 2026-07-06 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX Run→Stop→Analysis 浏览器复测已通过，默认容差 1000ms，60/60 正式温度-距离点 |
 | P-0072 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart / export | Analysis 页 AS/AF 构造关系不清、AS/AF 标签可读性差且导出按钮不触发下载或明确错误 | 2026-07-06 | 2026-07-06 | Codex | golden A Analysis/Export 浏览器复测已通过，AS/AF 构造标注清晰且 ZIP 下载成功 |
+| P-0073 | RESOLVED_BROWSER_VERIFIED | P1 | dev startup / hardware profile selection | “启动一下”需要重复探索命令且冷启动/模式切换过慢 | 2026-07-07 | 2026-07-07 | Codex | `scripts/g3_fast_start.sh` 支持 real-real / real-simtemp / sim-sim，复用启动为亚秒级，Playwright 页面加载复测已通过 |
 
 ---
 
@@ -331,6 +332,89 @@ AFAS 不可用但存在基础测量数据时仍可导出基础数据。
 #### Retest note
 
 - 2026-07-06: Stop partial run 后页面一度保留 live preview 的 `pending` AFAS 状态；saved run 的 `analysis_result.json` 已为 `ok`，通过 Analysis 页“重新计算”可正常把 saved run AFAS 拉回图表。该现象属于既有 Stop/partial-run 状态同步问题，不影响本条 AS/AF 图展示和导出链路验收，后续可归入 live offline stop 状态问题继续跟踪。
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0073 — “启动一下”需要重复探索命令且冷启动/模式切换过慢
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `scripts/g3_fast_start.sh`, `AGENTS.md`, `backend/src/yyt1771_g3/temperature/simulated.py`, `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/core/hardware_config.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+
+#### Problem
+
+用户只要求“启动一下”时，Codex 仍按新开发任务完整读取多份文档、手工探测端口和启动命令；后端 import 冷启动耗时被误判为失败，导致重复探针和重启。后续还缺少一个固定入口来快速区分：
+
+```text
+真实相机 + 真实温控
+真实相机 + 模拟温控
+模拟相机 + 模拟温控
+```
+
+#### Expected
+
+```text
+下次启动应优先使用固定脚本，不重新探索命令。
+脚本应支持三种硬件/温控组合。
+健康且 profile 匹配的后端/前端应直接复用。
+模式切换只重启本项目服务，不误杀无关进程。
+模拟温控不应依赖外部虚拟串口。
+```
+
+#### Resolution log
+
+- 2026-07-07: 新增 `scripts/g3_fast_start.sh`，支持 `real-real`、`real-simtemp`、`sim-sim` 及短别名；脚本固定使用 8022 后端和 5176 前端，验证 `/api/health`、`/api/offline-datasets`、`/api/hardware/profile` 和前端 HTTP 响应。
+- 2026-07-07: 脚本按 `/api/hardware/profile` 识别当前后端是否与目标模式匹配；匹配时直接复用，不匹配时只停止本项目 uvicorn/Vite 进程。
+- 2026-07-07: 脚本使用 Python `subprocess.Popen(..., start_new_session=True)` 持久启动后端/前端，避免 Codex 命令结束后清理普通 `nohup &` 子进程。
+- 2026-07-07: 新增 `SimulatedTemperatureController` 和 `temp.backend=simulated`，使 `real-simtemp` / `sim-sim` 不依赖 `/dev/ttys004` 外部虚拟串口。
+- 2026-07-07: 更新 `AGENTS.md` 6.4.0，把纯启动请求改为优先使用快速脚本；更新 `scripts/README.md` 和 `configs/local/README.md`。
+
+#### Tests run
+
+```bash
+bash -n scripts/g3_fast_start.sh
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_hardware_config.py backend/tests/unit/test_simulated_temperature.py -q
+scripts/g3_fast_start.sh sim-sim --restart --no-open
+scripts/g3_fast_start.sh sim-sim --no-open
+scripts/g3_fast_start.sh real-simtemp --restart --no-open
+scripts/g3_fast_start.sh real-real --restart --no-open
+scripts/g3_fast_start.sh real-real --no-open
+curl -sS http://127.0.0.1:8022/api/health
+curl -sS http://127.0.0.1:8022/api/offline-datasets
+curl -sS http://127.0.0.1:8022/api/hardware/profile
+curl -sS http://127.0.0.1:8022/api/temperature/status  # simulated modes only
+```
+
+Observed timing:
+
+```text
+sim-sim cold start: about 4.0s, backend healthy after 2s
+sim-sim reuse: about 0.18s
+real-simtemp mode switch: about 2.7s
+real-real mode switch: about 2.6s
+real-real reuse: about 0.15-0.63s
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chrome
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022/`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab` listed by backend
+- Page: Setup
+- Steps: 使用 `scripts/g3_fast_start.sh real-real --no-open` 确认后端/前端复用；用 Playwright 打开 `http://127.0.0.1:5176/`；获取页面 snapshot；保存全页截图。
+- Expected: 页面加载为 G3 React UI，后端 profile 为 `camera=hik_gige_mvs`、`temp=lu92xx_modbus_rtu`、串口 `/dev/cu.usbserial-11210`；离线数据集列表可见；快速启动入口可复用。
+- Actual: Playwright snapshot 显示 `YY/T 1771 G3` 主界面、Setup 导航、A/C 离线数据集、真实相机入口和温控设置；`/api/hardware/profile` 返回 `hik_gige_mvs lu92xx_modbus_rtu /dev/cu.usbserial-11210`；重复启动复用后端和前端，耗时为亚秒级。
+- Result: PASS
+- Evidence: `output/playwright/g3-fast-start-real-real-20260707.png`, `.playwright-cli/page-2026-07-06T17-31-31-425Z.yml`
 
 #### Current status
 

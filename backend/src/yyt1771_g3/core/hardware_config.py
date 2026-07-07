@@ -111,6 +111,8 @@ class TempConfig:
     serial: SerialPortConfig = field(default_factory=SerialPortConfig)
     register_map: TempRegisterMapConfig = field(default_factory=TempRegisterMapConfig)
     control: TempControlConfig = field(default_factory=TempControlConfig)
+    simulated_start_celsius: float = 25.0
+    simulated_step_celsius: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -196,6 +198,8 @@ def _temp_config(payload: dict[str, Any]) -> TempConfig:
             ),
         ),
         control=_control_config(_mapping(payload.get("control"))),
+        simulated_start_celsius=float(payload.get("simulated_start_celsius", 25.0) or 25.0),
+        simulated_step_celsius=float(payload.get("simulated_step_celsius", 0.05) or 0.05),
     )
 
 
