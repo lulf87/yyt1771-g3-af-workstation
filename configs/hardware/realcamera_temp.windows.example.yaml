@@ -1,0 +1,51 @@
+# Windows native real hardware example.
+# Copy to configs/local/realcamera_temp.local.yaml and edit for the target PC.
+# COM3 must be changed to the actual port shown in Windows Device Manager.
+# For GigE cameras, set the NIC IP and camera IP to the same subnet before running.
+# For real tests, simulated_dataset_id must stay empty.
+# save_raw_frames defaults to false to avoid writing large .npy frame sets.
+camera:
+  backend: hik_gige_mvs
+  transport: gige_vision
+  sdk: hik_mvs
+  probe_mode: protocol_any
+  allowed_models:
+    - MV-CA060-11GM
+  model: ""
+  serial_number: ""
+  ip: ""
+  trigger_mode: free_run
+  pixel_format: mono8
+  exposure_us: 10000
+  gain_db: 0
+  timeout_ms: 1000
+  target_frame_rate_hz: 10
+  sdk_python_paths:
+    - "C:/Program Files (x86)/MVS/Development/Samples/Python/MvImport"
+  sdk_library_dir: "C:/Program Files (x86)/MVS/Development/Libraries/win64"
+  sdk_library_path: "C:/Program Files (x86)/MVS/Development/Libraries/win64/MvCameraControl.dll"
+  simulated_dataset_id: ""
+  device_roi:
+    x: 0
+    y: 0
+    width: 0
+    height: 0
+
+temp:
+  backend: lu92xx_modbus_rtu
+  protocol: modbus_rtu
+  slave_address: 1
+  serial:
+    port: "COM3"
+    baudrate: 19200
+    bytesize: 8
+    parity: "N"
+    stopbits: 1
+    timeout_ms: 500
+
+run:
+  measurement_target_hz: 10
+  temp_sync_target_ms: 1000
+  save_raw_frames: false
+  save_preview_frames: true
+  preview_max_width: 1200

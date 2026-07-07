@@ -85,6 +85,7 @@ test("operator real-camera mode requires real hardware before showing frames or 
   assert.match(operatorPage, /const canUseOfflineDataset = isOfflineSource && Boolean\(selectedDatasetId\);/);
   assert.match(operatorPage, /isRealCameraMode && !realHardwareAvailable \? \(/);
   assert.match(operatorPage, /<RealHardwareUnavailableCard/);
+  assert.match(mainSource, /sourceStatus\.errors\.map/);
   assert.match(operatorPage, /const startDisabled = operatorRunActive \|\| \(isRealCameraMode && !realHardwareAvailable\)/);
   assert.match(operatorPage, /title=\{isRealCameraMode && !realHardwareAvailable \? t\("Real hardware unavailable"\) : undefined\}/);
   assert.match(operatorPage, /\(isOfflineSource \|\| canUseRealCamera \? activeFrameUrl : ""\)/);

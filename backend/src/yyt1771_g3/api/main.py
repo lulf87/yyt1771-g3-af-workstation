@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableError
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
-from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
+from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource, get_hik_mvs_sdk_status
 from yyt1771_g3.core.hardware_config import HardwareConfig, load_hardware_config
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
@@ -395,9 +395,40 @@ def _operator_source_status_payload(
         camera_meta=camera_meta,
         temperature_backend=_temperature_backend(config),
         temperature_serial_port=config.temp.serial.port,
+        **_hardware_availability_inputs(config, camera_profile or config.camera.to_profile()),
         offline_datasets_available=offline_datasets_available,
         offline_dataset_error=offline_dataset_error,
     )
+
+
+def _hardware_availability_inputs(config: HardwareConfig, camera_profile: dict[str, Any]) -> dict[str, Any]:
+    provenance = camera_runtime_provenance(
+        camera_profile=camera_profile,
+        temperature_backend=_temperature_backend(config),
+    )
+    normalized_backend = str(camera_profile.get("backend") or "").strip().lower()
+    camera_sdk_status: dict[str, Any] | None = None
+    if str(provenance.get("camera_backend_kind") or "") == "real_hardware" and normalized_backend in HIK_CAMERA_BACKENDS:
+        camera_sdk_status = get_hik_mvs_sdk_status(camera_profile)
+    return {
+        "camera_sdk_available": None if camera_sdk_status is None else bool(camera_sdk_status.get("available")),
+        "camera_sdk_error": "" if camera_sdk_status is None else str(camera_sdk_status.get("error") or ""),
+        "camera_sdk_details": {} if camera_sdk_status is None else dict(camera_sdk_status.get("details") or {}),
+        "temperature_port_available": _temperature_port_available(config.temp.serial.port),
+    }
+
+
+def _temperature_port_available(port: str) -> bool | None:
+    selected = str(port or "").strip()
+    if not selected:
+        return None
+    try:
+        ports = list_serial_ports()
+    except RuntimeError:
+        return None
+    if not ports:
+        return False
+    return any(item.device == selected for item in ports)
 
 
 def _assert_operator_real_camera_available(
@@ -742,6 +773,7 @@ def get_hardware_profile() -> dict[str, Any]:
             **asdict(config.camera),
             "sdk_python_paths": ["<configured>" for _ in config.camera.sdk_python_paths],
             "sdk_library_path": "<configured>" if config.camera.sdk_library_path else "",
+            "sdk_library_dir": "<configured>" if config.camera.sdk_library_dir else "",
         },
         "temp": {
             "backend": config.temp.backend,
@@ -760,6 +792,15 @@ def get_hardware_profile() -> dict[str, Any]:
 
 @app.get("/api/temperature/serial-ports")
 def get_temperature_serial_ports() -> dict[str, Any]:
+    return _temperature_serial_ports_payload()
+
+
+@app.get("/api/temperature/ports")
+def get_temperature_ports_alias() -> dict[str, Any]:
+    return _temperature_serial_ports_payload()
+
+
+def _temperature_serial_ports_payload() -> dict[str, Any]:
     try:
         ports = list_serial_ports()
     except RuntimeError as exc:
@@ -782,6 +823,11 @@ def get_temperature_serial_ports() -> dict[str, Any]:
 
 @app.get("/api/temperature/status")
 def get_temperature_status(port: str | None = None) -> dict[str, Any]:
+    if port and _temperature_port_available(port) is False:
+        raise HTTPException(
+            status_code=404,
+            detail={"temperature_status": "unavailable", "message": f"Serial port {port} is not available"},
+        )
     config = _hardware_config_with_temperature_port(_hardware_config(), port)
     controller = build_temperature_controller(config)
     if controller is None:

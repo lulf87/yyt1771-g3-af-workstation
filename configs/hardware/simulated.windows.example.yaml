@@ -1,0 +1,38 @@
+# Windows native offline/simulated example.
+# This profile does not require Hikrobot MVS SDK or a real serial port.
+# Use configs/local/offline_datasets.local.json to point dataset ids to Windows paths.
+camera:
+  backend: simulated
+  transport: software
+  sdk: none
+  simulated_dataset_id: "golden_a_20260522_dev_lab"
+  simulated_start_frame: 1
+  simulated_loop: true
+  pixel_format: mono8
+  timeout_ms: 1000
+  target_frame_rate_hz: 10
+  device_roi:
+    x: 0
+    y: 0
+    width: 0
+    height: 0
+
+temp:
+  backend: simulated_temperature
+  protocol: software
+  simulated_start_celsius: 25.0
+  simulated_step_celsius: 0.05
+  serial:
+    port: ""
+    baudrate: 19200
+    bytesize: 8
+    parity: "N"
+    stopbits: 1
+    timeout_ms: 500
+
+run:
+  measurement_target_hz: 10
+  temp_sync_target_ms: 1000
+  save_raw_frames: false
+  save_preview_frames: true
+  preview_max_width: 1200

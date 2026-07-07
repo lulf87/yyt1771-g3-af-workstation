@@ -8,7 +8,7 @@ from yyt1771_g3.camera.simulated_source import SimulatedCameraSource
 
 
 SIMULATED_CAMERA_BACKENDS = {"simulated", "simulated_camera", "mock", "fake"}
-HIK_CAMERA_BACKENDS = {"", "hik_gige_mvs", "hik_mvs"}
+HIK_CAMERA_BACKENDS = {"", "hik_gige_mvs", "hik_mvs", "gige_vision"}
 
 
 def build_camera_source(profile: dict[str, Any] | None = None) -> CameraSource:

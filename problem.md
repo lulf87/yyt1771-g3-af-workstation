@@ -94,10 +94,69 @@
 | P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
 | P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
 | P-0078 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator mode / source guard | Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端 | 2026-07-07 | 2026-07-07 | Codex | sim-sim 下已验证 Operator 真机源显示真实硬件不可用且禁用 probe/run；离线源可 probe；工程模式真实相机调试未受影响 |
+| P-0079 | FIXED_PENDING_BROWSER_RETEST | P0 | windows / hardware startup / operator mode | Windows 原生运行需支持离线模拟和真实 Hik MVS + LU92XX 启动，且真机不可用时不得回退模拟 | 2026-07-07 | 2026-07-07 | Codex | 已完成代码、配置、脚本、文档和 mock/platform 测试；待 Windows 10/11 + Hik MVS SDK + 相机 + LU92XX 真实硬件复测 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0079 — Windows 原生运行需支持离线模拟和真实 Hik MVS + LU92XX 启动，且真机不可用时不得回退模拟
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, `backend/src/yyt1771_g3/services/source_provenance.py`, `backend/src/yyt1771_g3/api/main.py`, `configs/hardware`, `scripts/windows`, `docs/windows_setup.md`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+
+#### Problem
+
+项目需要支持 Windows 10/11 原生运行：离线/模拟模式不依赖真实相机或温控；真实硬件模式必须直接连接 Hikrobot 相机和 LU92XX 串口温控。Operator Mode 选择真实相机时，如果 MVS SDK、真实相机或真实温控不可用，必须显示真实硬件不可用，不能静默回退模拟相机伪装真实测试。
+
+#### Expected
+
+```text
+Windows 离线/模拟模式可打开实际使用界面、选择离线数据集、检测当前帧、模拟测试、显示曲线/结果/导出。
+Windows 真实硬件模式可通过 sdk_python_paths / sdk_library_dir / sdk_library_path 加载 Hik MVS SDK，并使用 COM3 / COM4 / COM10 等 Windows 串口。
+/api/operator/source-status 对真实硬件可用性给出后端权威判断。
+真实硬件不可用时，Operator real-camera probe/run 返回 409 或 UI 禁用，不回退模拟。
+```
+
+#### Resolution log
+
+- 2026-07-07: 新增 `CameraConfig.sdk_library_dir`，保留 `sdk_library_path` 向后兼容。
+- 2026-07-07: 将 Hik MVS loader 改为跨平台路径处理：支持 `HIK_MVS_PYTHON_PATH`、`HIK_MVS_LIBRARY_PATH`、`HIK_MVS_LIBRARY_DIR`，Windows 下添加 DLL search path / PATH，并提供 `.dylib` / `.so` / `.dll` 通用 source patch helper。
+- 2026-07-07: `/api/operator/source-status` 接入 SDK loadability 和串口可见性；missing SDK / missing COM 使真实硬件状态不可用。
+- 2026-07-07: 新增 `/api/temperature/ports` alias，保留 `/api/temperature/serial-ports`；显式选择不存在串口时返回 `Serial port COM3 is not available`。
+- 2026-07-07: 新增 Windows real/simulated hardware YAML 示例、PowerShell bootstrap/start/check scripts、Windows setup 文档和 `windows-latest` GitHub Actions smoke job。
+
+#### Verification log
+
+- 2026-07-07: 已增加 mock/platform 单元测试覆盖 Windows path、COM10、DLL search path、SDK error details、source-status missing SDK/missing COM、PowerShell/CI/doc assets。
+- 2026-07-07: `PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit -q` 通过，95 passed。
+- 2026-07-07: `PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_real_hardware_config backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_missing_windows_sdk backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_backend backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_temperature backend/tests/integration/test_camera_api.py::test_temperature_ports_alias_returns_discovered_windows_com_ports backend/tests/integration/test_camera_api.py::test_temperature_status_endpoint_reports_missing_selected_com_port -q` 通过，6 passed。
+- 2026-07-07: `npm test` 通过，76 passed；`npm run build` 通过。
+- 2026-07-07: 本机 macOS 未安装 `pwsh`，PowerShell 脚本在本地通过静态 asset tests 覆盖；实际 PowerShell parser syntax check 已加入 `.github/workflows/ci.yml` 的 `windows-latest` job。
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: not run
+- OS: macOS development host only
+- Frontend URL: not run
+- Backend URL: not run
+- Dataset: not run
+- Page: Operator Mode
+- Steps: not run
+- Expected: Windows real hardware validation on native Windows 10/11 with Hik MVS SDK, MV-CA060-11GM camera, and LU92XX controller.
+- Actual: 当前开发环境没有 Windows 真机、Hikrobot Windows SDK、真实 Windows 相机连接和 LU92XX Windows 串口验证条件。
+- Result: BLOCKED
+- Evidence: `docs/windows_setup.md` final hardware validation checklist; mock/platform tests only.
+
+#### Current status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
 
 ### P-0001 — 待测物体整体外包络识别必须稳定，不能依赖内部纹理或简单凸包
 
