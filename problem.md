@@ -131,6 +131,7 @@ Windows 真实硬件模式可通过 sdk_python_paths / sdk_library_dir / sdk_lib
 - 2026-07-07: 修复 PR #2 Windows smoke 中 Hik MVS official binding override 的 Windows 反斜杠路径问题；`_patch_sdk_load_library_source` 改用 Python 字符串字面量生成，避免 `r"..."` 与预转义反斜杠叠加导致 `LoadLibrary` 收到错误路径。
 - 2026-07-07: 新增 Windows runtime text asset hidden Unicode 检查，覆盖 Windows 文档、YAML、PowerShell 脚本、CI workflow 和相关 backend/frontend 测试/客户端文件，防止 bidi/control/zero-width 字符进入 CI 资产。
 - 2026-07-07: 修复 Windows frontend tests 调用 TypeScript 编译器的跨平台问题；测试 helper 改为通过 `node node_modules/typescript/bin/tsc` 运行 TypeScript CLI，避免 Windows npm `.bin/tsc.cmd` 与 POSIX `.bin/tsc` 入口差异。
+- 2026-07-08: 增强 Windows runtime text asset 测试，新增关键文件最小行数、CI workflow 多行结构、Windows YAML 示例可解析、Markdown 标题/代码块和 PowerShell 多行结构检查，确保“一行压缩文件”会被 Backend Windows smoke 拦截。
 
 #### Verification log
 
@@ -146,6 +147,8 @@ Windows 真实硬件模式可通过 sdk_python_paths / sdk_library_dir / sdk_lib
 - 2026-07-07: 推送 commit `b18de1e` 后，GitHub Actions run `28878932587` / job `85661512851` 显示 `Backend Windows smoke tests` 已通过，但 `Frontend tests` 失败；日志显示 `spawnSync ... frontend\\node_modules\\.bin\\tsc ENOENT`，为 Windows npm bin shim 路径差异。
 - 2026-07-07: 新增 `frontend/tests/tscTestHelper.mjs` 和 `tscTestHelper.test.mjs`，并将前端测试临时编译入口切换为 TypeScript CLI JS 文件；本地 `npm test` 通过，77 passed。
 - 2026-07-07: 修复 frontend test helper 后再次验证：`PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit/test_hardware_config.py backend/tests/unit/test_camera_lazy_import.py backend/tests/unit/test_source_provenance.py backend/tests/unit/test_serial_ports.py backend/tests/unit/test_windows_runtime_assets.py backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_real_hardware_config backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_missing_windows_sdk backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_backend backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_temperature backend/tests/integration/test_camera_api.py::test_temperature_ports_alias_returns_discovered_windows_com_ports backend/tests/integration/test_camera_api.py::test_temperature_status_endpoint_reports_missing_selected_com_port -q`，37 passed；`npm run build` 通过；`git diff --check` 通过。
+- 2026-07-08: 当前 PR head `ec20f8c` 上 GitHub Actions `Windows smoke tests` 两条 check 均为 SUCCESS；本地 `wc -l` 显示 `.github/workflows/ci.yml` 77 行、`realcamera_temp.windows.example.yaml` 51 行、`simulated.windows.example.yaml` 38 行、`docs/windows_setup.md` 187 行、`backend/tests/unit/test_windows_runtime_assets.py` 104 行，未复现 raw 文件压缩为一行。
+- 2026-07-08: 增强文本资产格式测试后，本地隐藏 Unicode/行数脚本通过；`PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit/test_windows_runtime_assets.py -q` 9 passed；`PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit -q` 101 passed；Operator source-status/strict-mode integration smoke 6 passed；`npm test` 77 passed；`npm run build` 通过；`git diff --check` 通过。
 
 #### Browser retest log
 

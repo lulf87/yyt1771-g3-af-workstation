@@ -44,7 +44,10 @@ jobs:
           $failed = $false
           Get-ChildItem .\scripts\windows\*.ps1 | ForEach-Object {
             $errors = $null
-            [System.Management.Automation.PSParser]::Tokenize((Get-Content -Raw $_.FullName), [ref]$errors) | Out-Null
+            [System.Management.Automation.PSParser]::Tokenize(
+              (Get-Content -Raw $_.FullName),
+              [ref]$errors
+            ) | Out-Null
             if ($errors) {
               $failed = $true
               Write-Error "$($_.FullName) has PowerShell syntax errors: $errors"
