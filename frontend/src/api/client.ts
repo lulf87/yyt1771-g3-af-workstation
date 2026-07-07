@@ -217,11 +217,13 @@ export type ProbeResponse = {
 
 export type FrameRecord = {
   frame_index: number;
-  frame_path: string;
-  timestamp_ms: number | null;
   shape: number[];
   dtype: string;
   source: string;
+  frame_path: string;
+  raw_frame_saved?: boolean;
+  preview_path?: string;
+  timestamp_ms: number | null;
   camera_meta: Record<string, unknown>;
 };
 
@@ -332,6 +334,12 @@ export type LiveOfflineFrameEvent = {
   frame_record: FrameRecord;
   temperature_record: TemperatureRecord;
   detection_result: DetectionResult;
+  storage?: {
+    save_raw_frames?: boolean;
+    raw_frame_saved?: boolean;
+    save_preview_frames?: boolean;
+    preview_path?: string;
+  };
   sync_config?: SyncConfig;
   curve_points: {
     distance_time: CurvePoint | null;
@@ -574,7 +582,11 @@ export function isRunFrameImageUrl(url: string, runId: string, frameIndex: numbe
 }
 
 export function apiUrlFromPath(path: string, options?: FrameImageUrlOptions): string {
-  const url = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const normalizedPath = path.trim();
+  if (!normalizedPath) return "";
+  const url = normalizedPath.startsWith("http")
+    ? normalizedPath
+    : `${API_BASE}${normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`}`;
   return withFrameImageUrlOptions(url, options);
 }
 

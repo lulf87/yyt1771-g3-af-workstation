@@ -4,5 +4,6 @@ pixel_format: mono8
 trigger_mode: free_run
 target_frame_rate_hz: 10.0
 lazy_import_sdk: true
-save_raw_frames: true
+# Only enable for full original-frame review; it can consume a large amount of disk space.
+save_raw_frames: false
 measurement_coordinates: source_pixel

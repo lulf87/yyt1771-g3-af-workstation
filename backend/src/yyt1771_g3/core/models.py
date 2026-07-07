@@ -227,11 +227,13 @@ class MeasurementDefinition(G3Model):
 
 class FrameRecord(G3Model):
     frame_index: int
-    frame_path: str
-    timestamp_ms: int | None = None
     shape: list[int]
     dtype: str
     source: str
+    frame_path: str = ""
+    raw_frame_saved: bool = False
+    preview_path: str = ""
+    timestamp_ms: int | None = None
     camera_meta: dict[str, Any] = Field(default_factory=dict)
 
 

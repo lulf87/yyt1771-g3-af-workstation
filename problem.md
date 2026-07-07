@@ -89,6 +89,7 @@
 | P-0071 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real camera temperature sync | 真实相机 + 真实温控默认 10ms 同步容差导致全部 TEMP_SYNC_STALE，温度-距离曲线为空且状态标记易误解 | 2026-07-06 | 2026-07-06 | Codex | 真实 Hik 相机 + LU92XX Run→Stop→Analysis 浏览器复测已通过，默认容差 1000ms，60/60 正式温度-距离点 |
 | P-0072 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart / export | Analysis 页 AS/AF 构造关系不清、AS/AF 标签可读性差且导出按钮不触发下载或明确错误 | 2026-07-06 | 2026-07-06 | Codex | golden A Analysis/Export 浏览器复测已通过，AS/AF 构造标注清晰且 ZIP 下载成功 |
 | P-0073 | RESOLVED_BROWSER_VERIFIED | P1 | dev startup / hardware profile selection | “启动一下”需要重复探索命令且冷启动/模式切换过慢 | 2026-07-07 | 2026-07-07 | Codex | `scripts/g3_fast_start.sh` 支持 real-real / real-simtemp / sim-sim，复用启动为亚秒级，Playwright 页面加载复测已通过 |
+| P-0074 | RESOLVED_BROWSER_VERIFIED | P0 | backend / real camera storage / export | 真实采集默认每帧保存完整 raw `.npy`，长时间运行会快速占满磁盘 | 2026-07-07 | 2026-07-07 | Codex | 模拟相机+模拟温控真实浏览器 Run→Stop→Analysis→Export 复测通过，217 帧 raw_frame_count=0，仅保存 latest preview |
 
 ---
 
@@ -208,6 +209,58 @@ Run 页应逐帧显示真实相机画面、distance 和 temperature-distance 趋
 - Actual: Run 页显示 `无帧数上限` 和 `手动停止或达到目标温度`；run `run-real_camera-20260706T113434641353Z` 实时更新至第 145 帧后手动 Stop，页面显示 `145 / 145`，`GET /api/runs/run-real_camera-20260706T113434641353Z` 返回 manifest/analysis；`stop_reason = manual_stop_requested`，`max_frames = None`，`temperature_power_percent = 0.0`；LU92XX 输出功率读回 `0.0%`。
 - Result: PASS
 - Evidence: `output/playwright/g3-real-camera-stop-saved-20260706.png`, `output/dev/backend-8034-realhardware.log`, `output/runs/run-real_camera-20260706T113434641353Z/run_manifest.json`, `output/runs/run-real_camera-20260706T113434641353Z/analysis_result.json`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0074 — 真实采集默认每帧保存完整 raw `.npy`，长时间运行会快速占满磁盘
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, `frontend/src/api/client.ts`, export
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+
+#### Problem
+
+真实相机实时测量默认每帧都会写入 `output/runs/<run_id>/raw_frames/frame_xxxxxx.npy`。真实 mono8 相机帧尺寸较大，长时间采集会快速写入多个 GB；同时前端实时预览固定依赖 raw frame endpoint，导致不能直接关闭 raw 保存。
+
+#### Expected
+
+```text
+默认真实采集不保存每帧 raw .npy。
+实时画面使用轻量 latest preview，不依赖 raw .npy。
+停止后的 manifest、analysis_result、temperature-distance 曲线、AFAS 分析和导出仍然正常。
+显式 save_raw_frames=true 时保留旧 raw frame endpoint。
+manifest/config_snapshot 明确记录本次保存策略和 raw_frame_count。
+```
+
+#### Resolution log
+
+- 2026-07-07: 初始登记；将 `RunHardwareConfig.save_raw_frames` 默认改为 `false`，新增 `save_preview_frames=true` 和 `preview_max_width=1200`。
+- 2026-07-07: 真实采集服务接入保存策略：默认不创建/写入 `raw_frames/frame_xxxxxx.npy`，仅覆盖写 `preview_frames/latest.png`；`FrameRecord` 新增 `raw_frame_saved` / `preview_path`，raw 未保存时 `frame_path=""`。
+- 2026-07-07: 实时 frame event 默认返回 `/api/runs/{run_id}/preview/latest.png?frame_index=...`，并携带 `storage` 诊断；新增 `GET /api/runs/{run_id}/preview/latest.png`，旧 `/raw-frames/{frame_index}.png` 在显式开启 raw 时仍可用。
+- 2026-07-07: API 将硬件配置中的 `save_raw_frames` / `save_preview_frames` / `preview_max_width` 传入同步和流式真实采集路径；默认导出 ZIP 只包含 `frame_results.csv`、`run_export.json`、`temperature_distance.png`、`roi_ab_overlay.png`、`parameters.json`，不包含 `.npy`。
+- 2026-07-07: 自动化验证通过：`PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_hardware_config.py backend/tests/unit/test_core_models.py backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py backend/tests/integration/test_export_service.py -q`（44 passed）；`npm test -- apiClientUrls.test.mjs`（58 passed）；`./node_modules/.bin/tsc --noEmit`（passed）。
+- 2026-07-07: API smoke 使用 `sim-sim` profile 执行 `/api/real-camera-runs/stream` 3 帧：事件 `frame_url=/api/runs/<run_id>/preview/latest.png?frame_index=1`，`raw_frame_count=0`，`preview_frames/latest.png` 存在，`raw-frames/1.png` 返回 404。
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022/`
+- Dataset: `sim-sim` profile, simulated camera backed by `golden_a_20260522_dev_lab` + simulated temperature
+- Page: Setup / Run / Analysis Export
+- Steps: 启动 `scripts/g3_fast_start.sh sim-sim --restart --no-open`；在 Setup 切换真实相机来源；进入 Run，点击“开始真实相机测量”，等待实时画面、温度、distance 和 temperature-distance 曲线更新；点击 Stop；进入 Analysis；点击导出并检查 ZIP。
+- Expected: 实时画面正常显示；temperature-distance 点数增长；停止后 analysis/AFAS 曲线可见；默认不保存每帧 raw `.npy`；导出不依赖 raw。
+- Actual: Run `run-real_camera-20260707T024930630103Z` 保存 217 帧，Analysis 显示正式温度-距离点数 217、转变点分析状态正常；`config_snapshot.save_raw_frames=false`，`raw_frame_count=0`，`frame_records[0].frame_path=""`，`frame_records[0].raw_frame_saved=false`，仅 `preview_frames/latest.png` 存在；导出 ZIP 仅包含 CSV/JSON/PNG/parameters，不含 `.npy`。
+- Result: PASS
+- Evidence: `output/playwright/g3-real-camera-preview-storage-20260707.png`, `output/runs/run-real_camera-20260707T024930630103Z/run_manifest.json`, `output/runs/run-real_camera-20260707T024930630103Z/analysis_result.json`, `.playwright-cli/yyt1771-g3-export-run-real-camera-20260707T024930630103Z.zip`
 
 #### Current status
 

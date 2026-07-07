@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from zipfile import ZipFile
 
 from PIL import Image
 
@@ -15,7 +16,7 @@ from yyt1771_g3.core.models import (
     RotatedROI,
     RunManifest,
 )
-from yyt1771_g3.services.export_service import export_run
+from yyt1771_g3.services.export_service import export_run, export_run_bundle
 from yyt1771_g3.storage.run_store import RunStore
 
 
@@ -88,3 +89,32 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
         with Image.open(run_dir / "exports" / filename) as image:
             assert image.size[0] > 10
             assert image.size[1] > 10
+
+
+def test_export_bundle_does_not_depend_on_or_include_raw_frames(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    manifest = _manifest().model_copy(
+        update={
+            "run_id": "run-export-no-raw",
+            "config_snapshot": {
+                "mode": "real_camera_run",
+                "save_raw_frames": False,
+                "raw_frame_count": 0,
+            },
+        }
+    )
+    run_store.write_run_manifest(manifest)
+
+    bundle_path = export_run_bundle(run_store, manifest.run_id)
+
+    assert bundle_path.is_file()
+    with ZipFile(bundle_path) as archive:
+        names = set(archive.namelist())
+    assert {
+        "frame_results.csv",
+        "run_export.json",
+        "temperature_distance.png",
+        "roi_ab_overlay.png",
+        "parameters.json",
+    }.issubset(names)
+    assert not any(name.startswith("raw_frames/") or name.endswith(".npy") for name in names)

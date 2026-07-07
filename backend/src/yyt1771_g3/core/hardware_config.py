@@ -119,7 +119,9 @@ class TempConfig:
 class RunHardwareConfig:
     measurement_target_hz: float = 10.0
     temp_sync_target_ms: float = DEFAULT_TEMP_SYNC_TARGET_MS
-    save_raw_frames: bool = True
+    save_raw_frames: bool = False
+    save_preview_frames: bool = True
+    preview_max_width: int = 1200
 
 
 @dataclass(frozen=True)
@@ -237,7 +239,9 @@ def _run_config(payload: dict[str, Any]) -> RunHardwareConfig:
     return RunHardwareConfig(
         measurement_target_hz=float(payload.get("measurement_target_hz", 10.0) or 10.0),
         temp_sync_target_ms=float(payload.get("temp_sync_target_ms", DEFAULT_TEMP_SYNC_TARGET_MS) or DEFAULT_TEMP_SYNC_TARGET_MS),
-        save_raw_frames=bool(payload.get("save_raw_frames", True)),
+        save_raw_frames=bool(payload.get("save_raw_frames", False)),
+        save_preview_frames=bool(payload.get("save_preview_frames", True)),
+        preview_max_width=int(payload.get("preview_max_width", 1200) or 1200),
     )
 
 

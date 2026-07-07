@@ -60,4 +60,7 @@ temp:
 run:
   measurement_target_hz: 10
   temp_sync_target_ms: 1000
-  save_raw_frames: true
+  # Only enable for full original-frame review; it can consume a large amount of disk space.
+  save_raw_frames: false
+  save_preview_frames: true
+  preview_max_width: 1200

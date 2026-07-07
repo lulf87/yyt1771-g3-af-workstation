@@ -23,6 +23,7 @@ from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableE
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import HardwareConfig, load_hardware_config
+from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.models import MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import (
     DatasetAccessError,
@@ -446,6 +447,8 @@ def get_run_frame_png(run_id: str, frame_index: int, max_width: int | None = Non
     frame_record = next((record for record in manifest.frame_records if record.frame_index == frame_index), None)
     if frame_record is None:
         raise HTTPException(status_code=404, detail=f"Frame not found in run manifest: {frame_index}")
+    if not frame_record.frame_path:
+        raise HTTPException(status_code=404, detail=f"Run frame raw file was not saved: {frame_index}")
 
     run_dir = run_store.run_dir(run_id).resolve()
     frame_path = (run_dir / frame_record.frame_path).resolve()
@@ -461,6 +464,17 @@ def get_run_frame_png(run_id: str, frame_index: int, max_width: int | None = Non
     except OSError as exc:
         raise HTTPException(status_code=404, detail=f"Run frame file not found: {frame_index}") from exc
     return Response(content=_array_to_png(frame, max_width=max_width), media_type="image/png")
+
+
+@app.get("/api/runs/{run_id}/preview/latest.png")
+def get_run_latest_preview_png(run_id: str) -> FileResponse:
+    run_dir = _run_store().run_dir(run_id).resolve()
+    preview_path = (run_dir / "preview_frames" / "latest.png").resolve()
+    if not preview_path.is_relative_to(run_dir):
+        raise HTTPException(status_code=400, detail="invalid run preview path")
+    if not preview_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Run latest preview does not exist: {run_id}")
+    return FileResponse(preview_path, media_type="image/png")
 
 
 @app.get("/api/runs/{run_id}/raw-frames/{frame_index}.png")
@@ -717,6 +731,9 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
                 target_fps=request.target_fps,
                 camera_profile=camera_profile,
                 temp_sync_target_ms=run_config.run.temp_sync_target_ms,
+                save_raw_frames=run_config.run.save_raw_frames,
+                save_preview_frames=run_config.run.save_preview_frames,
+                preview_max_width=run_config.run.preview_max_width,
             )
     except CameraUnavailableError as exc:
         raise HTTPException(
@@ -760,6 +777,9 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
                 target_fps=request.target_fps,
                 camera_profile=camera_profile,
                 temp_sync_target_ms=run_config.run.temp_sync_target_ms,
+                save_raw_frames=run_config.run.save_raw_frames,
+                save_preview_frames=run_config.run.save_preview_frames,
+                preview_max_width=run_config.run.preview_max_width,
                 stop_requested=_real_camera_stream_stop_requested,
             )
             for event in events:
@@ -896,24 +916,10 @@ def _frame_metadata(frame: LoadedOfflineFrame) -> dict[str, Any]:
 
 
 def _array_to_png(array: np.ndarray, max_width: int | None = None) -> bytes:
-    image_array = np.asarray(array)
-    if image_array.dtype != np.uint8:
-        image_array = np.clip(image_array, 0, 255).astype(np.uint8)
-    if image_array.ndim == 2:
-        image = Image.fromarray(np.ascontiguousarray(image_array), mode="L")
-    elif image_array.ndim == 3:
-        image = Image.fromarray(np.ascontiguousarray(image_array))
-    else:
-        raise OfflineDatasetError(f"Unsupported frame shape for PNG preview: {array.shape}")
-
-    if max_width is not None and image.width > max_width:
-        target_width = min(max_width, image.width)
-        target_height = max(1, round(image.height * (target_width / image.width)))
-        image = image.resize((target_width, target_height), Image.Resampling.BILINEAR)
-
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()
+    try:
+        return array_to_png_bytes(array, max_width=max_width)
+    except ValueError as exc:
+        raise OfflineDatasetError(str(exc)) from exc
 
 
 def _array_to_png_data_url(array: np.ndarray) -> str:

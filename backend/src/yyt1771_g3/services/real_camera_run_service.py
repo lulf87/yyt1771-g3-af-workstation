@@ -11,6 +11,7 @@ import numpy as np
 
 from yyt1771_g3.camera.base import CameraSource
 from yyt1771_g3.core.enums import TemperatureSyncStatus
+from yyt1771_g3.core.image_io import save_preview_png
 from yyt1771_g3.core.models import (
     AnalysisResult,
     CurvePoint,
@@ -59,12 +60,19 @@ def run_real_camera(
     target_fps: float | None = None,
     camera_profile: dict[str, Any] | None = None,
     temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
+    save_raw_frames: bool = False,
+    save_preview_frames: bool = True,
+    preview_max_width: int = 1200,
 ) -> RealCameraRunResult:
     frame_limit = _bounded_frame_limit(max_frames, measurement)
     run_id = _new_run_id()
     run_dir = run_store.run_dir(run_id)
-    raw_dir = run_dir / "raw_frames"
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = run_dir / "raw_frames" if save_raw_frames else None
+    if raw_dir is not None:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir = run_dir / "preview_frames" if save_preview_frames else None
+    if preview_dir is not None:
+        preview_dir.mkdir(parents=True, exist_ok=True)
     state = CandidateSelectionState()
     policy_state = RunDetectorPolicyState()
     temporal_stabilizer = CausalTemporalStabilizer(
@@ -86,12 +94,16 @@ def run_real_camera(
                 temperature_controller,
                 measurement=measurement,
                 raw_dir=raw_dir,
+                preview_dir=preview_dir,
                 run_dir=run_dir,
                 frame_index=frame_index,
                 stability_state=state,
                 policy_state=policy_state,
                 temperature_start_error=temperature_start_error,
                 temp_sync_target_ms=temp_sync_target_ms,
+                save_raw_frames=save_raw_frames,
+                save_preview_frames=save_preview_frames,
+                preview_max_width=preview_max_width,
             )
             detection = temporal_stabilizer.apply(detection)
             frame_records.append(frame_record)
@@ -117,6 +129,9 @@ def run_real_camera(
         target_fps=target_fps,
         camera_profile=camera_profile,
         temp_sync_target_ms=temp_sync_target_ms,
+        save_raw_frames=save_raw_frames,
+        save_preview_frames=save_preview_frames,
+        preview_max_width=preview_max_width,
         stop_reason=stop_reason,
     )
 
@@ -131,13 +146,20 @@ def iter_real_camera_run_events(
     target_fps: float | None = None,
     camera_profile: dict[str, Any] | None = None,
     temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
+    save_raw_frames: bool = False,
+    save_preview_frames: bool = True,
+    preview_max_width: int = 1200,
     stop_requested: Callable[[str], bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
     frame_limit = _unbounded_frame_limit(max_frames)
     run_id = _new_run_id()
     run_dir = run_store.run_dir(run_id)
-    raw_dir = run_dir / "raw_frames"
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = run_dir / "raw_frames" if save_raw_frames else None
+    if raw_dir is not None:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir = run_dir / "preview_frames" if save_preview_frames else None
+    if preview_dir is not None:
+        preview_dir.mkdir(parents=True, exist_ok=True)
     state = CandidateSelectionState()
     policy_state = RunDetectorPolicyState()
     temporal_stabilizer = CausalTemporalStabilizer(
@@ -162,12 +184,16 @@ def iter_real_camera_run_events(
                 temperature_controller,
                 measurement=measurement,
                 raw_dir=raw_dir,
+                preview_dir=preview_dir,
                 run_dir=run_dir,
                 frame_index=frame_index,
                 stability_state=state,
                 policy_state=policy_state,
                 temperature_start_error=temperature_start_error,
                 temp_sync_target_ms=temp_sync_target_ms,
+                save_raw_frames=save_raw_frames,
+                save_preview_frames=save_preview_frames,
+                preview_max_width=preview_max_width,
             )
             detection = temporal_stabilizer.apply(detection)
             frame_records.append(frame_record)
@@ -189,6 +215,8 @@ def iter_real_camera_run_events(
                     processed_frames=len(frame_records),
                 ),
                 temp_sync_target_ms=temp_sync_target_ms,
+                save_raw_frames=save_raw_frames,
+                save_preview_frames=save_preview_frames,
             )
             if stop_requested is not None and stop_requested(run_id):
                 stop_reason = "manual_stop_requested"
@@ -209,6 +237,9 @@ def iter_real_camera_run_events(
             target_fps=target_fps,
             camera_profile=camera_profile,
             temp_sync_target_ms=temp_sync_target_ms,
+            save_raw_frames=save_raw_frames,
+            save_preview_frames=save_preview_frames,
+            preview_max_width=preview_max_width,
             stop_reason=stop_reason
             if stop_reason in {"manual_stop_requested", "target_temperature_reached"}
             else "complete",
@@ -232,6 +263,9 @@ def iter_real_camera_run_events(
                     target_fps=target_fps,
                     camera_profile=camera_profile,
                     temp_sync_target_ms=temp_sync_target_ms,
+                    save_raw_frames=save_raw_frames,
+                    save_preview_frames=save_preview_frames,
+                    preview_max_width=preview_max_width,
                     stop_reason=stop_reason,
                 )
         finally:
@@ -253,6 +287,9 @@ def _save_real_camera_run_result(
     target_fps: float | None,
     camera_profile: dict[str, Any] | None,
     temp_sync_target_ms: float,
+    save_raw_frames: bool,
+    save_preview_frames: bool,
+    preview_max_width: int,
     stop_reason: str,
 ) -> RealCameraRunResult:
     manifest = RunManifest(
@@ -273,6 +310,11 @@ def _save_real_camera_run_result(
             "target_temperature_celsius": measurement.detector_config.target_temperature_celsius,
             "temperature_power_percent": measurement.detector_config.temperature_power_percent,
             "temp_sync_target_ms": temp_sync_target_ms,
+            "save_raw_frames": save_raw_frames,
+            "save_preview_frames": save_preview_frames,
+            "preview_max_width": preview_max_width,
+            "raw_frame_count": sum(1 for record in frame_records if record.raw_frame_saved),
+            "preview_frame_mode": "latest_overwrite" if save_preview_frames else "disabled",
             "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
             "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
             "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
@@ -301,18 +343,28 @@ def _process_real_camera_frame(
     temperature_controller: TemperatureController | None,
     *,
     measurement: MeasurementDefinition,
-    raw_dir: Path,
+    raw_dir: Path | None,
+    preview_dir: Path | None,
     run_dir: Path,
     frame_index: int,
     stability_state: CandidateSelectionState,
     policy_state: RunDetectorPolicyState,
     temperature_start_error: str,
     temp_sync_target_ms: float,
+    save_raw_frames: bool,
+    save_preview_frames: bool,
+    preview_max_width: int,
 ) -> tuple[FrameRecord, TemperatureRecord, DetectionResult, CandidateSelectionState, RunDetectorPolicyState]:
     frame = camera_source.preview_frame()
     temperature = _read_temperature(temperature_controller, startup_error=temperature_start_error)
-    frame_path = raw_dir / f"frame_{frame_index:06d}.npy"
-    np.save(frame_path, frame.array, allow_pickle=False)
+    raw_frame_path: Path | None = None
+    if save_raw_frames and raw_dir is not None:
+        raw_frame_path = raw_dir / f"frame_{frame_index:06d}.npy"
+        np.save(raw_frame_path, frame.array, allow_pickle=False)
+    preview_path: Path | None = None
+    if save_preview_frames and preview_dir is not None:
+        preview_path = preview_dir / "latest.png"
+        save_preview_png(frame.array, preview_path, max_width=preview_max_width)
     run_measurement = measurement_for_detector_mode(measurement, measurement.detector_config.run_detector_mode)
     previous_state = stability_state
     detection, next_state = _detect_frame_for_run(
@@ -352,11 +404,13 @@ def _process_real_camera_frame(
     detection = _attach_temperature(detection, frame.timestamp_ms, temperature, temp_sync_target_ms)
     frame_record = FrameRecord(
         frame_index=frame_index,
-        frame_path=str(frame_path.relative_to(run_dir)),
-        timestamp_ms=frame.timestamp_ms,
         shape=list(frame.array.shape),
         dtype=str(frame.array.dtype),
         source=str(frame.camera_meta.get("backend", "real_camera")),
+        frame_path=str(raw_frame_path.relative_to(run_dir)) if raw_frame_path is not None else "",
+        raw_frame_saved=raw_frame_path is not None,
+        preview_path=str(preview_path.relative_to(run_dir)) if preview_path is not None else "",
+        timestamp_ms=frame.timestamp_ms,
         camera_meta=frame.camera_meta,
     )
     return frame_record, _temperature_record(temperature), detection, next_state, next_policy_state
@@ -511,7 +565,14 @@ def _frame_event(
     curve_points: dict[str, CurvePoint | None],
     afas_preprocessing: dict[str, Any],
     temp_sync_target_ms: float,
+    save_raw_frames: bool,
+    save_preview_frames: bool,
 ) -> dict[str, Any]:
+    frame_url = ""
+    if save_preview_frames and frame_record.preview_path:
+        frame_url = f"/api/runs/{run_id}/preview/latest.png?frame_index={frame_record.frame_index}"
+    elif save_raw_frames and frame_record.raw_frame_saved:
+        frame_url = f"/api/runs/{run_id}/raw-frames/{frame_record.frame_index}.png"
     return {
         "event": "frame",
         "run_id": run_id,
@@ -520,10 +581,16 @@ def _frame_event(
         "frame_count": frame_limit or 0,
         "total_frames": frame_limit or 0,
         "processed_frames": processed_frames,
-        "frame_url": f"/api/runs/{run_id}/raw-frames/{frame_record.frame_index}.png",
+        "frame_url": frame_url,
         "frame_record": frame_record.model_dump(mode="json"),
         "temperature_record": temperature_record.model_dump(mode="json"),
         "detection_result": detection.model_dump(mode="json"),
+        "storage": {
+            "save_raw_frames": save_raw_frames,
+            "raw_frame_saved": frame_record.raw_frame_saved,
+            "save_preview_frames": save_preview_frames,
+            "preview_path": frame_record.preview_path,
+        },
         "sync_config": {
             "temp_sync_target_ms": temp_sync_target_ms,
         },

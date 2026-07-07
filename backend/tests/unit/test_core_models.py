@@ -165,6 +165,8 @@ def test_run_manifest_analysis_and_export_artifact_can_round_trip(tmp_path: Path
     restored = read_json_model(path, RunManifest)
 
     assert restored == manifest
+    assert restored.frame_records[0].raw_frame_saved is False
+    assert restored.frame_records[0].preview_path == ""
 
     analysis = AnalysisResult(
         analysis_id="analysis-test",

@@ -12,6 +12,9 @@ def test_load_hardware_config_defaults_real_hardware_sync_tolerance_to_serial_wi
     config = load_hardware_config(config_path)
 
     assert config.run.temp_sync_target_ms == 1000.0
+    assert config.run.save_raw_frames is False
+    assert config.run.save_preview_frames is True
+    assert config.run.preview_max_width == 1200
 
 
 def test_load_hardware_config_merges_starter_style_camera_and_temp_settings(tmp_path: Path) -> None:
@@ -64,6 +67,9 @@ temp:
 run:
   measurement_target_hz: 10
   temp_sync_target_ms: 10
+  save_raw_frames: true
+  save_preview_frames: false
+  preview_max_width: 960
         """,
         encoding="utf-8",
     )
@@ -79,6 +85,9 @@ run:
     assert config.temp.register_map.output_power.encode_scale == 256.0
     assert config.run.measurement_target_hz == 10.0
     assert config.run.temp_sync_target_ms == 10.0
+    assert config.run.save_raw_frames is True
+    assert config.run.save_preview_frames is False
+    assert config.run.preview_max_width == 960
 
 
 def test_load_hardware_config_reads_simulated_temperature_settings(tmp_path: Path) -> None:

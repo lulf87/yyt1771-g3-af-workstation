@@ -617,6 +617,8 @@ def test_temperature_serial_ports_endpoint_includes_configured_port(monkeypatch)
 def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
     from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
     api_main._reset_preview_camera_source()
 
     controllers: list[FakeApiTemperatureController] = []
@@ -636,6 +638,7 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
 
     monkeypatch.setattr(api_main, "HikMvsCameraSource", CapturingCameraSource)
     monkeypatch.setattr(api_main, "build_temperature_controller", fake_build_temperature_controller)
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
 
     client = TestClient(api_main.app)
     response = client.post(
@@ -681,16 +684,27 @@ def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monk
     assert controllers[0].power_values == [68.0]
     assert controllers[0].stopped is True
 
-    frame_png = client.get(f"/api/runs/{payload['run_manifest']['run_id']}/frames/1.png")
+    assert payload["run_manifest"]["frame_records"][0]["raw_frame_saved"] is False
+    assert payload["run_manifest"]["frame_records"][0]["frame_path"] == ""
+    assert payload["run_manifest"]["frame_records"][0]["preview_path"] == "preview_frames/latest.png"
+    assert payload["run_manifest"]["config_snapshot"]["save_raw_frames"] is False
+    assert payload["run_manifest"]["config_snapshot"]["raw_frame_count"] == 0
+
+    frame_png = client.get(f"/api/runs/{payload['run_manifest']['run_id']}/preview/latest.png")
     assert frame_png.status_code == 200
     assert frame_png.headers["content-type"] == "image/png"
     image = Image.open(io.BytesIO(frame_png.content))
     assert image.size == (120, 80)
 
+    raw_frame_png = client.get(f"/api/runs/{payload['run_manifest']['run_id']}/raw-frames/1.png")
+    assert raw_frame_png.status_code == 404
+
 
 def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
     from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
     api_main._reset_preview_camera_source()
 
     controllers: list[FakeApiTemperatureController] = []
@@ -708,6 +722,7 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
 
     monkeypatch.setattr(api_main, "HikMvsCameraSource", CapturingCameraSource)
     monkeypatch.setattr(api_main, "build_temperature_controller", fake_build_temperature_controller)
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
 
     client = TestClient(api_main.app)
     response = client.post(
@@ -747,9 +762,15 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
     assert [event["event"] for event in events] == ["frame", "frame", "complete"]
     assert events[0]["dataset_id"] == "real_camera"
     assert events[0]["frame_count"] == 2
-    assert events[0]["frame_url"].endswith("/raw-frames/1.png")
+    assert "/preview/latest.png" in events[0]["frame_url"]
+    assert events[0]["frame_url"].endswith("frame_index=1")
+    assert events[0]["storage"]["save_raw_frames"] is False
+    assert events[0]["storage"]["raw_frame_saved"] is False
+    assert events[0]["storage"]["preview_path"] == "preview_frames/latest.png"
     assert events[1]["processed_frames"] == 2
     assert events[-1]["run_manifest"]["config_snapshot"]["max_frames"] == 2
+    assert events[-1]["run_manifest"]["config_snapshot"]["save_raw_frames"] is False
+    assert events[-1]["run_manifest"]["config_snapshot"]["raw_frame_count"] == 0
     assert len(events[-1]["run_manifest"]["frame_records"]) == 2
     assert camera_profiles[0]["exposure_us"] == 50000
     assert controllers[0].target_values == [55.0]
@@ -757,7 +778,61 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
     assert controllers[0].stopped is True
     assert controllers[0].closed is True
 
+    preview_png = client.get(f"/api/runs/{events[-1]['run_manifest']['run_id']}/preview/latest.png")
+    assert preview_png.status_code == 200
+    assert preview_png.headers["content-type"] == "image/png"
     raw_frame_png = client.get(f"/api/runs/{events[-1]['run_manifest']['run_id']}/raw-frames/1.png")
+    assert raw_frame_png.status_code == 404
+
+
+def test_real_camera_run_endpoint_preserves_raw_frame_endpoint_when_enabled(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", FakeApiCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(run=RunHardwareConfig(save_raw_frames=True)),
+    )
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/real-camera-runs",
+        json={
+            "max_frames": 1,
+            "target_fps": 10.0,
+            "camera_profile": {"pixel_format": "mono8"},
+            "measurement_definition": {
+                "measurement_id": "real-api-raw-enabled",
+                "source": "real_camera",
+                "object_class": "A_BALLOON_ENVELOPE",
+                "detector": "BalloonEnvelopeDetector",
+                "width_mode": "max_width",
+                "measurement_coordinates": "source_pixel",
+                "roi": {
+                    "type": "rotated_rect",
+                    "center_x": 60.0,
+                    "center_y": 35.0,
+                    "width": 70.0,
+                    "height": 40.0,
+                    "angle_deg": 0.0,
+                },
+                "detector_config": {"min_component_area_px": 20, "max_frames_per_run": 1},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_manifest"]["frame_records"][0]["raw_frame_saved"] is True
+    assert payload["run_manifest"]["frame_records"][0]["frame_path"] == "raw_frames/frame_000001.npy"
+    assert payload["run_manifest"]["config_snapshot"]["save_raw_frames"] is True
+    assert payload["run_manifest"]["config_snapshot"]["raw_frame_count"] == 1
+    raw_frame_png = client.get(f"/api/runs/{payload['run_manifest']['run_id']}/raw-frames/1.png")
     assert raw_frame_png.status_code == 200
     assert raw_frame_png.headers["content-type"] == "image/png"
 

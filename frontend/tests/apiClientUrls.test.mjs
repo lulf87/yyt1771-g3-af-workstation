@@ -50,6 +50,12 @@ test("run frame image URL targets run raw frame endpoint", async () => {
   );
 });
 
+test("empty frame image path stays empty", async () => {
+  const { apiUrlFromPath } = await loadApiClientModule();
+
+  assert.equal(apiUrlFromPath("", { maxWidth: 720 }), "");
+});
+
 test("diagnostic image metadata exposes mask and contour display sources", async () => {
   const { readDiagnosticImages } = await loadApiClientModule();
 

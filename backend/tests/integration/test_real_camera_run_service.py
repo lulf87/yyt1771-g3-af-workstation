@@ -223,7 +223,7 @@ def test_attach_temperature_honors_real_hardware_sync_tolerance() -> None:
     assert thousand_ms_ok.temperature_delta_ms == 100.0
 
 
-def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Path) -> None:
+def test_real_camera_run_defaults_to_preview_without_saving_raw_frames(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     measurement = MeasurementDefinition(
         measurement_id="real-camera-test",
@@ -244,6 +244,7 @@ def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Pat
     result = run_real_camera(
         run_store,
         camera_source=source,
+        temperature_controller=FakeTemperatureController(),
         measurement=measurement,
         max_frames=3,
         target_fps=8.0,
@@ -251,14 +252,53 @@ def test_real_camera_run_saves_raw_frames_camera_meta_and_manifest(tmp_path: Pat
 
     assert source.closed is True
     assert len(result.manifest.frame_records) == 3
-    assert result.manifest.frame_records[0].camera_meta["backend"] == "hik_gige_mvs"
-    assert result.manifest.frame_records[0].frame_path.endswith("raw_frames/frame_000001.npy")
-    assert (run_store.run_dir(result.manifest.run_id) / "raw_frames" / "frame_000001.npy").is_file()
+    first_record = result.manifest.frame_records[0]
+    assert first_record.camera_meta["backend"] == "hik_gige_mvs"
+    assert first_record.frame_path == ""
+    assert first_record.raw_frame_saved is False
+    assert first_record.preview_path == "preview_frames/latest.png"
+    run_dir = run_store.run_dir(result.manifest.run_id)
+    assert not (run_dir / "raw_frames" / "frame_000001.npy").exists()
+    assert (run_dir / "preview_frames" / "latest.png").is_file()
+    assert list((run_dir / "preview_frames").glob("*.png")) == [run_dir / "preview_frames" / "latest.png"]
     assert len(result.manifest.detection_results) == 3
+    assert result.manifest.temperature_records
+    assert result.analysis.all_frames
+    assert result.analysis.temperature_distance
     assert result.manifest.config_snapshot["mode"] == "real_camera_run"
+    assert result.manifest.config_snapshot["save_raw_frames"] is False
+    assert result.manifest.config_snapshot["save_preview_frames"] is True
+    assert result.manifest.config_snapshot["preview_max_width"] == 1200
+    assert result.manifest.config_snapshot["raw_frame_count"] == 0
+    assert result.manifest.config_snapshot["preview_frame_mode"] == "latest_overwrite"
 
     restored = run_store.read_run_manifest(result.manifest.run_id)
     assert restored == result.manifest
+
+
+def test_real_camera_run_saves_raw_frames_when_explicitly_enabled(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = _real_camera_measurement(max_frames=1)
+
+    result = run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        temperature_controller=FakeTemperatureController(),
+        measurement=measurement,
+        max_frames=1,
+        target_fps=8.0,
+        save_raw_frames=True,
+    )
+
+    record = result.manifest.frame_records[0]
+    run_dir = run_store.run_dir(result.manifest.run_id)
+    assert record.raw_frame_saved is True
+    assert record.frame_path == "raw_frames/frame_000001.npy"
+    assert (run_dir / "raw_frames" / "frame_000001.npy").is_file()
+    assert record.preview_path == "preview_frames/latest.png"
+    assert (run_dir / "preview_frames" / "latest.png").is_file()
+    assert result.manifest.config_snapshot["save_raw_frames"] is True
+    assert result.manifest.config_snapshot["raw_frame_count"] == 1
 
 
 def test_real_camera_run_default_sync_tolerance_accepts_serial_temperature_window(tmp_path: Path) -> None:
@@ -353,6 +393,18 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
 
     assert len(ok_events[-1]["analysis_result"]["temperature_distance"]) == 2
     assert ok_events[0]["sync_config"]["temp_sync_target_ms"] == 1000.0
+    assert ok_events[0]["frame_url"].startswith(f"/api/runs/{ok_events[0]['run_id']}/preview/latest.png")
+    assert ok_events[0]["frame_url"].endswith("frame_index=1")
+    assert ok_events[0]["storage"] == {
+        "save_raw_frames": False,
+        "raw_frame_saved": False,
+        "save_preview_frames": True,
+        "preview_path": "preview_frames/latest.png",
+    }
+    ok_run_dir = run_store.run_dir(ok_events[-1]["run_manifest"]["run_id"])
+    assert not (ok_run_dir / "raw_frames" / "frame_000001.npy").exists()
+    assert (ok_run_dir / "preview_frames" / "latest.png").is_file()
+    assert list((ok_run_dir / "preview_frames").glob("*.png")) == [ok_run_dir / "preview_frames" / "latest.png"]
     assert ok_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
     assert ok_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_OK"
     assert stale_events[-1]["analysis_result"]["temperature_distance"] == []
