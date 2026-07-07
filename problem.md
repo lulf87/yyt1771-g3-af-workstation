@@ -90,6 +90,10 @@
 | P-0072 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart / export | Analysis 页 AS/AF 构造关系不清、AS/AF 标签可读性差且导出按钮不触发下载或明确错误 | 2026-07-06 | 2026-07-06 | Codex | golden A Analysis/Export 浏览器复测已通过，AS/AF 构造标注清晰且 ZIP 下载成功 |
 | P-0073 | RESOLVED_BROWSER_VERIFIED | P1 | dev startup / hardware profile selection | “启动一下”需要重复探索命令且冷启动/模式切换过慢 | 2026-07-07 | 2026-07-07 | Codex | `scripts/g3_fast_start.sh` 支持 real-real / real-simtemp / sim-sim，复用启动为亚秒级，Playwright 页面加载复测已通过 |
 | P-0074 | RESOLVED_BROWSER_VERIFIED | P0 | backend / real camera storage / export | 真实采集默认每帧保存完整 raw `.npy`，长时间运行会快速占满磁盘 | 2026-07-07 | 2026-07-07 | Codex | 模拟相机+模拟温控真实浏览器 Run→Stop→Analysis→Export 复测通过，217 帧 raw_frame_count=0，仅保存 latest preview |
+| P-0075 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / operator mode / export import | 需要新增实际使用界面模式并支持导出文件历史导入 | 2026-07-07 | 2026-07-07 | Codex | Operator Mode Run→Stop→Results Export→History Import + Engineering Mode 浏览器复测已通过 |
+| P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
+| P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
+| P-0078 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator mode / source guard | Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端 | 2026-07-07 | 2026-07-07 | Codex | sim-sim 下已验证 Operator 真机源显示真实硬件不可用且禁用 probe/run；离线源可 probe；工程模式真实相机调试未受影响 |
 
 ---
 
@@ -261,6 +265,78 @@ manifest/config_snapshot 明确记录本次保存策略和 raw_frame_count。
 - Actual: Run `run-real_camera-20260707T024930630103Z` 保存 217 帧，Analysis 显示正式温度-距离点数 217、转变点分析状态正常；`config_snapshot.save_raw_frames=false`，`raw_frame_count=0`，`frame_records[0].frame_path=""`，`frame_records[0].raw_frame_saved=false`，仅 `preview_frames/latest.png` 存在；导出 ZIP 仅包含 CSV/JSON/PNG/parameters，不含 `.npy`。
 - Result: PASS
 - Evidence: `output/playwright/g3-real-camera-preview-storage-20260707.png`, `output/runs/run-real_camera-20260707T024930630103Z/run_manifest.json`, `output/runs/run-real_camera-20260707T024930630103Z/analysis_result.json`, `.playwright-cli/yyt1771-g3-export-run-real-camera-20260707T024930630103Z.zip`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0075 — 需要新增实际使用界面模式并支持导出文件历史导入
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/uiMode.ts`, `frontend/src/operatorSettings.ts`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/services/import_service.py`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+
+#### Problem
+
+现有 G3 前端默认显示大量工程调试信息，不适合实际操作者直接使用；历史回放也不能直接导入本项目导出的 ZIP/JSON 文件复核结果。需要新增默认的“实际使用 / Operator”模式，同时保留完整“工程模式 / Engineering”能力。
+
+#### Expected
+
+```text
+默认进入实际使用模式，顶部可切换实际使用 / 工程模式。
+实际使用模式只有实时测试、历史导入、结果与导出三个主导航。
+实时测试页默认真实相机 + 温控，隐藏离线数据集列表、离线/真实切换、冻结、当前帧检测结果、完整相机/温控工程字段和高级检测参数。
+测量区域默认折叠，ROI 框仍在画面上可见。
+温控目标和功率只在确认本次测试设置后作为 confirmed settings，开始实时测试时才传入 run。
+结果页简洁显示 AS、AF、ΔT、最大斜率、点数、状态、曲线和导出。
+历史导入支持本项目导出的 ZIP/JSON，能展示参数、温控设置、帧结果摘要、AS/AF/ΔT 和温度-距离曲线。
+工程模式原有离线数据集、源切换、冻结、检测当前帧、完整诊断和高级参数继续可用。
+```
+
+#### Resolution log
+
+- 2026-07-07: 新增 `UiMode`、默认 operator、`localStorage["yyt1771-g3-ui-mode"]` 持久化和 `?mode=operator|engineering` 初始覆盖；Operator 导航为实时测试 / 历史导入 / 结果与导出，Engineering 导航保留测量配置 / 实时测量 / 历史回放 / 结果分析与导出。
+- 2026-07-07: 新增 Operator 温控 confirmed settings 状态机：输入修改只标 dirty，不下发温控；确认后保存 target/power/serial；开始实时测试前校验相机、ROI 和 confirmed settings，并把 confirmed target/power/serial 应用到正式 measurement 后启动真实相机 stream。
+- 2026-07-07: 新增 Operator 实时测试页：简化待测物类型选择、相机状态、温控面板、默认折叠 ROI、同页实时相机画面、ROI/A-B overlay、关键参数和 compact temperature-distance 曲线；隐藏离线数据集列表、当前帧检测结果和主界面工程字段。
+- 2026-07-07: 新增 Operator 结果页：简洁显示 run、AFAS status、正式点数、AS/AF/ΔT、最大斜率、raw/smoothed 点数、曲线和导出按钮；AFAS status 对缺少 `result_status` 但已含 AS/AF 的导入/停止结果回退显示为 `ok`。
+- 2026-07-07: 新增后端 `/api/imports/run-export` 和 `import_service.py`，支持 ZIP 中的 `run_export.json`、`frame_results.csv`、`parameters.json`、`temperature_distance.png`，可选文件缺失时返回 warnings 而不崩溃；同时支持 JSON 导入。
+- 2026-07-07: 新增 Operator 历史导入页，支持选择/拖放 ZIP/JSON，显示文件名、run id、对象类型、测宽方式、目标温度、功率、帧数、有效/无效、温度-距离点数、AS/AF/ΔT、AFAS 状态和导入曲线。
+
+#### Tests run
+
+```bash
+npm test
+npm run build
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_import_service.py backend/tests/integration/test_import_api.py backend/tests/integration/test_export_api.py backend/tests/integration/test_export_service.py -q
+```
+
+Result:
+
+```text
+frontend npm test: 65 passed
+frontend npm run build: passed
+backend import/export pytest: 11 passed
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022/`
+- Dataset: `sim-sim` profile, simulated camera backed by `golden_a_20260522_dev_lab` + simulated temperature
+- Page: Operator Live Test / Operator Results Export / Operator History Import / Engineering Setup
+- Steps: 启动 `scripts/g3_fast_start.sh sim-sim --no-open`；打开 `http://127.0.0.1:5176/?mode=operator`；确认默认 operator 导航和无离线 dataset rail；确认温控设置；开始实时测试，观察真实相机画面、ROI/A-B overlay、实时关键参数和曲线；点击 Stop；进入结果与导出，检查 AS/AF/ΔT/状态并点击导出；将下载的 ZIP 在历史导入页上传；检查导入参数、帧摘要、AS/AF/ΔT 和曲线；切换工程模式，检查原四个页签、离线数据集列表、源切换、冻结、检测当前帧、完整相机/温控字段和高级检测参数仍可见。
+- Expected: Operator 模式隐藏工程调试信息并完成 Live Test→Stop→Results Export→History Import；导入 ZIP 能展示参数、结果和曲线；Engineering 模式保持原能力。
+- Actual: Operator 默认显示实时测试 / 历史导入 / 结果与导出，无 dataset rail；Run `run-real_camera-20260707T041845463756Z` 实时显示帧画面、ROI/A-B overlay、303 个正式温度-距离点、同步正常和有效状态；Results 页显示 `AS=37.54 °C`、`AF=38.39 °C`、`ΔT=0.85 °C`、`最大斜率温度=38.55 °C`、`状态=正常`；下载 `yyt1771-g3-export-run-real_camera-20260707T041845463756Z.zip`，ZIP 包含 `run_export.json`、`frame_results.csv`、`parameters.json`、`temperature_distance.png`、`roi_ab_overlay.png`；History Import 上传该 ZIP 后显示参数、帧数 `303`、有效/无效 `303 / 0`、温度-距离点数 `303`、AS/AF/ΔT 和温度-距离曲线；Engineering 模式显示原 Setup/Run/Playback/Analysis tabs、离线数据集 rail、源切换、冻结、检测当前帧、完整工程字段和高级检测参数。
+- Result: PASS
+- Evidence: `output/playwright/p0075-operator-default-20260707.png`, `output/playwright/p0075-operator-live-stopped-20260707.png`, `output/playwright/p0075-operator-results-export-20260707.png`, `output/playwright/p0075-operator-import-20260707.png`, `output/playwright/p0075-engineering-mode-20260707.png`, `.playwright-cli/yyt1771-g3-export-run-real-camera-20260707T041845463756Z.zip`, `output/runs/run-real_camera-20260707T041845463756Z/run_manifest.json`, `output/runs/run-real_camera-20260707T041845463756Z/analysis_result.json`
+- Note: Playwright console also recorded intermittent `/api/camera/preview` `409 Conflict` messages during preview polling while most preview requests returned `200 OK`; no user-visible camera error occurred and the operator run/export/import flow completed. This was not treated as a blocker for P-0075.
 
 #### Current status
 
@@ -7585,6 +7661,492 @@ Setup Real camera live → Freeze → ROI unchanged → Run page → Start real 
 #### Final status
 
 FIXED_PENDING_BROWSER_RETEST
+
+
+---
+
+### P-0067 — Operator Mode 实时测试页缺少“检测当前帧”入口
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/i18n.ts`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+实际使用模式 / Operator Mode 的“实时测试”页左侧相机区域只有相机状态，没有工程模式中已有的“检测当前帧”按钮。操作者无法在开始实时测试前用当前真实相机画面验证 ROI、检测方案、A/B overlay 和 distance。
+
+#### Expected
+
+```text
+Operator Mode 实时测试页提供“检测当前帧 / Probe current frame”按钮。
+点击按钮时必须让后端 /api/camera/setup-probe 自己采集最新帧并检测同一帧，不使用旧 React state 中缓存的 framePngDataUrl。
+检测完成后右侧画面显示本次检测返回的 image_data_url，并叠加 ROI、A/B 点、测量线和 debug overlay。
+Operator Mode 只显示简短检测摘要，不显示工程模式完整诊断卡。
+实时测试运行中按钮禁用，并提示“实时测试中不可单帧检测”。
+工程模式原有“检测当前帧”行为不变。
+```
+
+#### Actual
+
+修复前 Operator Mode 没有该按钮；只有工程模式 Setup real camera panel 中可触发当前帧检测。
+
+#### Root cause
+
+`PageContent` 已接收 `probing` 和 `onProbeRealCameraSetup`，但渲染 `OperatorRunPage` 时没有传入。`OperatorRunPage` 也没有接收 `probe`，因此其画布检测结果只来自 `liveRun.detectionResult` 或最后一次 `runResult`，不能显示 setup-probe 的单帧检测 overlay。
+
+#### Fix summary
+
+- `frontend/src/main.tsx`
+  - 新增 Operator 专用 `runOperatorRealCameraSetupProbe()`，调用 `probeRealCameraSetupFrame(currentMeasurement)`，不传 `framePngDataUrl`、旧 timestamp 或 camera_meta。
+  - Operator 相机区域新增“检测当前帧”按钮、loading 文案和运行中禁用提示。
+  - Operator 画布在未运行实时测试时优先使用 real-camera setup probe 的 `detection_result` 和 `image_data_url` 显示当前帧 overlay。
+  - Operator 只显示简短“当前帧检测有效/无效”摘要，不复用工程模式完整诊断卡。
+  - probe 期间暂停 setup preview 轮询，并为 preview polling 增加 generation guard，减少旧轮询循环继续排队。
+- `frontend/src/i18n.ts`
+  - 补充当前帧检测、运行中禁用、相机忙等中文文案，并将 `Probing` 改为“检测中”。
+- `frontend/src/api/client.ts` / `frontend/tests/apiClientUrls.test.mjs`
+  - 新增测试确认 setup-probe 默认请求体不包含缓存帧字段。
+- `frontend/tests/operatorProbeUi.test.mjs`
+  - 新增源码级 UI 不变量测试，覆盖 Operator 按钮、禁用条件、probe overlay 优先级、工程模式按钮保留。
+- `backend/src/yyt1771_g3/api/main.py`
+  - 增加注释说明 `frame_png_data_url` 省略时会抓取最新 preview frame 并检测同一帧。
+
+#### Tests run
+
+```bash
+cd frontend && npm test
+Result: PASS, 70 passed.
+
+cd frontend && npm run build
+Result: PASS.
+
+scripts/g3_fast_start.sh sim-sim --no-open
+Result: PASS, reused backend http://127.0.0.1:8022 and frontend http://127.0.0.1:5176.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` profile, simulated camera using G3 offline frame source; simulated temperature
+- Page: Operator Mode / 实时测试; Engineering Mode / 测量配置
+- Steps:
+  1. Start app with `scripts/g3_fast_start.sh sim-sim --no-open`.
+  2. Open `http://127.0.0.1:5176/?mode=operator`.
+  3. Verify Operator Mode 相机区域显示“检测当前帧”按钮.
+  4. Click “检测当前帧”.
+  5. Inspect network request `POST /api/camera/setup-probe`.
+  6. Verify request body contains `measurement_definition` and does not contain `frame_png_data_url`, `frame_timestamp_ms`, or `camera_meta`.
+  7. Verify Operator right-side frame title changes to “当前帧检测 · 帧 1”.
+  8. Verify frame image updates and overlay shows ROI, 正式测宽带, A/B points, measurement line, and distance.
+  9. Verify Operator left summary shows “当前帧检测有效: 测量距离 962.00 像素”.
+  10. Confirm settings, start simulated live test, verify “检测当前帧” is disabled and “实时测试中不可单帧检测” is visible, then stop the run.
+  11. Switch to Engineering Mode and verify original Setup real-camera “检测当前帧” button and full “当前帧检测结果” diagnostics card remain available.
+- Expected:
+  - Operator current-frame probe is available before live test.
+  - Click uses atomic setup-probe fresh capture path, not cached preview frame fields.
+  - Operator displays only a compact summary plus canvas overlay.
+  - Live test disables single-frame probing.
+  - Engineering Mode behavior remains unchanged.
+- Actual:
+  - All expected checks passed.
+  - `POST /api/camera/setup-probe` returned 200 OK.
+  - Request body omitted cached frame fields.
+  - Operator overlay displayed A/B labels and formal measurement band.
+  - Engineering Mode still displayed the original current-frame probe button and diagnostics card.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0067_operator_probe_current_frame_20260707.png`
+  - `output/playwright/p0067_operator_probe_disabled_during_run_20260707.png`
+  - `output/playwright/p0067_engineering_probe_still_present_20260707.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0068 — Simulated real camera live preview polling intermittently logs `/api/camera/preview` 409 in browser console
+
+- Status: OPEN
+- Priority: P2
+- Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+During P-0067 browser retest with `sim-sim`, continuous Operator/Setup real-camera preview polling intermittently logged browser console errors for `GET /api/camera/preview` returning `409 Conflict`.
+
+#### Expected
+
+Live preview polling should either avoid overlapping camera operations or handle expected busy responses without noisy browser console errors when the UI remains healthy.
+
+#### Actual
+
+The UI remained responsive and current-frame setup-probe worked, but Playwright console logs contained intermittent `Failed to load resource: the server responded with a status of 409 (Conflict)` entries for `/api/camera/preview`. This was observed before and after the Operator current-frame probe click; the actual `POST /api/camera/setup-probe` returned 200 OK.
+
+#### Suspected cause
+
+The backend camera operation lock intentionally returns 409 when another camera operation owns the simulated/real camera. Preview polling may still race with another preview or camera operation under the fast default live display interval. The exact source of the overlapping preview calls needs a focused investigation.
+
+#### Fix summary
+
+Not fixed in this PR. P-0067 added a frontend guard to pause polling while Operator probing is active, but intermittent preview-only 409s remain outside the current issue scope.
+
+#### Tests run
+
+```bash
+scripts/g3_fast_start.sh sim-sim --no-open
+Playwright Chromium browser retest during P-0067
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` profile, simulated camera and simulated temperature
+- Page: Operator Mode / 实时测试
+- Steps:
+  1. Open Operator Mode with real camera setup source.
+  2. Let live preview polling run.
+  3. Inspect Playwright console and network requests.
+- Expected:
+  - Preview polling should avoid visible browser console resource errors during normal display.
+- Actual:
+  - Intermittent `GET /api/camera/preview` 409 entries appeared while the UI still displayed camera status `ok`.
+- Result: FAIL
+- Evidence:
+  - Playwright console log: `.playwright-cli/console-2026-07-07T05-14-12-986Z.log`
+
+#### Final status
+
+OPEN
+
+
+---
+
+### P-0076 — Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/components/operator/SourceProvenanceBadge.tsx`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/services/source_provenance.py`, `backend/src/yyt1771_g3/services/export_service.py`, `backend/src/yyt1771_g3/services/import_service.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+Operator Mode / 实际使用模式原先没有简化数据来源选择器，也不能清楚区分离线/模拟素材、真实相机接口、模拟相机后端、混合模式和导入结果。即使走 `/api/camera/*` real_camera 接口，底层也可能是 `G3 simulated dataset camera` / `SIM-DATASET-*`，UI 若只按前端 source 显示“真实相机”会误导操作者。导出和导入也需要保留来源，否则模拟结果导入后可能被误认为真实测试。
+
+#### Expected
+
+```text
+Operator Mode 保留简化“数据来源”选择，可选离线数据集或真实相机，选择写入 localStorage。
+前端只显示操作者需要的紧凑素材/相机状态，不删除工程模式完整能力。
+后端返回权威 provenance，覆盖 preview、setup-probe、probe、run stream、manifest、analysis、export、import。
+real_camera 接口如果实际是 simulated dataset camera，UI 必须显示模拟相机/模拟温控警告，开始按钮不得暗示真实测试。
+offline/simulated/mixed/imported 结果在 Run、趋势、结果导出和历史导入页面都必须显示来源 badge / warning。
+“检测当前帧”在 real_camera 和 offline_dataset 两种来源下都可用，且检测和 overlay 来自同一帧。
+导出 `run_export.json` 与 `parameters.json` 必须包含 `operator_data_source`、`provenance`，模拟/离线导出还必须包含“模拟数据，仅用于调试，不代表真实测试结果。”提示。
+```
+
+#### Actual
+
+修复前 Operator Mode 缺少来源选择；真实相机接口与真实硬件语义混在一起；模拟相机后端和离线素材没有统一后端 provenance；导出/导入无法完整保留并展示来源。
+
+#### Root cause
+
+来源语义分散在前端 setup source、dataset id、camera profile、frame camera_meta 和导出文件结构中，没有统一的后端权威 provenance 结构。Operator Mode 复用了部分工程模式状态，但缺少操作者专用的简化 source selector、source badge 和 offline/current-frame probe 分发逻辑。
+
+#### Fix summary
+
+- 新增 `backend/src/yyt1771_g3/services/source_provenance.py`，统一生成/推断 offline、camera runtime、imported、unknown provenance，并识别 simulated dataset camera、mock/fake backend、simulated temperature 和 mixed 模式。
+- `RunManifest` / `AnalysisResult` 增加 `operator_data_source` 与 `provenance`，analysis 继承 manifest 来源。
+- `/api/camera/preview`、`/api/camera/setup-probe`、offline probe、real-camera run stream、live offline run、manifest、analysis、export、import 均携带 provenance。
+- 导出 `run_export.json` / `parameters.json` 写入 `operator_data_source`、`provenance`；offline/simulated/mixed 写入 `source_notice`，其中离线/模拟导出包含“模拟数据，仅用于调试，不代表真实测试结果。”。
+- import 支持新 wrapper 版和旧 measurement-only `parameters.json`，旧导出无 provenance 时从 dataset、camera_meta、temperature source 推断；导入视图显示 `imported_file` provenance 并保留原始来源。
+- Operator Mode 增加简化数据来源 segmented control，使用 `localStorage["yyt1771-g3-operator-source"]` 持久化。
+- Operator 离线模式只显示紧凑素材下拉、离线/模拟 warning、简化温控区域；真实相机模式保留相机状态和真实温控控制。
+- Operator “检测当前帧”根据来源分发：real camera 使用 `/api/camera/setup-probe` 后端原子抓取最新帧并检测；offline 使用 `/api/probe` 当前帧，二者都更新同帧图像、overlay 和 provenance。
+- 新增 `SourceProvenanceBadge`，在 Operator Run、画面卡片、趋势、Results/Export、History Import 显示来源；导入模拟导出时显示“导入结果”且继续显示底层离线/模拟 warning。
+- 工程模式原有离线数据集卡片列表、完整数据来源切换、帧导航、检测当前帧、ROI/温控/高级参数保持可用。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m py_compile backend/src/yyt1771_g3/services/export_service.py
+Result: PASS.
+
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_export_service.py -q
+Result: PASS, 3 passed.
+
+cd frontend && npm test -- --runInBand
+Result: PASS, 72 passed.
+
+cd frontend && npm run build
+Result: PASS.
+
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests -q
+Result: PASS, 152 passed in 114.59s.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` hardware profile; `golden_a_20260522_dev_lab`
+- Page: Operator Mode / 实时测试; Operator Results / Export; Operator History Import; Engineering Mode / 测量配置
+- Steps:
+  1. Start/restart app with `scripts/g3_fast_start.sh sim-sim --restart --no-open`.
+  2. Open Operator Mode in real-camera source while backend profile is simulated camera + simulated temperature.
+  3. Verify badge shows “模拟相机 + 模拟温控”, details include `G3 simulated dataset camera`, `SIM-DATASET-golden_a_20260522_dev_lab`, and warning says current camera backend is simulated.
+  4. Click real-camera “检测当前帧” and verify right canvas uses returned current-frame image + overlay from setup-probe.
+  5. Switch Operator source to “离线数据集”.
+  6. Verify compact offline material dropdown appears, temperature panel says simulated mode does not connect real temperature controller, badge shows “离线/模拟素材” and no stale camera model/serial.
+  7. Click offline “检测当前帧” and verify `/api/probe` returns current frame image, A/B overlay, formal measurement band, and offline provenance.
+  8. Confirm settings, click “开始模拟测试”, verify source selector/probe are disabled during run and trend card shows offline provenance.
+  9. Stop run, open Results / Export, verify source badge and formal point count, then export zip from browser.
+  10. Inspect downloaded zip and verify both `run_export.json` and `parameters.json` contain `operator_data_source=offline_dataset`, `provenance.overall_kind=offline`, and `source_notice.zh=模拟数据，仅用于调试，不代表真实测试结果。`
+  11. Open History Import, upload exported zip, verify imported view shows “导入结果” badge, preserves original dataset details, displays offline/simulated warning, and does not mark the import as real hardware.
+  12. Switch to Engineering Mode and verify full dataset rail, engineering source selector, frame controls, “检测当前帧”, ROI, temperature, and advanced detector controls remain available.
+  13. Inspect browser console warnings/errors.
+- Expected:
+  - Operator source selector is available and persisted.
+  - real_camera source does not imply real hardware when backend provenance is simulated.
+  - Offline source uses compact operator UI, not engineering dataset cards.
+  - Current-frame probe, run, trend, results, export, and import all carry/display correct provenance.
+  - Exported simulated/offline artifacts include machine-readable provenance and human-readable simulated-data notice.
+  - Engineering Mode remains unchanged.
+- Actual:
+  - All expected checks passed.
+  - Real-camera source with sim backend showed “模拟相机 + 模拟温控” and warning; start button showed “开始模拟测试”.
+  - Offline source showed “离线/模拟素材”; probe returned valid distance and same-frame overlay.
+  - Offline live run reached 448 formal temperature-distance points and retained offline provenance in trend/results.
+  - Export zip contained `run_export.json`, `parameters.json`, `frame_results.csv`, `temperature_distance.png`, and `roi_ab_overlay.png`; JSON provenance and `source_notice` were verified.
+  - History Import displayed “导入结果” plus underlying offline/simulated warning.
+  - Engineering Mode still displayed complete dataset cards, source switch, probe button, ROI/temperature/advanced controls.
+  - Playwright console check returned 0 warnings and 0 errors after the final flow.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0069_operator_real_simulated_probe_20260707.png`
+  - `output/playwright/p0069_operator_offline_probe_20260707.png`
+  - `output/playwright/p0069_operator_offline_run_20260707.png`
+  - `output/playwright/p0069_operator_results_export_20260707.png`
+  - `output/playwright/p0069_operator_offline_export_20260707.zip`
+  - `output/playwright/p0069_operator_import_20260707.png`
+  - `output/playwright/p0069_engineering_mode_preserved_20260707.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0077 — Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/main.tsx`, `frontend/tests/operatorProbeUi.test.mjs`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户在 Operator Mode / 实际使用 / 实时测试页截图中标出两处来源 provenance 提示卡：左侧数据来源区域下方和右侧图像上方均显示“模拟相机 + 模拟温控 / G3 simulated dataset camera / 当前相机后端为模拟相机，请勿作为真实测试数据”。该提示在实时测试主工作流中过于醒目且重复，用户要求去除。
+
+#### Expected
+
+```text
+Operator 实时测试页不再显示截图中红框标出的来源提示卡。
+不改变后端 provenance 数据、不改变开始按钮模拟/真实语义、不改变导出/导入中来源追溯能力。
+结果页和历史导入页仍可显示来源 badge / warning，用于导出和导入结果追溯。
+```
+
+#### Actual
+
+修复前 `OperatorRunPage` 在左侧控制面板和右侧视觉区域各渲染一个带 warning 的 `SourceProvenanceBadge`；实时趋势标题旁还保留一个紧凑来源 badge。
+
+#### Root cause
+
+P-0076 引入 provenance badge 时为了确保来源醒目，在 Operator 实时页多个位置重复展示。用户后续确认实时测试页不需要这些提示卡。
+
+#### Fix summary
+
+- `frontend/src/main.tsx`
+  - 移除 Operator 实时测试页左侧控制面板中的 `SourceProvenanceBadge`。
+  - 移除右侧图像上方的紧凑 `SourceProvenanceBadge`。
+  - 移除实时趋势标题旁的紧凑 `SourceProvenanceBadge`，只保留普通小字来源标签。
+  - 删除仅供实时页 badge 使用的 `operatorSourceWarning()`。
+- `frontend/tests/operatorProbeUi.test.mjs`
+  - 更新源码级 UI 不变量，确认 Operator 实时页不再渲染 `sourceProvenance` badge，也不再绑定 `sourceWarning`。
+
+#### Tests run
+
+```bash
+cd frontend && npm test -- --runInBand
+Result: PASS, 72 passed.
+
+cd frontend && npm run build
+Result: PASS.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` hardware profile; simulated camera source backed by `golden_a_20260522_dev_lab`
+- Page: Operator Mode / 实时测试
+- Steps:
+  1. Start/reuse app with `scripts/g3_fast_start.sh sim-sim --no-open`.
+  2. Open `http://127.0.0.1:5176/?mode=operator`.
+  3. Set `localStorage["yyt1771-g3-operator-source"] = "real_camera"` and reload.
+  4. Verify left panel still shows data source selector and real camera status.
+  5. Verify the left provenance warning card is absent.
+  6. Verify the right-side image area no longer has the provenance warning card above the frame.
+  7. Verify live trend header no longer contains the compact provenance badge card; only a small source label remains.
+- Expected:
+  - The two screenshot-highlighted prompt cards are gone.
+  - Operator current-frame probe button and live camera display remain available.
+  - No measurement/provenance backend fields are changed.
+- Actual:
+  - Expected UI checks passed.
+  - Screenshot evidence shows the prompt cards removed.
+  - Browser console still showed intermittent `/api/camera/preview` 409 entries; this is the pre-existing P-0068 preview polling issue and is not introduced by this UI-only change.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0077_operator_source_prompt_removed_20260707.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0078 — Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/services/source_provenance.py`, `backend/src/yyt1771_g3/services/export_service.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户明确要求 Operator Mode / 实际使用模式的数据来源语义必须严格：
+
+```text
+operatorDataSource === "real_camera" 表示真实硬件测试，必须同时连接真实相机和真实 LU92XX 温控。
+operatorDataSource === "offline_dataset" 表示离线/模拟素材测试，不连接真实相机和真实温控。
+```
+
+修复前在 Operator Mode 选择“真实相机”时，如果后端运行在 `sim-sim` 或 simulated dataset camera 配置，页面仍可能显示 `G3 simulated dataset camera` / `SIM-DATASET-golden_a_20260522_dev_lab` 的画面，并允许检测当前帧或开始实时测试。这会把工程调试路径包装成实际使用路径。
+
+#### Expected
+
+```text
+Operator 真实相机模式：
+- 后端 `/api/operator/source-status` 能报告 real_hardware_available、real_camera_available、real_temperature_available、模拟标记和当前 backend。
+- 当前配置为模拟相机或模拟温控时，UI 显示“真实硬件不可用”，不显示模拟相机画面，不显示模拟趋势。
+- “检测当前帧”和“开始实时测试”禁用，按钮提示“真实硬件不可用”。
+- 后端在 operator_mode=true 且 operator_data_source=real_camera 的 setup-probe / real-camera run 请求上强制校验，模拟相机或模拟温控返回 409。
+
+Operator 离线数据集模式：
+- 继续使用离线素材下拉框、离线 probe 和离线/模拟 run。
+- 不要求真实温控串口，不下发真实温控设置。
+- 显示离线/模拟 warning。
+
+工程模式：
+- 不受 Operator 严格校验影响，仍可用 simulated camera 调试 real-camera 接口。
+```
+
+#### Actual
+
+修复前 Operator 真实相机源会把 simulated dataset camera 的实时 preview/probe 作为真实相机画面显示；开始按钮还会根据 provenance 自动降级为“开始模拟测试”，而不是把该状态视为真实硬件配置错误。
+
+#### Suspected cause
+
+Operator 的 `operatorDataSource` 与后端实际 provenance 混在一起使用，前端用 camera preview / active frame 作为画面兜底，后端真实相机 API 也没有区分 Operator 严格调用与工程调试调用。
+
+#### Fix summary
+
+已修复并完成浏览器复测：
+
+- 后端新增 `/api/operator/source-status`，基于相机 backend、simulated_dataset_id、model/serial 模拟标记、温控 backend 和串口配置返回真实硬件可用性。
+- 后端 `RealCameraSetupProbeRequest` / `RealCameraRunRequest` 增加 `operator_mode` 和 `operator_data_source`；仅当 `operator_mode=true && operator_data_source="real_camera"` 时启用严格 guard，模拟相机或模拟温控返回 409。
+- 前端新增 `getOperatorSourceStatus()`，Operator 真实相机模式不可用时停止 preview polling，清空模拟 preview/probe，显示“真实硬件不可用”错误卡，禁用 probe/run。
+- Operator 离线模式保留离线素材 warning、离线 probe/run 和“开始模拟测试”。
+- 导出中为 `operator_data_source="real_camera"` 但 provenance 非 `real_hardware` 的结果写入 `source_validity.status="forbidden"`，避免被误读为真实硬件结果。
+
+#### Tests run
+
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_source_provenance.py backend/tests/integration/test_camera_api.py backend/tests/integration/test_export_service.py -q`
+  - Result: PASS, 36 passed.
+- `cd frontend && npm test -- operatorProbeUi.test.mjs`
+  - Result: PASS, 76 passed.
+- `cd frontend && ./node_modules/.bin/tsc --noEmit`
+  - Result: PASS, exit 0.
+- `cd frontend && npm run build`
+  - Result: PASS, `tsc && vite build` completed.
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright HeadlessChrome 149.0.0.0
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Hardware profile: `scripts/g3_fast_start.sh sim-sim --restart --no-open`
+- Page: Operator / 实际使用 `实时测试`; Engineering / 工程模式 `测量配置`
+- Steps:
+  1. 启动 `sim-sim`，确认 `/api/health`、`/api/offline-datasets`、`/api/operator/source-status` 和前端响应正常。
+  2. 打开 Operator 模式，保持数据来源为“真实相机”。
+  3. 检查“真实硬件不可用”错误卡、当前相机后端、当前温控后端、真实相机/真实温控可用性、检测当前帧按钮和开始实时测试按钮。
+  4. 切换到“离线数据集”，点击“检测当前帧”。
+  5. 切换到工程模式，再切到工程模式中的“真实相机”，点击“检测当前帧”。
+- Expected:
+  - Operator 真实相机源在模拟相机/模拟温控下显示“真实硬件不可用”，不显示模拟相机帧或实时趋势，“检测当前帧”和“开始实时测试”禁用，按钮文案仍为“开始实时测试”。
+  - Operator 离线源显示离线/模拟 warning，不连接真实温控，允许离线 probe，按钮文案为“开始模拟测试”。
+  - 工程模式不受 Operator 严格 guard 影响，仍可使用 simulated dataset camera 调试 real-camera 接口。
+- Actual:
+  - `/api/operator/source-status` 返回 `real_hardware_available=false`、`camera_is_simulated=true`、`temperature_is_simulated=true`、`camera_backend=simulated`、`temperature_backend=simulated`。
+  - Operator 真实相机源显示“当前选择了“真实相机”，但服务未连接真实相机和真实温控。”和切换离线数据集提示，显示 `G3 simulated camera` / `simulated` backend；DOM 断言确认无 frame/canvas、probe/run 禁用、实时趋势隐藏、按钮仍为“开始实时测试”。
+  - Operator 离线源显示离线/模拟 warning 和“离线数据集模式下不连接真实温控设备。”；点击 probe 后显示“当前帧检测有效: 测量距离 988.00 像素”及 A/B overlay。
+  - 工程模式真实相机页显示 `G3 simulated dataset camera`，检测按钮可用；点击 probe 后检测结果更新，无 Operator 真实硬件不可用错误卡。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0078_operator_real_hardware_unavailable_20260707.png`
+  - `output/playwright/p0078_operator_offline_probe_20260707.png`
+  - `output/playwright/p0078_engineering_mode_preserved_20260707.png`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
 
 
 ---

@@ -181,6 +181,89 @@ test("export bundle download surfaces structured backend errors", async () => {
   }
 });
 
+test("run export import uploads a selected export file to the import endpoint", async () => {
+  const { importRunExportFile } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const file = new File(["{}"], "run_export.json", { type: "application/json" });
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    assert.equal(init.method, "POST");
+    assert.ok(init.body instanceof FormData);
+    assert.equal(init.body.get("file"), file);
+    return new Response(
+      JSON.stringify({
+        filename: "run_export.json",
+        warnings: [],
+        run_manifest: null,
+        analysis_result: {
+          run_id: "run-imported",
+          temperature_distance: [],
+          afas_preprocessing: {},
+          afas_analysis: {}
+        },
+        measurement_definition: null,
+        frame_summary: {
+          total_frames: 0,
+          valid_frames: 0,
+          temperature_distance_points: 0,
+          invalid_reason_counts: {}
+        },
+        temperature_distance_image_data_url: null
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    const view = await importRunExportFile(file);
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/imports\/run-export$/);
+    assert.equal(view.filename, "run_export.json");
+    assert.equal(view.analysis_result.run_id, "run-imported");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("operator source status uses the dedicated endpoint", async () => {
+  const { getOperatorSourceStatus } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        real_hardware_available: false,
+        real_camera_available: false,
+        real_temperature_available: false,
+        camera_is_simulated: true,
+        temperature_is_simulated: true,
+        camera_label: "G3 simulated dataset camera",
+        camera_serial: "SIM-DATASET-golden_a_20260522_dev_lab",
+        camera_backend: "simulated",
+        temperature_backend: "simulated_temperature",
+        offline_datasets_available: true,
+        errors: [],
+        warnings: []
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    const status = await getOperatorSourceStatus();
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/operator\/source-status$/);
+    assert.equal(status.real_hardware_available, false);
+    assert.equal(status.camera_is_simulated, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
   const { probeRealCameraSetupFrame } = await loadApiClientModule();
   const measurement = {
@@ -275,6 +358,168 @@ test("real camera setup probe posts measurement definition and optional frozen f
     assert.equal(body.frame_png_data_url, "data:image/png;base64,frozen");
     assert.equal(body.frame_timestamp_ms, 1779448000123);
     assert.deepEqual(body.camera_meta, { model: "fixture" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("real camera setup probe omits cached frame fields by default", async () => {
+  const { probeRealCameraSetupFrame } = await loadApiClientModule();
+  const measurement = {
+    measurement_id: "real-camera-setup-probe-fresh",
+    source: "real_camera",
+    object_class: "A_BALLOON_ENVELOPE",
+    detector: "BalloonEnvelopeDetector",
+    width_mode: "max_width",
+    measurement_coordinates: "source_pixel",
+    roi: {
+      type: "rotated_rect",
+      center_x: 60,
+      center_y: 35,
+      width: 70,
+      height: 40,
+      angle_deg: 0
+    },
+    detector_config: {
+      min_component_area_px: 20
+    }
+  };
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        dataset_id: "real_camera",
+        frame: {
+          frame_index: 1,
+          shape: [80, 120],
+          dtype: "uint8",
+          timestamp_ms: 1779448000456
+        },
+        measurement_definition: measurement,
+        detection_result: {
+          frame_index: 1,
+          detection_status: "VALID",
+          ab_points: { a: { x: 1, y: 2 }, b: { x: 10, y: 2 } },
+          distance_px: 9,
+          raw_best_candidate: null,
+          selected_candidate: null,
+          rejected_candidates: [],
+          quality: {
+            confidence: 1,
+            edge_strength: null,
+            contour_area: null,
+            roi_coverage: null,
+            jump_from_previous_px: null
+          },
+          rejected_reason: "",
+          debug_artifacts: {},
+          temperature_sync_status: "TEMP_SYNC_MISSING",
+          frame_timestamp_ms: 1779448000456,
+          temperature_timestamp_ms: null,
+          temperature_celsius: null,
+          temperature_delta_ms: null,
+          temperature_source: "",
+          temperature_sampled_this_frame: false
+        },
+        overlay: {
+          roi: measurement.roi,
+          ab_points: { a: { x: 1, y: 2 }, b: { x: 10, y: 2 } },
+          status: "VALID"
+        },
+        camera_status: "ok",
+        camera_meta: { model: "fixture" },
+        image_data_url: "data:image/png;base64,fresh"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    const response = await probeRealCameraSetupFrame(measurement);
+
+    assert.equal(response.dataset_id, "real_camera");
+    assert.equal(response.image_data_url, "data:image/png;base64,fresh");
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/camera\/setup-probe$/);
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.measurement_definition.measurement_id, measurement.measurement_id);
+    assert.equal("frame_png_data_url" in body, false);
+    assert.equal("frame_timestamp_ms" in body, false);
+    assert.equal("camera_meta" in body, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("operator real camera setup probe posts strict source guard flags", async () => {
+  const { probeRealCameraSetupFrame } = await loadApiClientModule();
+  const measurement = {
+    measurement_id: "operator-real-camera-setup-probe",
+    source: "real_camera",
+    object_class: "A_BALLOON_ENVELOPE",
+    detector: "BalloonEnvelopeDetector",
+    width_mode: "max_width",
+    measurement_coordinates: "source_pixel",
+    roi: {
+      type: "rotated_rect",
+      center_x: 60,
+      center_y: 35,
+      width: 70,
+      height: 40,
+      angle_deg: 0
+    },
+    detector_config: {
+      min_component_area_px: 20
+    }
+  };
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        dataset_id: "real_camera",
+        frame: { frame_index: 1, shape: [80, 120], dtype: "uint8", timestamp_ms: 1 },
+        measurement_definition: measurement,
+        detection_result: {
+          frame_index: 1,
+          detection_status: "INVALID",
+          ab_points: null,
+          distance_px: null,
+          raw_best_candidate: null,
+          selected_candidate: null,
+          rejected_candidates: [],
+          quality: { confidence: 0, edge_strength: null, contour_area: null, roi_coverage: null, jump_from_previous_px: null },
+          rejected_reason: "fixture invalid",
+          debug_artifacts: {},
+          temperature_sync_status: "TEMP_SYNC_MISSING",
+          frame_timestamp_ms: 1,
+          temperature_timestamp_ms: null,
+          temperature_celsius: null,
+          temperature_delta_ms: null,
+          temperature_source: "",
+          temperature_sampled_this_frame: false
+        },
+        overlay: { roi: measurement.roi, ab_points: null, status: "INVALID" },
+        image_data_url: "data:image/png;base64,abc"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    await probeRealCameraSetupFrame(measurement, {
+      operatorMode: true,
+      operatorDataSource: "real_camera"
+    });
+
+    assert.equal(calls.length, 1);
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.operator_mode, true);
+    assert.equal(body.operator_data_source, "real_camera");
+    assert.equal(body.frame_png_data_url, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -444,6 +689,92 @@ test("real camera run posts the saved setup measurement definition without overr
     assert.deepEqual(body.measurement_definition.detector_config, measurement.detector_config);
     assert.equal(body.max_frames, 77);
     assert.equal(body.target_fps, 4);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("operator real camera stream posts strict source guard flags", async () => {
+  const { streamRealCameraRun } = await loadApiClientModule();
+  const measurement = {
+    measurement_id: "operator-real-camera-stream",
+    source: "real_camera",
+    object_class: "C_BUNDLE_ENVELOPE",
+    detector: "BundleEnvelopeDetector",
+    width_mode: "max_width",
+    measurement_coordinates: "source_pixel",
+    roi: {
+      type: "rotated_rect",
+      center_x: 957.46,
+      center_y: 726.36,
+      width: 1269.76,
+      height: 381.92,
+      angle_deg: -2.5
+    },
+    detector_config: {
+      live_offline_fps: 4,
+      target_temperature_celsius: 42.5,
+      temperature_power_percent: 55
+    }
+  };
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        event: "complete",
+        run_manifest: {
+          run_id: "run-real_camera-operator-stream",
+          dataset_id: "real_camera",
+          operator_data_source: "real_camera",
+          measurement_definition: measurement,
+          frame_records: [],
+          temperature_records: [],
+          detection_results: [],
+          export_artifacts: [],
+          created_at: "2026-07-07T00:00:00Z",
+          config_snapshot: {},
+          software: {}
+        },
+        analysis_result: {
+          analysis_id: "analysis-operator-stream",
+          run_id: "run-real_camera-operator-stream",
+          all_frames: [],
+          distance_time: [],
+          raw_distance_time: [],
+          stabilized_distance_time: [],
+          temperature_time: [],
+          temperature_distance: [],
+          raw_temperature_distance: [],
+          stabilized_temperature_distance: [],
+          afas_preprocessing: {},
+          afas_analysis: {},
+          export_artifacts: [],
+          created_at: "2026-07-07T00:00:00Z"
+        }
+      }),
+      { status: 200, headers: { "Content-Type": "application/x-ndjson" } }
+    );
+  };
+
+  try {
+    await streamRealCameraRun(
+      measurement,
+      {
+        targetFps: 4,
+        cameraProfile: { pixel_format: "mono8" },
+        operatorMode: true,
+        operatorDataSource: "real_camera"
+      },
+      () => {}
+    );
+
+    assert.equal(calls.length, 1);
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.operator_mode, true);
+    assert.equal(body.operator_data_source, "real_camera");
+    assert.equal(body.max_frames, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

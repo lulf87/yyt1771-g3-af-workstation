@@ -17,6 +17,7 @@ from yyt1771_g3.core.models import (
     RunManifest,
 )
 from yyt1771_g3.services.export_service import export_run, export_run_bundle
+from yyt1771_g3.services.source_provenance import camera_runtime_provenance, offline_dataset_provenance
 from yyt1771_g3.storage.run_store import RunStore
 
 
@@ -82,8 +83,14 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
     assert len(csv_text.strip().splitlines()) == 3
 
     payload = json.loads((run_dir / "exports" / "run_export.json").read_text(encoding="utf-8"))
+    assert "operator_data_source" in payload
+    assert "provenance" in payload
     assert payload["run_manifest"]["config_snapshot"]["mode"] == "test-export"
     assert payload["analysis_result"]["temperature_distance"][0]["frame_index"] == 1
+    parameters = json.loads((run_dir / "exports" / "parameters.json").read_text(encoding="utf-8"))
+    assert parameters["measurement_definition"]["measurement_id"] == "export-m"
+    assert "operator_data_source" in parameters
+    assert "provenance" in parameters
 
     for filename in ["temperature_distance.png", "roi_ab_overlay.png"]:
         with Image.open(run_dir / "exports" / filename) as image:
@@ -118,3 +125,56 @@ def test_export_bundle_does_not_depend_on_or_include_raw_frames(tmp_path: Path) 
         "parameters.json",
     }.issubset(names)
     assert not any(name.startswith("raw_frames/") or name.endswith(".npy") for name in names)
+
+
+def test_export_includes_human_readable_notice_for_offline_simulated_data(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    manifest = _manifest().model_copy(
+        update={
+            "run_id": "run-export-offline",
+            "operator_data_source": "offline_dataset",
+            "provenance": offline_dataset_provenance("golden_a_20260522_dev_lab"),
+        }
+    )
+    run_store.write_run_manifest(manifest)
+
+    export_run(run_store, manifest.run_id)
+
+    export_dir = run_store.run_dir(manifest.run_id) / "exports"
+    run_payload = json.loads((export_dir / "run_export.json").read_text(encoding="utf-8"))
+    parameters = json.loads((export_dir / "parameters.json").read_text(encoding="utf-8"))
+    for payload in (run_payload, parameters):
+        assert payload["source_notice"]["zh"] == "模拟数据，仅用于调试，不代表真实测试结果。"
+        assert "does not represent a real test result" in payload["source_notice"]["en"]
+
+
+def test_export_marks_operator_real_camera_non_hardware_source_as_forbidden(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    manifest = _manifest().model_copy(
+        update={
+            "run_id": "run-export-real-camera-simulated",
+            "dataset_id": "real_camera",
+            "operator_data_source": "real_camera",
+            "provenance": camera_runtime_provenance(
+                camera_profile={
+                    "backend": "simulated",
+                    "model": "G3 simulated dataset camera",
+                    "serial_number": "SIM-DATASET-golden_a_20260522_dev_lab",
+                    "simulated_dataset_id": "golden_a_20260522_dev_lab",
+                },
+                temperature_backend="simulated_temperature",
+            ),
+        }
+    )
+    run_store.write_run_manifest(manifest)
+
+    export_run(run_store, manifest.run_id)
+
+    export_dir = run_store.run_dir(manifest.run_id) / "exports"
+    run_payload = json.loads((export_dir / "run_export.json").read_text(encoding="utf-8"))
+    parameters = json.loads((export_dir / "parameters.json").read_text(encoding="utf-8"))
+    for payload in (run_payload, parameters):
+        assert payload["operator_data_source"] == "real_camera"
+        assert payload["provenance"]["overall_kind"] == "simulated"
+        assert payload["source_validity"]["status"] == "forbidden"
+        assert "not complete real hardware" in payload["source_validity"]["reason_en"]

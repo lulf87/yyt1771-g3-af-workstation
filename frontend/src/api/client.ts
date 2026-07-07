@@ -131,6 +131,40 @@ export type DetectorConfig = {
   temperature_serial_port?: string;
 };
 
+export type SourceProvenance = {
+  acquisition_source: "offline_dataset" | "camera_runtime" | "imported_file" | "unknown" | string;
+  camera_backend: string;
+  camera_backend_kind: "real_hardware" | "simulated_dataset" | "mock" | "unknown" | string;
+  camera_is_simulated: boolean;
+  camera_label: string;
+  camera_serial: string;
+  simulated_dataset_id: string;
+  temperature_backend: string;
+  temperature_backend_kind: "real_hardware" | "simulated" | "mock" | "unknown" | string;
+  temperature_is_simulated: boolean;
+  overall_kind: "real_hardware" | "simulated" | "mixed" | "offline" | "imported" | "unknown" | string;
+  display_label_zh: string;
+  display_label_en: string;
+  imported_from_provenance?: SourceProvenance;
+};
+
+export type OperatorSourceStatus = {
+  real_hardware_available: boolean;
+  real_camera_available: boolean;
+  real_temperature_available: boolean;
+  camera_is_simulated: boolean;
+  temperature_is_simulated: boolean;
+  camera_label: string;
+  camera_serial: string;
+  camera_backend?: string;
+  temperature_backend: string;
+  temperature_serial_port_configured?: boolean;
+  offline_datasets_available: boolean;
+  errors: string[];
+  warnings: string[];
+  provenance?: SourceProvenance;
+};
+
 export type MeasurementDefinition = {
   measurement_id: string;
   source: "offline_dataset" | "real_camera";
@@ -213,6 +247,8 @@ export type ProbeResponse = {
     ab_points: { a: ABPoint; b: ABPoint } | null;
     status: string;
   };
+  image_data_url?: string;
+  provenance?: SourceProvenance;
 };
 
 export type FrameRecord = {
@@ -239,6 +275,8 @@ export type RunManifest = {
   run_id: string;
   dataset_id: string;
   measurement_definition: MeasurementDefinition;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   frame_records: FrameRecord[];
   temperature_records: TemperatureRecord[];
   detection_results: DetectionResult[];
@@ -269,6 +307,8 @@ export type ExportArtifact = {
 export type AnalysisResult = {
   analysis_id: string;
   run_id: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   all_frames: DetectionResult[];
   distance_time: CurvePoint[];
   raw_distance_time: CurvePoint[];
@@ -326,6 +366,8 @@ export type LiveOfflineFrameEvent = {
   event: "frame";
   run_id: string;
   dataset_id: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
   frame_index: number;
   frame_count: number;
   total_frames: number;
@@ -384,6 +426,7 @@ export type CameraPreviewResponse = {
   pixel_format: string;
   camera_meta: Record<string, unknown>;
   image_data_url?: string;
+  provenance?: SourceProvenance;
 };
 
 export type RealCameraSetupProbeResponse = ProbeResponse &
@@ -406,6 +449,25 @@ export type ApiErrorDetail = {
 export type ExportDownloadResult = {
   filename: string;
   size: number;
+};
+
+export type ImportedFrameSummary = {
+  total_frames: number;
+  valid_frames: number;
+  temperature_distance_points: number;
+  invalid_reason_counts: Record<string, number>;
+};
+
+export type ImportedRunView = {
+  filename: string;
+  warnings: string[];
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  provenance?: SourceProvenance;
+  run_manifest: RunManifest | null;
+  analysis_result: AnalysisResult | null;
+  measurement_definition: MeasurementDefinition | null;
+  frame_summary: ImportedFrameSummary;
+  temperature_distance_image_data_url: string | null;
 };
 
 type BlobDownloadAnchor = {
@@ -667,6 +729,8 @@ export async function probeRealCameraSetupFrame(
     framePngDataUrl?: string;
     frameTimestampMs?: number | null;
     cameraMeta?: Record<string, unknown>;
+    operatorMode?: boolean;
+    operatorDataSource?: "real_camera" | "offline_dataset";
   }
 ): Promise<RealCameraSetupProbeResponse> {
   const response = await fetch(`${API_BASE}/api/camera/setup-probe`, {
@@ -676,7 +740,9 @@ export async function probeRealCameraSetupFrame(
       measurement_definition: backendMeasurementDefinition(measurementDefinition),
       frame_png_data_url: options?.framePngDataUrl,
       frame_timestamp_ms: options?.frameTimestampMs,
-      camera_meta: options?.cameraMeta
+      camera_meta: options?.cameraMeta,
+      operator_mode: options?.operatorMode,
+      operator_data_source: options?.operatorDataSource
     })
   });
   if (!response.ok) {
@@ -787,6 +853,10 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
   return requestJson<CameraPreviewResponse>("/api/camera/preview");
 }
 
+export async function getOperatorSourceStatus(): Promise<OperatorSourceStatus> {
+  return requestJson<OperatorSourceStatus>("/api/operator/source-status");
+}
+
 export async function releaseRealCameraPreview(): Promise<CameraPreviewReleaseResponse> {
   const response = await fetch(`${API_BASE}/api/camera/preview/release`, { method: "POST" });
   if (!response.ok) {
@@ -814,7 +884,13 @@ export async function listTemperatureSerialPorts(): Promise<SerialPortInfo[]> {
 
 export async function createRealCameraRun(
   measurementDefinition: MeasurementDefinition,
-  options: { maxFrames?: number; targetFps: number; cameraProfile?: Record<string, unknown> }
+  options: {
+    maxFrames?: number;
+    targetFps: number;
+    cameraProfile?: Record<string, unknown>;
+    operatorMode?: boolean;
+    operatorDataSource?: "real_camera" | "offline_dataset";
+  }
 ): Promise<RunResponse> {
   const response = await fetch(`${API_BASE}/api/real-camera-runs`, {
     method: "POST",
@@ -823,6 +899,8 @@ export async function createRealCameraRun(
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
       camera_profile: options.cameraProfile ?? { pixel_format: "mono8" },
+      operator_mode: options.operatorMode,
+      operator_data_source: options.operatorDataSource,
       measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
@@ -835,7 +913,14 @@ export async function createRealCameraRun(
 
 export async function streamRealCameraRun(
   measurementDefinition: MeasurementDefinition,
-  options: { maxFrames?: number; targetFps: number; cameraProfile?: Record<string, unknown>; signal?: AbortSignal },
+  options: {
+    maxFrames?: number;
+    targetFps: number;
+    cameraProfile?: Record<string, unknown>;
+    signal?: AbortSignal;
+    operatorMode?: boolean;
+    operatorDataSource?: "real_camera" | "offline_dataset";
+  },
   onEvent: (event: RealCameraRunStreamEvent) => void
 ): Promise<RunResponse> {
   const response = await fetch(`${API_BASE}/api/real-camera-runs/stream`, {
@@ -846,6 +931,8 @@ export async function streamRealCameraRun(
       max_frames: options.maxFrames,
       target_fps: options.targetFps,
       camera_profile: options.cameraProfile ?? { pixel_format: "mono8" },
+      operator_mode: options.operatorMode,
+      operator_data_source: options.operatorDataSource,
       measurement_definition: backendMeasurementDefinition(measurementDefinition)
     })
   });
@@ -980,6 +1067,19 @@ export async function downloadRunExportBundle(
     `yyt1771-g3-export-${runId}.zip`;
   triggerBlobDownload(blob, filename, options);
   return { filename, size: blob.size };
+}
+
+export async function importRunExportFile(file: File): Promise<ImportedRunView> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${API_BASE}/api/imports/run-export`, {
+    method: "POST",
+    body: formData
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `导入失败：后端返回 ${response.status}`));
+  }
+  return response.json() as Promise<ImportedRunView>;
 }
 
 export function parseContentDispositionFilename(value: string | null): string | null {

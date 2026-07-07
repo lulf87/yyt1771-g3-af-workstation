@@ -125,6 +125,9 @@ def test_probe_endpoint_detects_current_frame_with_measurement_roi(
     assert diagnostic_images["envelope_contour"]["data_url"].startswith("data:image/png;base64,")
     assert payload["overlay"]["ab_points"] == result["ab_points"]
     assert payload["frame"]["frame_index"] == 1
+    assert payload["image_data_url"].startswith("data:image/png;base64,")
+    assert payload["provenance"]["acquisition_source"] == "offline_dataset"
+    assert payload["provenance"]["overall_kind"] == "offline"
 
 
 def test_real_camera_setup_probe_uses_frozen_setup_frame_without_opening_camera(
@@ -158,6 +161,7 @@ def test_real_camera_setup_probe_uses_frozen_setup_frame_without_opening_camera(
     assert payload["dataset_id"] == "real_camera"
     assert payload["frame"]["timestamp_ms"] == 1779448000123
     assert payload["measurement_definition"]["source"] == "real_camera"
+    assert payload["provenance"]["acquisition_source"] == "camera_runtime"
     assert result["detection_status"] == "VALID"
     assert result["distance_px"] == pytest.approx(50.0, abs=2.0)
     assert result["frame_timestamp_ms"] == 1779448000123
@@ -213,6 +217,8 @@ def test_real_camera_setup_probe_live_captures_latest_camera_frame(
     assert payload["frame"]["shape"] == [80, 120]
     assert payload["camera_status"] == "ok"
     assert payload["camera_meta"]["model"] == "live-fixture"
+    assert payload["measurement_definition"]["source"] == "real_camera"
+    assert payload["provenance"]["acquisition_source"] == "camera_runtime"
     assert payload["detection_result"]["detection_status"] == "VALID"
     assert payload["image_data_url"].startswith("data:image/png;base64,")
     main._reset_preview_camera_source()

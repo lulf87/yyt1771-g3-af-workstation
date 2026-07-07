@@ -28,6 +28,7 @@ from yyt1771_g3.services.run_detector_policy import (
     measurement_for_detector_mode,
     should_rerun_with_enhanced,
 )
+from yyt1771_g3.services.source_provenance import offline_dataset_provenance
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.sync import SyncedTemperature, sync_temperature_for_frame
 from yyt1771_g3.vision.detectors import detect_frame_with_state
@@ -66,6 +67,7 @@ def run_live_offline_dataset(
     temperature_rows = registry.load_temperature_csv(dataset_id)
     window = _resolve_frame_window(resolved.frame_count, start_frame, max_frames)
     run_id = _new_run_id(dataset_id)
+    provenance = offline_dataset_provenance(dataset_id)
     state = CandidateSelectionState()
     policy_state = RunDetectorPolicyState()
 
@@ -110,6 +112,7 @@ def run_live_offline_dataset(
         frame_limit=window.frame_limit,
         target_fps=target_fps,
         stop_reason=stop_reason,
+        provenance=provenance,
     )
 
 
@@ -128,6 +131,7 @@ def iter_live_offline_run_events(
     temperature_rows = registry.load_temperature_csv(dataset_id)
     window = _resolve_frame_window(resolved.frame_count, start_frame, max_frames)
     run_id = _new_run_id(dataset_id)
+    provenance = offline_dataset_provenance(dataset_id)
     state = CandidateSelectionState()
     policy_state = RunDetectorPolicyState()
 
@@ -175,6 +179,7 @@ def iter_live_offline_run_events(
                     temperature_distance_points,
                     processed_frames=processed,
                 ),
+                provenance=provenance,
             )
             if _target_temperature_reached(measurement, detection):
                 stop_reason = "target_temperature_reached"
@@ -192,6 +197,7 @@ def iter_live_offline_run_events(
             frame_limit=window.frame_limit,
             target_fps=target_fps,
             stop_reason=stop_reason,
+            provenance=provenance,
         )
         yield {
             "event": "complete",
@@ -212,6 +218,7 @@ def iter_live_offline_run_events(
                 frame_limit=window.frame_limit,
                 target_fps=target_fps,
                 stop_reason="stream_closed",
+                provenance=provenance,
             )
 
 
@@ -228,16 +235,22 @@ def _save_run_result(
     frame_limit: int,
     target_fps: float | None,
     stop_reason: str = "complete",
+    provenance: dict[str, Any] | None = None,
 ) -> LiveOfflineRunResult:
+    resolved_provenance = provenance or offline_dataset_provenance(dataset_id)
     manifest = RunManifest(
         run_id=run_id,
         dataset_id=dataset_id,
         measurement_definition=measurement,
+        operator_data_source="offline_dataset",
+        provenance=resolved_provenance,
         frame_records=frame_records,
         temperature_records=temperature_records,
         detection_results=detection_results,
         config_snapshot={
             "mode": "live_offline_run",
+            "operator_data_source": "offline_dataset",
+            "provenance": resolved_provenance,
             "start_frame": start_frame,
             "max_frames": frame_limit,
             "processed_frames": len(frame_records),
@@ -366,11 +379,14 @@ def _frame_event(
     detection: DetectionResult,
     curve_points: dict[str, CurvePoint | None],
     afas_preprocessing: dict[str, Any],
+    provenance: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "event": "frame",
         "run_id": run_id,
         "dataset_id": dataset_id,
+        "operator_data_source": "offline_dataset",
+        "provenance": provenance,
         "frame_index": frame_record.frame_index,
         "frame_count": frame_count,
         "total_frames": frame_limit,

@@ -10,10 +10,12 @@ import {
   Play,
   RefreshCcw,
   RotateCw,
+  SlidersHorizontal,
   Square,
   Settings,
   SquareDashedMousePointer,
   Thermometer,
+  Upload,
   Usb
 } from "lucide-react";
 import {
@@ -25,10 +27,12 @@ import {
   downloadRunExportBundle,
   frameIndexImageUrl,
   frameImageUrl,
+  getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
   getRunAvailability,
   getOfflineDatasetSummary,
+  importRunExportFile,
   listTemperatureSerialPorts,
   listOfflineDatasets,
   previewRealCamera,
@@ -53,16 +57,24 @@ import {
   type DiagnosticImages,
   type MeasurementDefinition,
   type ExportArtifact,
+  type ImportedRunView,
   type LiveOfflineFrameEvent,
   type OfflineDatasetListItem,
   type OfflineDatasetSummary,
+  type OperatorSourceStatus,
   type ProbeResponse,
   type RealCameraSetupProbeResponse,
   type RunResponse,
   type RotatedROI,
   type SerialPortInfo,
+  type SourceProvenance,
   type TemperatureStatusResponse
 } from "./api/client";
+import {
+  SourceProvenanceBadge,
+  provenanceLabel,
+  provenanceNeedsSimulatedWarning
+} from "./components/operator/SourceProvenanceBadge";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -141,9 +153,29 @@ import {
   uiWidthMode,
   type UiLanguage
 } from "./i18n";
+import {
+  applyConfirmedSettingsToMeasurement,
+  confirmOperatorSettings,
+  createOperatorSettingsDraft,
+  localizeOperatorStartMessage,
+  operatorSettingsSummary,
+  patchOperatorSettingsDraft,
+  validateOperatorStart,
+  type OperatorConfirmedSettings
+} from "./operatorSettings";
+import {
+  defaultPageForUiMode,
+  navItemsForUiMode,
+  normalizePageForUiMode,
+  pageForSetupSourceEffects,
+  persistUiMode,
+  readInitialUiMode,
+  type AppPage,
+  type UiMode
+} from "./uiMode";
 import "./styles.css";
 
-type Page = "setup" | "run" | "playback" | "analysis";
+type Page = AppPage;
 
 const UiLanguageContext = React.createContext<UiLanguage>("en");
 
@@ -159,6 +191,8 @@ function useUiText(): (text: string) => string {
 type LiveRunState = {
   runId: string;
   datasetId: string;
+  operatorDataSource: OperatorDataSource;
+  provenance: SourceProvenance | null;
   status: "running" | "complete" | "stopped";
   frameIndex: number;
   frameUrl: string;
@@ -169,6 +203,10 @@ type LiveRunState = {
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
 };
+
+type OperatorDataSource = "offline_dataset" | "real_camera";
+
+const OPERATOR_SOURCE_STORAGE_KEY = "yyt1771-g3-operator-source";
 
 type DetectionResultSource = "stabilized" | "raw";
 
@@ -481,14 +519,43 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   { key: "live_offline_fps", label: "Live offline fps", type: "float", min: 0.5, max: 30, step: 0.5, group: "Run", advanced: true, title: "Playback speed for live offline runs." }
 ];
 
+function readInitialOperatorDataSource(): OperatorDataSource {
+  try {
+    const stored = window.localStorage.getItem(OPERATOR_SOURCE_STORAGE_KEY);
+    return stored === "offline_dataset" || stored === "real_camera" ? stored : "real_camera";
+  } catch {
+    return "real_camera";
+  }
+}
+
+function persistOperatorDataSource(source: OperatorDataSource): void {
+  try {
+    window.localStorage.setItem(OPERATOR_SOURCE_STORAGE_KEY, source);
+  } catch {
+    return;
+  }
+}
+
 function App() {
-  const [page, setPage] = useState<Page>("setup");
+  const initialUiMode = useMemo(() => readInitialUiMode(), []);
+  const initialOperatorDataSource = useMemo(() => readInitialOperatorDataSource(), []);
+  const [uiMode, setUiMode] = useState<UiMode>(initialUiMode);
+  const [page, setPage] = useState<Page>(() => defaultPageForUiMode(initialUiMode));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
-  const [setupSource, setSetupSource] = useState<SetupSourceKind>("offline_dataset");
+  const [setupSource, setSetupSource] = useState<SetupSourceKind>(() =>
+    initialUiMode === "operator" ? initialOperatorDataSource : "offline_dataset"
+  );
+  const [operatorDataSource, setOperatorDataSource] = useState<OperatorDataSource>(initialOperatorDataSource);
   const [datasets, setDatasets] = useState<OfflineDatasetListItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [summary, setSummary] = useState<OfflineDatasetSummary | null>(null);
   const [measurement, setMeasurement] = useState<MeasurementDefinition | null>(null);
+  const [operatorSettings, setOperatorSettings] = useState<OperatorConfirmedSettings | null>(null);
+  const [operatorStartMessage, setOperatorStartMessage] = useState("");
+  const [operatorSourceStatus, setOperatorSourceStatus] = useState<OperatorSourceStatus | null>(null);
+  const [operatorSourceStatusError, setOperatorSourceStatusError] = useState("");
+  const [loadingOperatorSourceStatus, setLoadingOperatorSourceStatus] = useState(false);
+  const [importedRun, setImportedRun] = useState<ImportedRunView | null>(null);
   const [frameIndex, setFrameIndex] = useState(1);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
   const [runResult, setRunResult] = useState<RunResponse | null>(null);
@@ -513,13 +580,65 @@ function App() {
   const liveRunIdRef = useRef<string | null>(null);
   const liveRunProcessedFramesRef = useRef(0);
   const cameraPreviewRequestInFlightRef = useRef(false);
+  const cameraPreviewPollGenerationRef = useRef(0);
   const measurementRef = useRef<MeasurementDefinition | null>(null);
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
+  const pageForSetupEffects = pageForSetupSourceEffects(page);
+  const operatorRealHardwareAvailable = operatorSourceStatus?.real_hardware_available === true;
 
   useEffect(() => {
     void refreshDatasets();
   }, []);
+
+  useEffect(() => {
+    if (uiMode !== "operator") return;
+    void refreshOperatorSourceStatus();
+  }, [uiMode, operatorDataSource]);
+
+  useEffect(() => {
+    if (uiMode !== "operator" || operatorDataSource !== "real_camera") return;
+    if (operatorSourceStatus == null) return;
+    if (operatorSourceStatus.real_hardware_available) {
+      if (setupSource === "real_camera" && !cameraPreviewUrl && !previewingCamera) {
+        setCameraPreviewState((current) => resumeLivePreview(current));
+        window.setTimeout(() => {
+          if (measurementRef.current?.source === "real_camera") {
+            void previewRealCameraFrame("live", { clearProbe: false });
+          }
+        }, 0);
+      }
+      return;
+    }
+    setCameraPreview(null);
+    setCameraPreviewUrl("");
+    setCameraPreviewError(null);
+    setCameraPreviewRefreshStatus("unavailable");
+    setCameraPreviewState((current) =>
+      current
+        ? {
+            ...current,
+            cameraStatus: "unavailable",
+            mode: "live"
+          }
+        : current
+    );
+    setProbe((current) => (current?.dataset_id === "real_camera" ? null : current));
+  }, [
+    uiMode,
+    operatorDataSource,
+    operatorSourceStatus?.real_hardware_available,
+    setupSource,
+    cameraPreviewUrl,
+    previewingCamera
+  ]);
+
+  useEffect(() => {
+    setPage((current) => normalizePageForUiMode(uiMode, current));
+    if (uiMode === "operator") {
+      chooseSetupSource(operatorDataSource);
+    }
+  }, [uiMode, operatorDataSource]);
 
   useEffect(() => {
     window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, language);
@@ -535,30 +654,33 @@ function App() {
   }, [cameraPreviewState?.mode]);
 
   useEffect(() => {
-    const inRealCameraSetup = page === "setup" && setupSource === "real_camera";
+    const inRealCameraSetup = pageForSetupEffects === "setup" && setupSource === "real_camera";
     if (
       wasInRealCameraSetupRef.current &&
-      shouldReleaseRealCameraPreview("setup", "real_camera", page, setupSource)
+      shouldReleaseRealCameraPreview("setup", "real_camera", pageForSetupEffects, setupSource)
     ) {
       void releaseRealCameraSetupPreview();
     }
     wasInRealCameraSetupRef.current = inRealCameraSetup;
-  }, [page, setupSource]);
+  }, [pageForSetupEffects, setupSource]);
 
   useEffect(() => {
-    if (page !== "setup" || setupSource !== "real_camera") return;
+    if (pageForSetupEffects !== "setup" || setupSource !== "real_camera") return;
     if (temperatureStatus || temperatureError || checkingTemperature) return;
     void readCurrentTemperature();
-  }, [page, setupSource, temperatureStatus, temperatureError, checkingTemperature]);
+  }, [pageForSetupEffects, setupSource, temperatureStatus, temperatureError, checkingTemperature]);
 
   useEffect(() => {
-    if (!shouldPollRealCameraPreview(page, setupSource, cameraPreviewState)) return;
-    if (runningCamera) return;
+    if (uiMode === "operator" && operatorDataSource === "real_camera" && !operatorRealHardwareAvailable) return;
+    if (!shouldPollRealCameraPreview(pageForSetupEffects, setupSource, cameraPreviewState)) return;
+    if (runningCamera || probing) return;
     let cancelled = false;
     let timer: number | null = null;
+    const generation = cameraPreviewPollGenerationRef.current + 1;
+    cameraPreviewPollGenerationRef.current = generation;
     const pollLiveFrame = async () => {
       await previewRealCameraFrame("live", { clearProbe: false });
-      if (cancelled) return;
+      if (cancelled || cameraPreviewPollGenerationRef.current !== generation) return;
       const previewIntervalMs = setupPreviewPollingIntervalMs(
         cameraPreviewState?.cameraStatus,
         measurementRef.current?.detector_config.setup_preview_fps
@@ -570,16 +692,28 @@ function App() {
     void pollLiveFrame();
     return () => {
       cancelled = true;
+      if (cameraPreviewPollGenerationRef.current === generation) {
+        cameraPreviewPollGenerationRef.current += 1;
+      }
       if (timer != null) window.clearTimeout(timer);
     };
   }, [
-    page,
+    pageForSetupEffects,
     setupSource,
     cameraPreviewState?.mode,
     cameraPreviewState?.cameraStatus,
     measurement?.detector_config.setup_preview_fps,
-    runningCamera
+    runningCamera,
+    probing,
+    uiMode,
+    operatorDataSource,
+    operatorRealHardwareAvailable
   ]);
+
+  useEffect(() => {
+    if (!measurement) return;
+    setOperatorSettings((current) => current ?? createOperatorSettingsDraft(measurement));
+  }, [measurement]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -630,6 +764,24 @@ function App() {
     }
   }
 
+  async function refreshOperatorSourceStatus() {
+    setLoadingOperatorSourceStatus(true);
+    setOperatorSourceStatusError("");
+    try {
+      setOperatorSourceStatus(await getOperatorSourceStatus());
+    } catch (err) {
+      setOperatorSourceStatus(null);
+      setOperatorSourceStatusError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingOperatorSourceStatus(false);
+    }
+  }
+
+  function changeUiMode(nextMode: UiMode) {
+    setUiMode(nextMode);
+    persistUiMode(window.localStorage, nextMode);
+  }
+
   async function runProbe(targetFrame = frameIndex) {
     if (!measurement || !selectedId) return;
     setProbing(true);
@@ -673,8 +825,56 @@ function App() {
     }
   }
 
-  async function startLiveOfflineRun() {
-    if (!measurement || !selectedId) return;
+  async function runOperatorRealCameraSetupProbe() {
+    const currentMeasurement = measurementRef.current;
+    if (!currentMeasurement) return;
+    if (!operatorRealHardwareAvailable) {
+      setOperatorStartMessage(t("Real hardware unavailable"));
+      setError("");
+      setProbe(null);
+      return;
+    }
+    setProbing(true);
+    setError("");
+    try {
+      const response = await probeRealCameraSetupFrame(currentMeasurement, {
+        operatorMode: true,
+        operatorDataSource: "real_camera"
+      });
+      applyRealCameraProbeResponse(response, "live");
+      setProbe(response);
+      setCameraPreviewRefreshStatus("ok");
+    } catch (err) {
+      const detail = err instanceof ApiError ? apiErrorDetailObject(err.detail) : null;
+      setError(
+        err instanceof ApiError && (err.status === 409 || detail?.camera_status === "busy")
+          ? uiText(language, "Camera is busy. Stop the live test before probing current frame.")
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      );
+      setProbe(null);
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  async function runOperatorProbeCurrentFrame() {
+    if (operatorDataSource === "offline_dataset") {
+      await runProbe(frameIndex);
+      return;
+    }
+    if (!operatorRealHardwareAvailable) {
+      setOperatorStartMessage(t("Real hardware unavailable"));
+      setProbe(null);
+      return;
+    }
+    await runOperatorRealCameraSetupProbe();
+  }
+
+  async function startLiveOfflineRun(measurementOverride?: MeasurementDefinition) {
+    const measurementForRun = measurementOverride ?? measurement;
+    if (!measurementForRun || !selectedId) return;
     const controller = new AbortController();
     runAbortRef.current = controller;
     setRunning(true);
@@ -684,8 +884,8 @@ function App() {
     liveRunIdRef.current = null;
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialLiveRun(selectedId, frameIndex, selectedDataset?.frame_count ?? frameIndex));
-    const runPreviewFps = Math.round(clamp(Number(measurement.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurement.detector_config.run_result_batch_size ?? 10), 1, 100));
+    const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
+    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
     const maxBatchWaitMs = 180;
     let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
@@ -708,9 +908,9 @@ function App() {
     };
 
     try {
-      const response = await streamLiveOfflineRun(selectedId, measurement, {
+      const response = await streamLiveOfflineRun(selectedId, measurementForRun, {
         startFrame: frameIndex,
-        targetFps: measurement.detector_config.live_offline_fps ?? 8,
+        targetFps: measurementForRun.detector_config.live_offline_fps ?? 8,
         signal: controller.signal
       }, (event) => {
         if (event.event === "frame") {
@@ -738,6 +938,8 @@ function App() {
               ? {
                   ...current,
                   status: "complete",
+                  operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
+                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length
@@ -758,12 +960,12 @@ function App() {
             const partialResult = await waitForStoppedRun(stoppedRunId);
             applyStoppedRunResult(partialResult);
           } catch (fetchErr) {
-            if (measurement && selectedId && liveRunProcessedFramesRef.current > 0) {
+            if (measurementForRun && selectedId && liveRunProcessedFramesRef.current > 0) {
               try {
-                const partialResult = await createLiveOfflineRun(selectedId, measurement, {
+                const partialResult = await createLiveOfflineRun(selectedId, measurementForRun, {
                   startFrame: frameIndex,
                   maxFrames: liveRunProcessedFramesRef.current,
-                  targetFps: measurement.detector_config.live_offline_fps ?? 8
+                  targetFps: measurementForRun.detector_config.live_offline_fps ?? 8
                 });
                 applyStoppedRunResult(partialResult);
               } catch (fallbackErr) {
@@ -794,6 +996,8 @@ function App() {
               ...current,
               status: "stopped",
               runId: partialResult.run_manifest.run_id,
+              operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
+              provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
               analysis: partialResult.analysis_result,
               processedFrames: partialResult.run_manifest.frame_records.length,
               totalFrames: partialResult.run_manifest.config_snapshot.max_frames as number
@@ -828,14 +1032,123 @@ function App() {
       measurementRef.current = next;
       return next;
     });
-    if (source === "real_camera") {
+    const canPreviewRealCamera =
+      source === "real_camera" &&
+      (uiMode !== "operator" || operatorSourceStatus?.real_hardware_available === true);
+    if (canPreviewRealCamera) {
       setCameraPreviewState((current) => resumeLivePreview(current));
       window.setTimeout(() => {
         if (measurementRef.current?.source === "real_camera") {
           void previewRealCameraFrame("live", { clearProbe: false });
         }
       }, 0);
+    } else if (source === "real_camera" && uiMode === "operator") {
+      setCameraPreview(null);
+      setCameraPreviewUrl("");
+      setCameraPreviewError(null);
+      setCameraPreviewRefreshStatus("unavailable");
     }
+  }
+
+  function chooseOperatorDataSource(source: OperatorDataSource) {
+    setOperatorDataSource(source);
+    persistOperatorDataSource(source);
+    setOperatorStartMessage("");
+  }
+
+  function patchOperatorSettings(patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) {
+    setOperatorSettings((current) => {
+      const draft = current ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
+      return draft ? patchOperatorSettingsDraft(draft, patch) : draft;
+    });
+    setOperatorStartMessage("");
+  }
+
+  function confirmCurrentOperatorSettings() {
+    setOperatorSettings((current) => {
+      const draft = current ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
+      return draft ? confirmOperatorSettings(draft) : draft;
+    });
+    setOperatorStartMessage("");
+  }
+
+  function startOperatorRun() {
+    if (operatorDataSource === "offline_dataset") {
+      startOperatorOfflineRun();
+      return;
+    }
+    startOperatorRealCameraRun();
+  }
+
+  function startOperatorOfflineRun() {
+    const settings = operatorSettings ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
+    const validation = validateOperatorStart({
+      cameraOk: true,
+      measurement,
+      settings: settings ?? {
+        targetTemperatureC: null,
+        temperaturePowerPercent: 100,
+        serialPort: null,
+        confirmedAt: null,
+        dirty: true
+      },
+      serialPortRequired: false
+    });
+    if (!validation.ok) {
+      setOperatorStartMessage(localizeOperatorStartMessage(validation.message, language));
+      return;
+    }
+    if (!measurement || !settings) return;
+    const confirmedMeasurement = {
+      ...applyConfirmedSettingsToMeasurement(measurement, settings),
+      source: "offline_dataset" as const
+    };
+    applyMeasurement(confirmedMeasurement);
+    setOperatorStartMessage("");
+    void startLiveOfflineRun(confirmedMeasurement);
+  }
+
+  function startOperatorRealCameraRun() {
+    if (!operatorRealHardwareAvailable) {
+      setOperatorStartMessage(t("Real hardware unavailable"));
+      setError("");
+      return;
+    }
+    const settings = operatorSettings ?? (measurement ? createOperatorSettingsDraft(measurement) : null);
+    const validation = validateOperatorStart({
+      cameraOk: operatorRealHardwareAvailable,
+      measurement,
+      settings: settings ?? {
+        targetTemperatureC: null,
+        temperaturePowerPercent: 100,
+        serialPort: null,
+        confirmedAt: null,
+        dirty: true
+      },
+      serialPortRequired: false
+    });
+    if (!validation.ok) {
+      setOperatorStartMessage(localizeOperatorStartMessage(validation.message, language));
+      return;
+    }
+    if (!measurement || !settings) return;
+    const confirmedMeasurement = {
+      ...applyConfirmedSettingsToMeasurement(measurement, settings),
+      source: "real_camera" as const
+    };
+    applyMeasurement(confirmedMeasurement);
+    setOperatorStartMessage("");
+    void startRealCameraRunWithMeasurement(confirmedMeasurement, {
+      operatorMode: true,
+      operatorDataSource: "real_camera"
+    });
+  }
+
+  async function importOperatorRunExport(file: File) {
+    return importRunExportFile(file).then((view) => {
+      setImportedRun(view);
+      return view;
+    });
   }
 
   function applyMeasurement(next: MeasurementDefinition) {
@@ -850,6 +1163,13 @@ function App() {
     mode: RealCameraPreviewMode = cameraPreviewState?.mode ?? "live",
     options: { clearProbe?: boolean } = {}
   ): Promise<boolean> {
+    if (uiMode === "operator" && operatorDataSource === "real_camera" && !operatorRealHardwareAvailable) {
+      setCameraPreview(null);
+      setCameraPreviewUrl("");
+      setCameraPreviewError(null);
+      setCameraPreviewRefreshStatus("unavailable");
+      return false;
+    }
     const clearProbe = options.clearProbe ?? true;
     if (cameraPreviewRequestInFlightRef.current) return false;
     cameraPreviewRequestInFlightRef.current = true;
@@ -967,6 +1287,13 @@ function App() {
 
   async function startRealCameraRun() {
     if (!measurement) return;
+    await startRealCameraRunWithMeasurement(measurement);
+  }
+
+  async function startRealCameraRunWithMeasurement(
+    measurementForRun: MeasurementDefinition,
+    options: { operatorMode?: boolean; operatorDataSource?: OperatorDataSource } = {}
+  ) {
     const controller = new AbortController();
     runAbortRef.current = controller;
     setRunningCamera(true);
@@ -976,8 +1303,8 @@ function App() {
     liveRunIdRef.current = null;
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialRealCameraLiveRun());
-    const runPreviewFps = Math.round(clamp(Number(measurement.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurement.detector_config.run_result_batch_size ?? 10), 1, 100));
+    const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
+    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
     const maxBatchWaitMs = 180;
     let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
@@ -1001,10 +1328,12 @@ function App() {
 
     try {
       await releaseRealCameraSetupPreview({ surfaceError: true });
-      const response = await streamRealCameraRun(measurement, {
-        targetFps: measurement.detector_config.live_offline_fps ?? 8,
-        cameraProfile: buildRealCameraRunCameraProfile(measurement),
-        signal: controller.signal
+      const response = await streamRealCameraRun(measurementForRun, {
+        targetFps: measurementForRun.detector_config.live_offline_fps ?? 8,
+        cameraProfile: buildRealCameraRunCameraProfile(measurementForRun),
+        signal: controller.signal,
+        operatorMode: options.operatorMode,
+        operatorDataSource: options.operatorDataSource
       }, (event) => {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
@@ -1031,6 +1360,8 @@ function App() {
               ? {
                   ...current,
                   status: "complete",
+                  operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
+                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length,
@@ -1076,6 +1407,8 @@ function App() {
               ...current,
               status: "stopped",
               runId: partialResult.run_manifest.run_id,
+              operatorDataSource: partialResult.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
+              provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
               analysis: partialResult.analysis_result,
               processedFrames: partialResult.run_manifest.frame_records.length,
               totalFrames: partialResult.run_manifest.frame_records.length,
@@ -1125,19 +1458,13 @@ function App() {
           </div>
         </div>
         <nav className="tabs" aria-label={t("Primary")}>
-          <TabButton page="setup" current={page} onSelect={setPage} icon={<Settings size={16} />}>
-            {t("Setup")}
-          </TabButton>
-          <TabButton page="run" current={page} onSelect={setPage} icon={<Activity size={16} />}>
-            {t("Run")}
-          </TabButton>
-          <TabButton page="playback" current={page} onSelect={setPage} icon={<Play size={16} />}>
-            {t("Playback")}
-          </TabButton>
-          <TabButton page="analysis" current={page} onSelect={setPage} icon={<BarChart3 size={16} />}>
-            {t("Analysis / Export")}
-          </TabButton>
+          {navItemsForUiMode(uiMode).map((item) => (
+            <TabButton page={item.page} current={page} onSelect={setPage} icon={pageIcon(item.page)} key={item.page}>
+              {t(item.label)}
+            </TabButton>
+          ))}
         </nav>
+        <UiModeSwitch mode={uiMode} onMode={changeUiMode} />
         <label className="languageControl">
           <span>{t("Language")}</span>
           <select onChange={(event) => setLanguage(event.target.value as UiLanguage)} value={language}>
@@ -1153,7 +1480,8 @@ function App() {
         </button>
       </header>
 
-      <section className="workspace">
+      <section className={uiMode === "operator" ? "workspace operatorWorkspace" : "workspace"}>
+        {uiMode === "engineering" ? (
         <aside className="datasetRail" aria-label={t("Offline datasets")}>
           {datasets.map((dataset) => (
             <button
@@ -1175,6 +1503,7 @@ function App() {
             </button>
           ))}
         </aside>
+        ) : null}
 
         <section className="panelArea">
           {error ? <div className="statusBlock error">{error}</div> : null}
@@ -1191,6 +1520,14 @@ function App() {
               frameUrl={frameUrl}
               setupSource={setupSource}
               onSetupSource={chooseSetupSource}
+              datasets={datasets}
+              selectedId={selectedId}
+              operatorDataSource={operatorDataSource}
+              operatorSourceStatus={operatorSourceStatus}
+              operatorSourceStatusError={operatorSourceStatusError}
+              loadingOperatorSourceStatus={loadingOperatorSourceStatus}
+              onSelectedDataset={setSelectedId}
+              onOperatorDataSource={chooseOperatorDataSource}
               probe={probe}
               runResult={runResult}
               liveRun={liveRun}
@@ -1208,8 +1545,18 @@ function App() {
               runningCamera={runningCamera}
               checkingTemperature={checkingTemperature}
               loadingSerialPorts={loadingSerialPorts}
+              uiMode={uiMode}
+              operatorSettings={operatorSettings}
+              operatorStartMessage={operatorStartMessage}
+              importedRun={importedRun}
+              onOperatorSettingsPatch={patchOperatorSettings}
+              onOperatorSettingsConfirm={confirmCurrentOperatorSettings}
+              onOperatorStartRun={startOperatorRun}
+              onImportRunExport={importOperatorRunExport}
+              onImportedRun={setImportedRun}
               onProbe={runProbe}
               onProbeRealCameraSetup={runRealCameraSetupProbe}
+              onOperatorProbeCurrentFrame={runOperatorProbeCurrentFrame}
               onStartRun={startLiveOfflineRun}
               onStopRun={stopLiveOfflineRun}
               onPreviewRealCamera={refreshRealCameraSetupFrame}
@@ -1250,6 +1597,36 @@ function TabButton({
   );
 }
 
+function UiModeSwitch({
+  mode,
+  onMode
+}: {
+  mode: UiMode;
+  onMode: (mode: UiMode) => void;
+}) {
+  const t = useUiText();
+  return (
+    <div className="uiModeSwitch segmented" aria-label={t("UI mode")}>
+      <button className={mode === "operator" ? "active" : ""} onClick={() => onMode("operator")} type="button">
+        <Activity size={15} aria-hidden="true" />
+        {t("Operator")}
+      </button>
+      <button className={mode === "engineering" ? "active" : ""} onClick={() => onMode("engineering")} type="button">
+        <SlidersHorizontal size={15} aria-hidden="true" />
+        {t("Engineering")}
+      </button>
+    </div>
+  );
+}
+
+function pageIcon(page: Page): React.ReactNode {
+  if (page === "setup" || page === "operatorRun") return <Settings size={16} />;
+  if (page === "run") return <Activity size={16} />;
+  if (page === "playback") return <Play size={16} />;
+  if (page === "operatorImport") return <Upload size={16} />;
+  return <BarChart3 size={16} />;
+}
+
 function PageContent({
   dataset,
   summary,
@@ -1260,6 +1637,14 @@ function PageContent({
   frameUrl,
   setupSource,
   onSetupSource,
+  datasets,
+  selectedId,
+  operatorDataSource,
+  operatorSourceStatus,
+  operatorSourceStatusError,
+  loadingOperatorSourceStatus,
+  onSelectedDataset,
+  onOperatorDataSource,
   probe,
   runResult,
   liveRun,
@@ -1277,8 +1662,18 @@ function PageContent({
   runningCamera,
   checkingTemperature,
   loadingSerialPorts,
+  uiMode,
+  operatorSettings,
+  operatorStartMessage,
+  importedRun,
+  onOperatorSettingsPatch,
+  onOperatorSettingsConfirm,
+  onOperatorStartRun,
+  onImportRunExport,
+  onImportedRun,
   onProbe,
   onProbeRealCameraSetup,
+  onOperatorProbeCurrentFrame,
   onStartRun,
   onStopRun,
   onPreviewRealCamera,
@@ -1299,6 +1694,14 @@ function PageContent({
   frameUrl: string;
   setupSource: SetupSourceKind;
   onSetupSource: (source: SetupSourceKind) => void;
+  datasets: OfflineDatasetListItem[];
+  selectedId: string;
+  operatorDataSource: OperatorDataSource;
+  operatorSourceStatus: OperatorSourceStatus | null;
+  operatorSourceStatusError: string;
+  loadingOperatorSourceStatus: boolean;
+  onSelectedDataset: (datasetId: string) => void;
+  onOperatorDataSource: (source: OperatorDataSource) => void;
   probe: ProbeResponse | null;
   runResult: RunResponse | null;
   liveRun: LiveRunState | null;
@@ -1316,8 +1719,18 @@ function PageContent({
   runningCamera: boolean;
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
+  uiMode: UiMode;
+  operatorSettings: OperatorConfirmedSettings | null;
+  operatorStartMessage: string;
+  importedRun: ImportedRunView | null;
+  onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
+  onOperatorSettingsConfirm: () => void;
+  onOperatorStartRun: () => void;
+  onImportRunExport: (file: File) => Promise<ImportedRunView>;
+  onImportedRun: (view: ImportedRunView | null) => void;
   onProbe: (frameIndex?: number) => void;
   onProbeRealCameraSetup: () => void;
+  onOperatorProbeCurrentFrame: () => void;
   onStartRun: () => void;
   onStopRun: () => void;
   onPreviewRealCamera: () => void;
@@ -1332,6 +1745,7 @@ function PageContent({
   const language = useUiLanguage();
   const t = useUiText();
   const setupChangeRefreshTimerRef = useRef<number | null>(null);
+  const setupPageForEffects = pageForSetupSourceEffects(page);
 
   useEffect(() => {
     return () => {
@@ -1342,12 +1756,32 @@ function PageContent({
   }, []);
 
   useEffect(() => {
-    if (page === "setup" && setupSource === "real_camera" && cameraPreviewState?.mode === "live") return;
+    if (setupPageForEffects === "setup" && setupSource === "real_camera" && cameraPreviewState?.mode === "live") return;
     if (setupChangeRefreshTimerRef.current !== null) {
       window.clearTimeout(setupChangeRefreshTimerRef.current);
       setupChangeRefreshTimerRef.current = null;
     }
-  }, [page, setupSource, cameraPreviewState?.mode]);
+  }, [setupPageForEffects, setupSource, cameraPreviewState?.mode]);
+
+  if (page === "operatorImport") {
+    return (
+      <OperatorImportPage
+        importedRun={importedRun}
+        onImportRunExport={onImportRunExport}
+        onImportedRun={onImportedRun}
+      />
+    );
+  }
+
+  if (page === "operatorResults") {
+    return (
+      <OperatorResultsPage
+        importedRun={importedRun}
+        liveRun={liveRun}
+        runResult={runResult}
+      />
+    );
+  }
 
   if (page === "run") {
     return (
@@ -1371,14 +1805,10 @@ function PageContent({
     return <AnalysisPage probe={probe} runResult={runResult} liveRun={liveRun} />;
   }
   const isSetup = page === "setup";
-  const isRealCameraSetup = isSetup && setupSource === "real_camera";
-  const activeFrameTitle = isRealCameraSetup
-    ? `${t("Real camera")} · ${cameraPreviewState?.mode === "frozen" ? t("Frozen frame") : t("Live camera frame")}`
-    : `${uiDatasetLabel(language, dataset)} · ${t("frame")} ${frameIndex}`;
-  const activeFrameUrl = isRealCameraSetup ? cameraPreviewUrl : frameUrl;
-  const activeSourceShape = isRealCameraSetup ? cameraPreview?.shape ?? cameraPreviewState?.shape ?? summary.first_frame.shape : summary.first_frame.shape;
-  const shouldRefreshAfterRoiCommit = shouldRefreshRealCameraFrameAfterRoiCommit(page, setupSource, cameraPreviewState);
-  const frozenSetupMessage = frozenFrameSetupChangeMessage(page, setupSource, cameraPreviewState, language);
+  const isOperatorRun = page === "operatorRun";
+  const isRealCameraSetup =
+    (isSetup && setupSource === "real_camera") ||
+    (isOperatorRun && operatorDataSource === "real_camera");
   const displayedProbe = isRealCameraSetup
     ? probe?.dataset_id === "real_camera"
       ? probe
@@ -1386,9 +1816,18 @@ function PageContent({
     : probe?.dataset_id === "real_camera"
       ? null
       : probe;
+  const activeFrameTitle = isRealCameraSetup
+    ? `${t("Real camera")} · ${cameraPreviewState?.mode === "frozen" ? t("Frozen frame") : t("Live camera frame")}`
+    : `${uiDatasetLabel(language, dataset)} · ${t("frame")} ${frameIndex}`;
+  const activeFrameUrl = isRealCameraSetup ? cameraPreviewUrl : displayedProbe?.image_data_url ?? frameUrl;
+  const activeSourceShape = isRealCameraSetup
+    ? cameraPreview?.shape ?? cameraPreviewState?.shape ?? summary.first_frame.shape
+    : displayedProbe?.frame.shape ?? summary.first_frame.shape;
+  const shouldRefreshAfterRoiCommit = shouldRefreshRealCameraFrameAfterRoiCommit(setupPageForEffects, setupSource, cameraPreviewState);
+  const frozenSetupMessage = frozenFrameSetupChangeMessage(setupPageForEffects, setupSource, cameraPreviewState, language);
 
   function scheduleRealCameraSetupRefresh(change: RealCameraSetupChange) {
-    if (!shouldRefreshRealCameraFrameAfterSetupChange(page, setupSource, cameraPreviewState, change)) return;
+    if (!shouldRefreshRealCameraFrameAfterSetupChange(setupPageForEffects, setupSource, cameraPreviewState, change)) return;
     if (setupChangeRefreshTimerRef.current !== null) {
       window.clearTimeout(setupChangeRefreshTimerRef.current);
     }
@@ -1417,6 +1856,56 @@ function PageContent({
     const nextRoi = createDefaultRoiForShape(activeSourceShape);
     onMeasurement({ ...measurement, roi: nextRoi });
     scheduleRealCameraSetupRefresh({ kind: "roi" });
+  }
+
+  if (isOperatorRun) {
+    return (
+      <OperatorRunPage
+        measurement={measurement}
+        onMeasurement={onMeasurement}
+        onResetRoi={resetRoi}
+        onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
+        cameraPreview={cameraPreview}
+        cameraPreviewUrl={cameraPreviewUrl}
+        cameraPreviewError={cameraPreviewError}
+        cameraPreviewRefreshStatus={cameraPreviewRefreshStatus}
+        cameraPreviewState={cameraPreviewState}
+        activeSourceShape={activeSourceShape}
+        activeFrameTitle={activeFrameTitle}
+        activeFrameUrl={activeFrameUrl}
+        datasets={datasets}
+        selectedDataset={dataset}
+        selectedDatasetId={selectedId}
+        operatorDataSource={operatorDataSource}
+        operatorSourceStatus={operatorSourceStatus}
+        operatorSourceStatusError={operatorSourceStatusError}
+        loadingOperatorSourceStatus={loadingOperatorSourceStatus}
+        onSelectedDataset={onSelectedDataset}
+        onOperatorDataSource={onOperatorDataSource}
+        probe={displayedProbe}
+        probing={probing}
+        operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
+        operatorStartMessage={operatorStartMessage}
+        temperatureStatus={temperatureStatus}
+        temperatureError={temperatureError}
+        serialPorts={serialPorts}
+        checkingTemperature={checkingTemperature}
+        loadingSerialPorts={loadingSerialPorts}
+        runningCamera={runningCamera}
+        runningOffline={running}
+        liveRun={liveRun}
+        runResult={runResult}
+        onOperatorSettingsPatch={onOperatorSettingsPatch}
+        onOperatorSettingsConfirm={onOperatorSettingsConfirm}
+        onOperatorStartRun={onOperatorStartRun}
+        onProbeRealCameraSetup={onOperatorProbeCurrentFrame}
+        onStopRun={onStopRun}
+        onReadCurrentTemperature={onReadCurrentTemperature}
+        onRefreshSerialPorts={onRefreshSerialPorts}
+        onRoiChange={updateRoi}
+        onRoiCommit={commitRoi}
+      />
+    );
   }
 
   return (
@@ -1512,6 +2001,790 @@ function PageContent({
         />
       </div>
     </div>
+  );
+}
+
+function OperatorRunPage({
+  measurement,
+  onMeasurement,
+  onResetRoi,
+  onPreviewAffectingChange,
+  cameraPreview,
+  cameraPreviewUrl,
+  cameraPreviewError,
+  cameraPreviewRefreshStatus,
+  cameraPreviewState,
+  activeSourceShape,
+  activeFrameTitle,
+  activeFrameUrl,
+  datasets,
+  selectedDataset,
+  selectedDatasetId,
+  operatorDataSource,
+  operatorSourceStatus,
+  operatorSourceStatusError,
+  loadingOperatorSourceStatus,
+  onSelectedDataset,
+  onOperatorDataSource,
+  probe,
+  probing,
+  operatorSettings,
+  operatorStartMessage,
+  temperatureStatus,
+  temperatureError,
+  serialPorts,
+  checkingTemperature,
+  loadingSerialPorts,
+  runningCamera,
+  runningOffline,
+  liveRun,
+  runResult,
+  onOperatorSettingsPatch,
+  onOperatorSettingsConfirm,
+  onOperatorStartRun,
+  onProbeRealCameraSetup,
+  onStopRun,
+  onReadCurrentTemperature,
+  onRefreshSerialPorts,
+  onRoiChange,
+  onRoiCommit
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onResetRoi: () => void;
+  onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
+  cameraPreview: CameraPreviewResponse | null;
+  cameraPreviewUrl: string;
+  cameraPreviewError: CameraPreviewError | null;
+  cameraPreviewRefreshStatus: PreviewRefreshStatus;
+  cameraPreviewState: RealCameraPreviewState | null;
+  activeSourceShape: number[];
+  activeFrameTitle: string;
+  activeFrameUrl: string;
+  datasets: OfflineDatasetListItem[];
+  selectedDataset: OfflineDatasetListItem;
+  selectedDatasetId: string;
+  operatorDataSource: OperatorDataSource;
+  operatorSourceStatus: OperatorSourceStatus | null;
+  operatorSourceStatusError: string;
+  loadingOperatorSourceStatus: boolean;
+  onSelectedDataset: (datasetId: string) => void;
+  onOperatorDataSource: (source: OperatorDataSource) => void;
+  probe: ProbeResponse | null;
+  probing: boolean;
+  operatorSettings: OperatorConfirmedSettings;
+  operatorStartMessage: string;
+  temperatureStatus: TemperatureStatusResponse | null;
+  temperatureError: SetupTemperatureError | null;
+  serialPorts: SerialPortInfo[];
+  checkingTemperature: boolean;
+  loadingSerialPorts: boolean;
+  runningCamera: boolean;
+  runningOffline: boolean;
+  liveRun: LiveRunState | null;
+  runResult: RunResponse | null;
+  onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
+  onOperatorSettingsConfirm: () => void;
+  onOperatorStartRun: () => void;
+  onProbeRealCameraSetup: () => void;
+  onStopRun: () => void;
+  onReadCurrentTemperature: () => void;
+  onRefreshSerialPorts: () => void;
+  onRoiChange: (roi: RotatedROI) => void;
+  onRoiCommit: (roi: RotatedROI) => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
+  const operatorRunActive = runningCamera || runningOffline;
+  const isOfflineSource = operatorDataSource === "offline_dataset";
+  const isRealCameraMode = operatorDataSource === "real_camera";
+  const realHardwareAvailable = operatorSourceStatus?.real_hardware_available === true;
+  const canUseRealCamera = isRealCameraMode && realHardwareAvailable;
+  const canUseOfflineDataset = isOfflineSource && Boolean(selectedDatasetId);
+  const sourceProvenance = currentSourceProvenance({
+    operatorDataSource,
+    selectedDataset,
+    cameraPreview: canUseRealCamera ? cameraPreview : null,
+    probe: isOfflineSource || canUseRealCamera ? probe : null,
+    liveRun: isOfflineSource || canUseRealCamera ? liveRun : null,
+    runResult: isOfflineSource || canUseRealCamera ? runResult : null,
+    sourceStatus: operatorSourceStatus
+  });
+  const canShowCurrentSourceData = canUseOfflineDataset || canUseRealCamera;
+  const setupProbeDetection = canShowCurrentSourceData && !operatorRunActive && probe ? probe.detection_result : null;
+  const latestRunResultDetection = canShowCurrentSourceData && runResult?.run_manifest.detection_results.length
+    ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
+    : null;
+  const latestDetection =
+    (canShowCurrentSourceData ? liveRun?.detectionResult : null) ??
+    setupProbeDetection ??
+    latestRunResultDetection;
+  const setupProbeFrameUrl = setupProbeDetection ? probe?.image_data_url ?? (isOfflineSource ? activeFrameUrl : cameraPreviewUrl) : "";
+  const latestRunResultFrameUrl = canShowCurrentSourceData && runResult?.run_manifest.run_id && latestRunResultDetection
+    ? runFrameImageUrl(runResult.run_manifest.run_id, latestRunResultDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
+    : "";
+  const latestFrameUrl =
+    canShowCurrentSourceData
+      ? liveRun?.frameUrl ??
+        (setupProbeFrameUrl || latestRunResultFrameUrl || (isOfflineSource || canUseRealCamera ? activeFrameUrl : ""))
+      : "";
+  const latestFrameShape =
+    liveRun?.frameShape ??
+    (setupProbeDetection ? probe?.frame.shape ?? cameraPreview?.shape ?? activeSourceShape : null) ??
+    runResult?.run_manifest.frame_records[runResult.run_manifest.frame_records.length - 1]?.shape ??
+    activeSourceShape;
+  const latestFrameTitle = liveRun?.detectionResult
+    ? `${provenanceLabel(sourceProvenance, language)} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
+    : setupProbeDetection
+      ? `${t("Current frame probe")} · ${t("frame")} ${setupProbeDetection.frame_index}`
+    : latestDetection
+        ? `${provenanceLabel(sourceProvenance, language)} · ${t("frame")} ${latestDetection.frame_index}`
+        : activeFrameTitle;
+  const serialPortOptions = uniqueStrings([
+    operatorSettings.serialPort ?? "",
+    measurement.detector_config.temperature_serial_port ?? "",
+    ...serialPorts.map((port) => port.device || port.name)
+  ]);
+  const currentTemperature = temperatureStatus?.reading.celsius ?? latestDetection?.temperature_celsius ?? null;
+  const cameraOk = canUseRealCamera && (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "ok") === "ok";
+  const hasMeasurementRoi = measurement.roi.width > 0 && measurement.roi.height > 0;
+  const probeCurrentFrameDisabled =
+    probing || operatorRunActive || !hasMeasurementRoi || (isRealCameraMode && !realHardwareAvailable);
+  const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
+  const startButtonLabel = operatorStartButtonLabel(operatorDataSource);
+  const startDisabled = operatorRunActive || (isRealCameraMode && !realHardwareAvailable) || (isOfflineSource && !canUseOfflineDataset);
+  const titleLabel = isOfflineSource ? "Offline dataset test" : "Real camera test";
+  const sourceBadgeLabel = isOfflineSource
+    ? "Offline dataset / simulated material"
+    : realHardwareAvailable
+      ? "Real camera + real temperature controller"
+      : "Real hardware unavailable";
+
+  function changeObjectClass(value: string) {
+    const option = OBJECT_CLASS_OPTIONS.find((item) => item.value === value);
+    onMeasurement({
+      ...measurement,
+      object_class: value,
+      detector: option?.detector ?? measurement.detector,
+      width_mode: option?.widthMode ?? "max_width"
+    });
+    onPreviewAffectingChange({ kind: "object_class" });
+  }
+
+  return (
+    <div className="operatorRunGrid">
+      <section className="toolPanel operatorControlPanel">
+        <div className="operatorModeHeader">
+          <h2>{t(titleLabel)}</h2>
+          <span className={realHardwareAvailable || isOfflineSource ? "operatorSourceBadge" : "operatorSourceBadge warning"}>
+            {t(sourceBadgeLabel)}
+          </span>
+        </div>
+        <OperatorSourceControls
+          datasets={datasets}
+          selectedDataset={selectedDataset}
+          selectedDatasetId={selectedDatasetId}
+          source={operatorDataSource}
+          disabled={operatorRunActive}
+          onDataset={onSelectedDataset}
+          onSource={onOperatorDataSource}
+        />
+        {isRealCameraMode && !realHardwareAvailable ? (
+          <RealHardwareUnavailableCard
+            loading={loadingOperatorSourceStatus}
+            sourceStatus={operatorSourceStatus}
+            statusError={operatorSourceStatusError}
+          />
+        ) : null}
+        <div className="controlStack">
+          <h3>{t("Test object")}</h3>
+          <label className="field">
+            <span>{t("Object class")}</span>
+            <select disabled={operatorRunActive} onChange={(event) => changeObjectClass(event.target.value)} value={measurement.object_class}>
+              {OBJECT_CLASS_OPTIONS.filter((option) => option.value !== "D_RESERVED_OBJECT").map((option) => (
+                <option key={option.value} value={option.value}>
+                  {uiObjectClass(language, option.value)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <details className="advancedDetectorParameters">
+            <summary>{t("Advanced detection parameters")} · {t("Usually no change needed")}</summary>
+            <DetectorSetupControls
+              measurement={measurement}
+              onMeasurement={onMeasurement}
+              onPreviewAffectingChange={onPreviewAffectingChange}
+            />
+          </details>
+        </div>
+        <div className="controlStack operatorCameraStatus">
+          <h3>{isOfflineSource ? t("Offline material") : t("Camera")}</h3>
+          {isOfflineSource ? (
+            <>
+              <dl className="metricGrid compact">
+                <Metric label="Source" value={uiDatasetLabel(language, selectedDataset)} />
+                <Metric label="Current frame" value={probe?.frame.frame_index ?? t("Not probed")} />
+              </dl>
+              <div className="inlineWarning">
+                {t("Offline/simulated material is active. Use this only for UI or algorithm debugging; it is not real test data.")}
+              </div>
+            </>
+          ) : (
+            <dl className="metricGrid compact">
+              <Metric label="Camera status" value={realHardwareAvailable ? "ok" : "Real hardware unavailable"} />
+              <Metric label="Current camera backend" value={operatorSourceStatus?.camera_label || operatorSourceStatus?.camera_backend || "None"} />
+              <Metric label="Current temperature backend" value={operatorSourceStatus?.temperature_backend || "None"} />
+              <Metric label="Real camera" value={operatorSourceStatus?.real_camera_available ? "ok" : "unavailable"} />
+              <Metric label="Real temperature controller" value={operatorSourceStatus?.real_temperature_available ? "ok" : "unavailable"} />
+              {realHardwareAvailable ? <Metric label="Live display" value={cameraPreviewState?.mode === "frozen" ? "Paused" : "Live"} /> : null}
+            </dl>
+          )}
+          {!isOfflineSource && cameraPreviewError && !cameraOk && realHardwareAvailable ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
+          <button
+            className="primaryButton"
+            disabled={probeCurrentFrameDisabled}
+            onClick={onProbeRealCameraSetup}
+            title={isRealCameraMode && !realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            type="button"
+          >
+            <SquareDashedMousePointer size={16} aria-hidden="true" />
+            {probing ? t("Probing") : t("Probe current frame")}
+          </button>
+          {operatorRunActive ? <div className="inlineWarning">{t("Single-frame probing is disabled during a live test")}</div> : null}
+          {setupProbeSummary ? (
+            <div className={setupProbeDetection?.detection_status === "VALID" ? "inlineSuccess" : "inlineWarning"}>
+              {setupProbeSummary}
+            </div>
+          ) : null}
+        </div>
+        <OperatorTemperaturePanel
+          currentTemperature={currentTemperature}
+          operatorSettings={operatorSettings}
+          serialPortOptions={serialPortOptions}
+          temperatureStatus={temperatureStatus}
+          temperatureError={temperatureError}
+          checkingTemperature={checkingTemperature}
+          loadingSerialPorts={loadingSerialPorts}
+          mode={isOfflineSource ? "offline_dataset" : realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
+          onPatch={onOperatorSettingsPatch}
+          onConfirm={onOperatorSettingsConfirm}
+          onReadCurrentTemperature={onReadCurrentTemperature}
+          onRefreshSerialPorts={onRefreshSerialPorts}
+        />
+        <details className="operatorRoiDisclosure">
+          <summary>
+            {t("Measurement ROI")}: {measurement.roi.width > 0 && measurement.roi.height > 0 ? t("Set") : t("Not set")}
+          </summary>
+          <MeasurementControls
+            measurement={measurement}
+            onMeasurement={onMeasurement}
+            onResetRoi={onResetRoi}
+            onPreviewAffectingChange={onPreviewAffectingChange}
+          />
+        </details>
+        {operatorStartMessage ? <div className="inlineWarning">{operatorStartMessage}</div> : null}
+        <div className="operatorRunActions">
+          <button
+            className="primaryButton"
+            disabled={startDisabled}
+            onClick={onOperatorStartRun}
+            title={isRealCameraMode && !realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            type="button"
+          >
+            <Play size={16} aria-hidden="true" />
+            {operatorRunActive ? t("Running") : t(startButtonLabel)}
+          </button>
+          <button className="secondaryButton" disabled={!operatorRunActive} onClick={onStopRun} type="button">
+            <Square size={16} aria-hidden="true" />
+            {t("Stop test")}
+          </button>
+        </div>
+      </section>
+      <section className="operatorVisualStack">
+        {isRealCameraMode && !realHardwareAvailable ? (
+          <RealHardwareUnavailableCard
+            loading={loadingOperatorSourceStatus}
+            sourceStatus={operatorSourceStatus}
+            statusError={operatorSourceStatusError}
+          />
+        ) : latestFrameUrl ? (
+          <FrameCanvas
+            title={latestFrameTitle}
+            imageUrl={latestFrameUrl}
+            sourceShape={latestFrameShape}
+            roi={measurement.roi}
+            abPoints={latestDetection?.ab_points ?? null}
+            debugArtifacts={latestDetection?.debug_artifacts ?? null}
+            onRoiChange={operatorRunActive ? undefined : onRoiChange}
+            onRoiCommit={operatorRunActive ? undefined : onRoiCommit}
+            readOnly={operatorRunActive}
+          />
+        ) : (
+          <PreviewPlaceholder
+            title={activeFrameTitle}
+            refreshStatus={cameraPreviewRefreshStatus}
+            previewError={cameraPreviewError}
+          />
+        )}
+        {isRealCameraMode && !realHardwareAvailable ? null : (
+        <section className="toolPanel operatorTrendPanel">
+          <div className="runTrendHeader">
+            <div>
+              <h2>{t("Live Trend")}</h2>
+              <p>{t(sourceBadgeLabel)}</p>
+            </div>
+            <div className="runTrendStatusLabel">{liveRun?.status === "running" ? t("Current run so far") : t("Full run")}</div>
+          </div>
+          {latestAnalysis ? (
+            <RunTrendChart
+              analysis={analysisForResultSource(latestAnalysis, "stabilized")}
+              runId={liveRun?.runId ?? runResult?.run_manifest.run_id ?? null}
+              isRunning={liveRun?.status === "running"}
+              targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
+              compact
+            />
+          ) : (
+            <div className="statusBlock">{t("No formal temperature-distance points operator")}</div>
+          )}
+        </section>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function OperatorSourceControls({
+  datasets,
+  selectedDataset,
+  selectedDatasetId,
+  source,
+  disabled,
+  onDataset,
+  onSource
+}: {
+  datasets: OfflineDatasetListItem[];
+  selectedDataset: OfflineDatasetListItem;
+  selectedDatasetId: string;
+  source: OperatorDataSource;
+  disabled: boolean;
+  onDataset: (datasetId: string) => void;
+  onSource: (source: OperatorDataSource) => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  return (
+    <div className="controlStack operatorSourceControls">
+      <h3>{t("Data source")}</h3>
+      <div className="segmented wide" aria-label={t("Data source")}>
+        <button
+          className={source === "offline_dataset" ? "active" : ""}
+          disabled={disabled}
+          onClick={() => onSource("offline_dataset")}
+          type="button"
+        >
+          <Database size={15} aria-hidden="true" />
+          {t("Offline dataset")}
+        </button>
+        <button
+          className={source === "real_camera" ? "active" : ""}
+          disabled={disabled}
+          onClick={() => onSource("real_camera")}
+          type="button"
+        >
+          <Camera size={15} aria-hidden="true" />
+          {t("Real camera")}
+        </button>
+      </div>
+      {source === "offline_dataset" ? (
+        <label className="field">
+          <span>{t("Offline material")}</span>
+          <select disabled={disabled} onChange={(event) => onDataset(event.target.value)} value={selectedDatasetId}>
+            {datasets.map((dataset) => (
+              <option key={dataset.id} value={dataset.id}>
+                {operatorDatasetOptionLabel(dataset, language)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <div className="operatorSourceHint">{uiText(language, "Real camera source uses the live camera API.")}</div>
+      )}
+      {source === "offline_dataset" ? (
+        <div className="operatorSourceHint">{uiDatasetLabel(language, selectedDataset)}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function RealHardwareUnavailableCard({
+  loading,
+  sourceStatus,
+  statusError
+}: {
+  loading: boolean;
+  sourceStatus: OperatorSourceStatus | null;
+  statusError: string;
+}) {
+  const t = useUiText();
+  return (
+    <section className="operatorHardwareErrorCard" aria-live="polite">
+      <h3>{t("Real hardware unavailable")}</h3>
+      <p>{t("Real camera selected but service is not connected to a real camera and real temperature controller.")}</p>
+      <p>{t("Check hardware configuration or switch to Offline dataset for simulated debugging.")}</p>
+      <dl className="metricGrid compact">
+        <Metric label="Current camera backend" value={sourceStatus?.camera_label || sourceStatus?.camera_backend || (loading ? "Loading" : "None")} />
+        <Metric label="Current temperature backend" value={sourceStatus?.temperature_backend || (loading ? "Loading" : "None")} />
+        <Metric label="Real camera" value={sourceStatus?.real_camera_available ? "ok" : "unavailable"} />
+        <Metric label="Real temperature controller" value={sourceStatus?.real_temperature_available ? "ok" : "unavailable"} />
+      </dl>
+      {statusError ? <div className="inlineError">{statusError}</div> : null}
+      {sourceStatus?.errors.length ? (
+        <ul className="operatorWarningList compactList">
+          {sourceStatus.errors.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function OperatorTemperaturePanel({
+  currentTemperature,
+  operatorSettings,
+  serialPortOptions,
+  temperatureStatus,
+  temperatureError,
+  checkingTemperature,
+  loadingSerialPorts,
+  mode,
+  onPatch,
+  onConfirm,
+  onReadCurrentTemperature,
+  onRefreshSerialPorts
+}: {
+  currentTemperature: number | null;
+  operatorSettings: OperatorConfirmedSettings;
+  serialPortOptions: string[];
+  temperatureStatus: TemperatureStatusResponse | null;
+  temperatureError: SetupTemperatureError | null;
+  checkingTemperature: boolean;
+  loadingSerialPorts: boolean;
+  mode: "offline_dataset" | "real_camera_available" | "real_camera_unavailable";
+  onPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
+  onConfirm: () => void;
+  onReadCurrentTemperature: () => void;
+  onRefreshSerialPorts: () => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const simulatedMode = mode === "offline_dataset";
+  const hardwareUnavailable = mode === "real_camera_unavailable";
+  return (
+    <div className="controlStack operatorTemperaturePanel">
+      <h3>{t("Temperature Control")}</h3>
+      {simulatedMode || hardwareUnavailable ? (
+        <div className={hardwareUnavailable ? "inlineError" : "inlineWarning"}>
+          {hardwareUnavailable
+            ? t("Real hardware unavailable")
+            : t("Offline dataset mode does not connect to a real temperature controller.")}
+        </div>
+      ) : (
+        <>
+          <div className="operatorTemperatureReadout">
+            <span>{formatTemperatureValue(currentTemperature, language)}</span>
+            <small>{temperatureStatus?.temperature_status ? uiStatus(language, temperatureStatus.temperature_status) : t("Not read")}</small>
+          </div>
+          {temperatureError ? <div className="inlineError">{temperatureError.message}</div> : null}
+        </>
+      )}
+      <div className="twoColumnControls">
+        <NullableNumberField
+          label="Target temperature"
+          value={operatorSettings.targetTemperatureC}
+          onChange={(value) => onPatch({ targetTemperatureC: value })}
+        />
+        <NumberField
+          label="Temperature power"
+          min={0}
+          max={100}
+          value={operatorSettings.temperaturePowerPercent}
+          onChange={(value) => onPatch({ temperaturePowerPercent: clamp(value, 0, 100) })}
+        />
+      </div>
+      {!simulatedMode ? (
+        <label className="field">
+          <span>{t("Temperature serial port")}</span>
+          <select
+            disabled={hardwareUnavailable}
+            onChange={(event) => onPatch({ serialPort: event.target.value || null })}
+            value={operatorSettings.serialPort ?? ""}
+          >
+            <option value="">{t("Configured/default")}</option>
+            {serialPortOptions.map((port) => (
+              <option key={port} value={port}>
+                {port}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <div className="buttonPair">
+        <button className="primaryButton" onClick={onConfirm} type="button">
+          {t("Confirm test settings")}
+        </button>
+        {!simulatedMode ? (
+          <button className="secondaryButton" disabled={loadingSerialPorts || hardwareUnavailable} onClick={onRefreshSerialPorts} type="button">
+            <Usb size={16} aria-hidden="true" />
+            {loadingSerialPorts ? t("Scanning") : t("Refresh ports")}
+          </button>
+        ) : null}
+      </div>
+      {!simulatedMode ? (
+        <button className="secondaryButton compactOperatorButton" disabled={checkingTemperature || hardwareUnavailable} onClick={onReadCurrentTemperature} type="button">
+          <Thermometer size={16} aria-hidden="true" />
+          {checkingTemperature ? t("Reading") : t("Read temp")}
+        </button>
+      ) : null}
+      <div className={operatorSettings.dirty || !operatorSettings.confirmedAt ? "inlineWarning" : "inlineSuccess"}>
+        {operatorSettingsSummary(operatorSettings, language)}
+      </div>
+    </div>
+  );
+}
+
+function OperatorImportPage({
+  importedRun,
+  onImportRunExport,
+  onImportedRun
+}: {
+  importedRun: ImportedRunView | null;
+  onImportRunExport: (file: File) => Promise<ImportedRunView>;
+  onImportedRun: (view: ImportedRunView | null) => void;
+}) {
+  const t = useUiText();
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function importFile(file: File | null | undefined) {
+    if (!file) return;
+    setImporting(true);
+    setError("");
+    try {
+      await onImportRunExport(file);
+    } catch (err) {
+      onImportedRun(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="operatorImportGrid">
+      <section className="toolPanel operatorImportPanel">
+        <h2>{t("History Import")}</h2>
+        <label
+          className="operatorDropZone"
+          onDragOver={(event) => {
+            event.preventDefault();
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            void importFile(event.dataTransfer.files.item(0));
+          }}
+        >
+          <Upload size={24} aria-hidden="true" />
+          <span>{t("Choose or drop export file")}</span>
+          <small>{t("Supports G3 zip or json export")}</small>
+          <input
+            accept=".zip,.json,application/json,application/zip"
+            onChange={(event) => void importFile(event.currentTarget.files?.item(0))}
+            type="file"
+          />
+        </label>
+        {importing ? <div className="statusBlock">{t("Importing")}</div> : null}
+        {error ? <div className="inlineError">{error}</div> : null}
+      </section>
+      <section className="toolPanel operatorImportedView">
+        <h2>{importedRun ? importedRun.filename : t("Imported result")}</h2>
+        {importedRun ? (
+          <>
+            <ImportedRunSummary view={importedRun} />
+            <ImportedRunCurveReview view={importedRun} />
+          </>
+        ) : (
+          <div className="statusBlock">{t("No imported file")}</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function OperatorResultsPage({
+  importedRun,
+  liveRun,
+  runResult
+}: {
+  importedRun: ImportedRunView | null;
+  liveRun: LiveRunState | null;
+  runResult: RunResponse | null;
+}) {
+  const t = useUiText();
+  const language = useUiLanguage();
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [exportMessage, setExportMessage] = useState("");
+  const currentAnalysis =
+    runResult?.analysis_result ??
+    (liveRun?.status === "stopped" || liveRun?.status === "complete" ? liveRun.analysis : null);
+  const currentRunId = runResult?.run_manifest.run_id ?? (
+    liveRun?.status === "stopped" || liveRun?.status === "complete" ? liveRun.runId : null
+  );
+  const analysis = currentAnalysis ?? importedRun?.analysis_result ?? null;
+  const isImported = !currentAnalysis && importedRun?.analysis_result;
+  const resultProvenance =
+    runResult?.run_manifest.provenance ??
+    liveRun?.provenance ??
+    importedRun?.provenance ??
+    null;
+  const resultSourceWarning = sourceProvenanceWarning(resultProvenance, language);
+
+  async function exportCurrentRun() {
+    if (!currentRunId) return;
+    setExporting(true);
+    setExportError("");
+    setExportMessage("");
+    try {
+      const download = await downloadRunExportBundle(currentRunId);
+      setExportMessage(`${t("Export complete")}: ${download.filename}`);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="operatorResultsGrid">
+      <section className="toolPanel operatorResultSummary">
+        <h2>{t("Results / Export")}</h2>
+        <SourceProvenanceBadge provenance={resultProvenance} language={language} compact warning={resultSourceWarning} />
+        <dl className="metricGrid compact operatorSummaryMetrics">
+          <Metric label="Run" value={currentRunId ?? importedRun?.run_manifest?.run_id ?? importedRun?.filename ?? "No run selected"} />
+          <Metric label="AFAS status" value={readAfasStatus(analysis)} />
+          <Metric label="Formal temp-distance points" value={analysis?.temperature_distance.length ?? importedRun?.frame_summary.temperature_distance_points ?? 0} />
+          <Metric label="Source" value={resultProvenance ? provenanceLabel(resultProvenance, language) : isImported ? "Imported file" : "Current run so far"} />
+        </dl>
+        {analysis ? <OperatorAfasSummary analysis={analysis} /> : null}
+        <button
+          className="primaryButton spaced"
+          disabled={!currentRunId || exporting}
+          onClick={exportCurrentRun}
+          type="button"
+        >
+          <Download size={16} aria-hidden="true" />
+          {exporting ? t("Exporting") : t("Export result")}
+        </button>
+        {exportError ? <div className="inlineError">{exportError}</div> : null}
+        {exportMessage ? <div className="inlineSuccess">{exportMessage}</div> : null}
+        {importedRun?.warnings.length ? (
+          <ul className="operatorWarningList">
+            {importedRun.warnings.map((warning) => (
+              <li key={warning}>{localizeDisplayString(warning, language)}</li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+      <section className="toolPanel operatorResultChart">
+        <h2>{t("AFAS temperature-distance review")}</h2>
+        {analysis ? (
+          <AnalysisAfasChart analysis={analysisForResultSource(analysis, "stabilized")} />
+        ) : importedRun?.temperature_distance_image_data_url ? (
+          <figure className="importedPngFigure">
+            <img src={importedRun.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
+            <figcaption>{t("Imported image only")}</figcaption>
+          </figure>
+        ) : (
+          <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
+        )}
+      </section>
+      {importedRun ? (
+        <section className="toolPanel operatorImportedDetails">
+          <h2>{t("Imported result")}</h2>
+          <ImportedRunSummary view={importedRun} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ImportedRunSummary({ view }: { view: ImportedRunView }) {
+  const language = useUiLanguage();
+  const measurement = view.measurement_definition;
+  const analysis = view.analysis_result;
+  const sourceWarning = sourceProvenanceWarning(view.provenance, language);
+  return (
+    <div className="importedRunSummary">
+      <SourceProvenanceBadge provenance={view.provenance} language={language} compact warning={sourceWarning} />
+      <dl className="metricGrid compact operatorSummaryMetrics">
+        <Metric label="File" value={view.filename} />
+        <Metric label="Run" value={view.run_manifest?.run_id ?? analysis?.run_id ?? "None"} />
+        <Metric label="Object class" value={measurement?.object_class ?? "None"} />
+        <Metric label="Width mode" value={measurement?.width_mode ?? "None"} />
+        <Metric label="target_temperature_celsius" value={formatOptionalNumber(readRecord(measurement?.detector_config).target_temperature_celsius, " °C", language)} />
+        <Metric label="temperature_power_percent" value={formatOptionalNumber(readRecord(measurement?.detector_config).temperature_power_percent, " %", language)} />
+        <Metric label="Frames" value={view.frame_summary.total_frames.toLocaleString()} />
+        <Metric label="Valid / Invalid" value={`${view.frame_summary.valid_frames.toLocaleString()} / ${Math.max(0, view.frame_summary.total_frames - view.frame_summary.valid_frames).toLocaleString()}`} />
+        <Metric label="Temp-distance points" value={view.frame_summary.temperature_distance_points.toLocaleString()} />
+        <Metric label="AFAS status" value={readAfasStatus(analysis)} />
+      </dl>
+      <OperatorAfasSummary analysis={analysis} />
+      {Object.keys(view.frame_summary.invalid_reason_counts).length ? (
+        <details className="operatorDetailsDisclosure">
+          <summary>{uiText(language, "Invalid reason statistics")}</summary>
+          <pre>{JSON.stringify(view.frame_summary.invalid_reason_counts, null, 2)}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
+  const t = useUiText();
+  const analysis = view.analysis_result;
+  return (
+    <div className="operatorImportedChart">
+      <h3>{t("Temperature-distance curve")}</h3>
+      {analysis ? (
+        <AnalysisAfasChart analysis={analysisForResultSource(analysis, "stabilized")} />
+      ) : view.temperature_distance_image_data_url ? (
+        <figure className="importedPngFigure">
+          <img src={view.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
+          <figcaption>{t("Imported image only")}</figcaption>
+        </figure>
+      ) : (
+        <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
+      )}
+    </div>
+  );
+}
+
+function OperatorAfasSummary({ analysis }: { analysis: AnalysisResult | null }) {
+  const language = useUiLanguage();
+  const result = readRecord(analysis?.afas_analysis?.result);
+  const afValue = readAfasAfValue(result);
+  return (
+    <dl className="operatorAfasSummary">
+      <Metric label="AS" value={formatOptionalNumber(result.As, " °C", language)} />
+      <Metric label="AF" value={formatOptionalNumber(afValue, " °C", language)} />
+      <Metric label="ΔT" value={formatDeltaT(result.As, afValue, language)} />
+      <Metric label="Max slope" value={formatOptionalNumber(result.max_slope_temp, " °C", language)} />
+      <Metric label="Raw points" value={analysis?.temperature_distance.length.toLocaleString() ?? "0"} />
+      <Metric label="Smoothed points" value={formatArrayCount(readRecord(analysis?.afas_preprocessing?.smoothed).temperature_celsius)} />
+      <Metric label="Status" value={readAfasStatus(analysis)} />
+    </dl>
   );
 }
 
@@ -3964,12 +5237,14 @@ function RunTrendChart({
   analysis,
   runId,
   isRunning,
-  targetTemperature
+  targetTemperature,
+  compact = false
 }: {
   analysis: AnalysisResult;
   runId: string | null;
   isRunning: boolean;
   targetTemperature: number | null;
+  compact?: boolean;
 }) {
   const language = useUiLanguage();
   const t = useUiText();
@@ -4035,7 +5310,7 @@ function RunTrendChart({
 
   return (
     <div className="runTrendShell">
-      <RunValueStrip valueStrip={model.valueStrip} />
+      <RunValueStrip valueStrip={model.valueStrip} compact={compact} />
       <figure className="runTrendFigure">
         <figcaption>
           <span>{t(model.sourceLabel)}</span>
@@ -4211,7 +5486,13 @@ function sameYAxisRange(
   );
 }
 
-function RunValueStrip({ valueStrip }: { valueStrip: ReturnType<typeof buildRunTrendModel>["valueStrip"] }) {
+function RunValueStrip({
+  valueStrip,
+  compact = false
+}: {
+  valueStrip: ReturnType<typeof buildRunTrendModel>["valueStrip"];
+  compact?: boolean;
+}) {
   const language = useUiLanguage();
   return (
     <dl className="runValueStrip">
@@ -4219,8 +5500,12 @@ function RunValueStrip({ valueStrip }: { valueStrip: ReturnType<typeof buildRunT
       <RunValue label="Current temperature" value={formatNullableNumber(valueStrip.currentTemperature, " °C", 2, language)} />
       <RunValue label="Frame" value={valueStrip.currentFrame?.toLocaleString() ?? uiNone(language)} />
       <RunValue label="Sync status" value={shortStatus(valueStrip.syncStatus, language)} tone={statusTone(valueStrip.syncStatus, "sync")} />
-      <RunValue label="Sync Δt" value={formatNullableNumber(valueStrip.temperatureDeltaMs, " ms", 0, language)} tone={statusTone(valueStrip.syncStatus, "sync")} />
-      <RunValue label="Sync tolerance" value={formatNullableNumber(valueStrip.tempSyncTargetMs, " ms", 0, language)} />
+      {compact ? null : (
+        <>
+          <RunValue label="Sync Δt" value={formatNullableNumber(valueStrip.temperatureDeltaMs, " ms", 0, language)} tone={statusTone(valueStrip.syncStatus, "sync")} />
+          <RunValue label="Sync tolerance" value={formatNullableNumber(valueStrip.tempSyncTargetMs, " ms", 0, language)} />
+        </>
+      )}
       <RunValue label="Valid / Invalid" value={shortStatus(valueStrip.detectionStatus, language)} tone={statusTone(valueStrip.detectionStatus, "detection")} />
       <RunValue label="Temp-distance points" value={valueStrip.points.toLocaleString()} />
     </dl>
@@ -4574,12 +5859,133 @@ function createDefaultMeasurement(
   };
 }
 
+function currentSourceProvenance({
+  operatorDataSource,
+  selectedDataset,
+  cameraPreview,
+  probe,
+  liveRun,
+  runResult,
+  sourceStatus
+}: {
+  operatorDataSource: OperatorDataSource;
+  selectedDataset: OfflineDatasetListItem;
+  cameraPreview: CameraPreviewResponse | null;
+  probe: ProbeResponse | null;
+  liveRun: LiveRunState | null;
+  runResult: RunResponse | null;
+  sourceStatus?: OperatorSourceStatus | null;
+}): SourceProvenance {
+  if (operatorDataSource === "offline_dataset") {
+    return (
+      liveRun?.provenance ??
+      runResult?.run_manifest.provenance ??
+      runResult?.analysis_result.provenance ??
+      probe?.provenance ??
+      offlineFallbackProvenance(selectedDataset)
+    );
+  }
+  return (
+    liveRun?.provenance ??
+    runResult?.run_manifest.provenance ??
+    runResult?.analysis_result.provenance ??
+    probe?.provenance ??
+    cameraPreview?.provenance ??
+    sourceStatus?.provenance ??
+    unknownFallbackProvenance()
+  );
+}
+
+function sourceProvenanceWarning(
+  provenance: SourceProvenance | null | undefined,
+  language: UiLanguage
+): string {
+  const warningSource =
+    provenance?.overall_kind === "imported" && provenance.imported_from_provenance
+      ? provenance.imported_from_provenance
+      : provenance;
+  if (!warningSource) return "";
+  if (warningSource.overall_kind === "mixed") {
+    return uiText(
+      language,
+      "Mixed source mode is active. Some data comes from simulated devices; do not use as a formal test result."
+    );
+  }
+  if (warningSource.overall_kind === "offline" || warningSource.overall_kind === "simulated") {
+    return uiText(
+      language,
+      "Offline/simulated material is active. Use this only for UI or algorithm debugging; it is not real test data."
+    );
+  }
+  if (provenanceNeedsSimulatedWarning(warningSource)) {
+    return uiText(language, "Current source includes simulated hardware. Do not use this as real test data.");
+  }
+  return "";
+}
+
+function operatorStartButtonLabel(source: OperatorDataSource): string {
+  if (source === "offline_dataset") {
+    return "Start simulated test";
+  }
+  return "Start live test";
+}
+
+function operatorDatasetOptionLabel(dataset: OfflineDatasetListItem, language: UiLanguage): string {
+  const captureId = dataset.label.includes("：")
+    ? dataset.label.split("：").pop() || dataset.id
+    : dataset.id.replace(/^golden_[ac]_/, "");
+  if (language === "zh") {
+    const prefix = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "C 类多细支/多线束" : "A 类球囊/网状结构";
+    return `${prefix}：${captureId}`;
+  }
+  const prefix = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "C bundle" : "A balloon/mesh";
+  return `${prefix}: ${captureId}`;
+}
+
+function offlineFallbackProvenance(dataset: OfflineDatasetListItem): SourceProvenance {
+  return {
+    acquisition_source: "offline_dataset",
+    camera_backend: "offline_dataset",
+    camera_backend_kind: "simulated_dataset",
+    camera_is_simulated: true,
+    camera_label: dataset.label || dataset.id,
+    camera_serial: "",
+    simulated_dataset_id: dataset.id,
+    temperature_backend: "offline_temperature_csv",
+    temperature_backend_kind: "simulated",
+    temperature_is_simulated: true,
+    overall_kind: "offline",
+    display_label_zh: "离线/模拟素材",
+    display_label_en: "Offline/simulated material"
+  };
+}
+
+function unknownFallbackProvenance(): SourceProvenance {
+  return {
+    acquisition_source: "unknown",
+    camera_backend: "",
+    camera_backend_kind: "unknown",
+    camera_is_simulated: false,
+    camera_label: "",
+    camera_serial: "",
+    simulated_dataset_id: "",
+    temperature_backend: "",
+    temperature_backend_kind: "unknown",
+    temperature_is_simulated: false,
+    overall_kind: "unknown",
+    display_label_zh: "未知来源",
+    display_label_en: "Unknown source"
+  };
+}
+
 function createInitialLiveRun(datasetId: string, startFrame: number, frameCount: number): LiveRunState {
   const totalFrames = Math.max(1, frameCount - startFrame + 1);
   const runId = `pending-${datasetId}-${Date.now()}`;
   return {
     runId,
     datasetId,
+    operatorDataSource: "offline_dataset",
+    provenance: null,
     status: "running",
     frameIndex: startFrame,
     frameUrl: frameIndexImageUrl(datasetId, startFrame, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
@@ -4597,6 +6003,8 @@ function createInitialRealCameraLiveRun(): LiveRunState {
   return {
     runId,
     datasetId: "real_camera",
+    operatorDataSource: "real_camera",
+    provenance: null,
     status: "running",
     frameIndex: 0,
     frameUrl: "",
@@ -4632,6 +6040,8 @@ function updateLiveRunFromFrame(
   const previous = current ?? {
     runId,
     datasetId: event.dataset_id,
+    operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
+    provenance: event.provenance ?? null,
     status: "running" as const,
     frameIndex: event.frame_index,
     frameUrl: apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
@@ -4656,6 +6066,8 @@ function updateLiveRunFromFrame(
     ...previous,
     runId,
     datasetId: event.dataset_id,
+    operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : event.operator_data_source === "offline_dataset" ? "offline_dataset" : previous.operatorDataSource,
+    provenance: event.provenance ?? previous.provenance,
     status: "running",
     frameIndex: refreshPreview ? event.frame_index : previous.frameIndex,
     frameUrl: refreshPreview ? apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }) : previous.frameUrl,
@@ -4866,6 +6278,14 @@ function formatDistance(result: DetectionResult | null, source: DetectionResultS
   return value == null ? uiNone(language) : `${value.toFixed(2)}${uiNumberSuffix(language, " px")}`;
 }
 
+function operatorProbeSummary(result: DetectionResult, language: UiLanguage): string {
+  if (result.detection_status === "VALID") {
+    return `${uiText(language, "Current frame probe valid")}: ${uiText(language, "Distance")} ${formatDistance(result, result.result_display_source ?? "stabilized", language)}`;
+  }
+  const reason = result.rejected_reason || result.detection_status || uiNone(language);
+  return `${uiText(language, "Current frame probe invalid")}: ${localizeDisplayString(reason, language)}`;
+}
+
 function formatTemperature(result: DetectionResult | null, language: UiLanguage = "en"): string {
   return result?.temperature_celsius == null ? uiNone(language) : `${result.temperature_celsius.toFixed(2)} °C`;
 }
@@ -4921,7 +6341,12 @@ function sleep(ms: number): Promise<void> {
 function readAfasStatus(analysis: AnalysisResult | null): string {
   if (!analysis) return "None";
   const status = analysis.afas_analysis.result_status;
-  return typeof status === "string" ? status : "unavailable";
+  if (typeof status === "string" && status !== "unavailable") return status;
+  const result = readRecord(analysis.afas_analysis.result);
+  const hasAfasValues =
+    Number.isFinite(readNumber(result.As, Number.NaN)) &&
+    Number.isFinite(readAfasAfValue(result));
+  return hasAfasValues ? "ok" : typeof status === "string" ? status : "unavailable";
 }
 
 function readAfasPreprocessingParameters(analysis: AnalysisResult): AfasPreprocessingParameters {
