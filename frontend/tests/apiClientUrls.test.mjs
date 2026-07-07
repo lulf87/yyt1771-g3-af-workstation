@@ -181,6 +181,52 @@ test("export bundle download surfaces structured backend errors", async () => {
   }
 });
 
+test("run export import uploads a selected export file to the import endpoint", async () => {
+  const { importRunExportFile } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const file = new File(["{}"], "run_export.json", { type: "application/json" });
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    assert.equal(init.method, "POST");
+    assert.ok(init.body instanceof FormData);
+    assert.equal(init.body.get("file"), file);
+    return new Response(
+      JSON.stringify({
+        filename: "run_export.json",
+        warnings: [],
+        run_manifest: null,
+        analysis_result: {
+          run_id: "run-imported",
+          temperature_distance: [],
+          afas_preprocessing: {},
+          afas_analysis: {}
+        },
+        measurement_definition: null,
+        frame_summary: {
+          total_frames: 0,
+          valid_frames: 0,
+          temperature_distance_points: 0,
+          invalid_reason_counts: {}
+        },
+        temperature_distance_image_data_url: null
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    const view = await importRunExportFile(file);
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/imports\/run-export$/);
+    assert.equal(view.filename, "run_export.json");
+    assert.equal(view.analysis_result.run_id, "run-imported");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
   const { probeRealCameraSetupFrame } = await loadApiClientModule();
   const measurement = {

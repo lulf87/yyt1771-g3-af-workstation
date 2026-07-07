@@ -90,6 +90,7 @@
 | P-0072 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart / export | Analysis 页 AS/AF 构造关系不清、AS/AF 标签可读性差且导出按钮不触发下载或明确错误 | 2026-07-06 | 2026-07-06 | Codex | golden A Analysis/Export 浏览器复测已通过，AS/AF 构造标注清晰且 ZIP 下载成功 |
 | P-0073 | RESOLVED_BROWSER_VERIFIED | P1 | dev startup / hardware profile selection | “启动一下”需要重复探索命令且冷启动/模式切换过慢 | 2026-07-07 | 2026-07-07 | Codex | `scripts/g3_fast_start.sh` 支持 real-real / real-simtemp / sim-sim，复用启动为亚秒级，Playwright 页面加载复测已通过 |
 | P-0074 | RESOLVED_BROWSER_VERIFIED | P0 | backend / real camera storage / export | 真实采集默认每帧保存完整 raw `.npy`，长时间运行会快速占满磁盘 | 2026-07-07 | 2026-07-07 | Codex | 模拟相机+模拟温控真实浏览器 Run→Stop→Analysis→Export 复测通过，217 帧 raw_frame_count=0，仅保存 latest preview |
+| P-0075 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / operator mode / export import | 需要新增实际使用界面模式并支持导出文件历史导入 | 2026-07-07 | 2026-07-07 | Codex | Operator Mode Run→Stop→Results Export→History Import + Engineering Mode 浏览器复测已通过 |
 
 ---
 
@@ -261,6 +262,78 @@ manifest/config_snapshot 明确记录本次保存策略和 raw_frame_count。
 - Actual: Run `run-real_camera-20260707T024930630103Z` 保存 217 帧，Analysis 显示正式温度-距离点数 217、转变点分析状态正常；`config_snapshot.save_raw_frames=false`，`raw_frame_count=0`，`frame_records[0].frame_path=""`，`frame_records[0].raw_frame_saved=false`，仅 `preview_frames/latest.png` 存在；导出 ZIP 仅包含 CSV/JSON/PNG/parameters，不含 `.npy`。
 - Result: PASS
 - Evidence: `output/playwright/g3-real-camera-preview-storage-20260707.png`, `output/runs/run-real_camera-20260707T024930630103Z/run_manifest.json`, `output/runs/run-real_camera-20260707T024930630103Z/analysis_result.json`, `.playwright-cli/yyt1771-g3-export-run-real-camera-20260707T024930630103Z.zip`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0075 — 需要新增实际使用界面模式并支持导出文件历史导入
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/uiMode.ts`, `frontend/src/operatorSettings.ts`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/services/import_service.py`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+
+#### Problem
+
+现有 G3 前端默认显示大量工程调试信息，不适合实际操作者直接使用；历史回放也不能直接导入本项目导出的 ZIP/JSON 文件复核结果。需要新增默认的“实际使用 / Operator”模式，同时保留完整“工程模式 / Engineering”能力。
+
+#### Expected
+
+```text
+默认进入实际使用模式，顶部可切换实际使用 / 工程模式。
+实际使用模式只有实时测试、历史导入、结果与导出三个主导航。
+实时测试页默认真实相机 + 温控，隐藏离线数据集列表、离线/真实切换、冻结、当前帧检测结果、完整相机/温控工程字段和高级检测参数。
+测量区域默认折叠，ROI 框仍在画面上可见。
+温控目标和功率只在确认本次测试设置后作为 confirmed settings，开始实时测试时才传入 run。
+结果页简洁显示 AS、AF、ΔT、最大斜率、点数、状态、曲线和导出。
+历史导入支持本项目导出的 ZIP/JSON，能展示参数、温控设置、帧结果摘要、AS/AF/ΔT 和温度-距离曲线。
+工程模式原有离线数据集、源切换、冻结、检测当前帧、完整诊断和高级参数继续可用。
+```
+
+#### Resolution log
+
+- 2026-07-07: 新增 `UiMode`、默认 operator、`localStorage["yyt1771-g3-ui-mode"]` 持久化和 `?mode=operator|engineering` 初始覆盖；Operator 导航为实时测试 / 历史导入 / 结果与导出，Engineering 导航保留测量配置 / 实时测量 / 历史回放 / 结果分析与导出。
+- 2026-07-07: 新增 Operator 温控 confirmed settings 状态机：输入修改只标 dirty，不下发温控；确认后保存 target/power/serial；开始实时测试前校验相机、ROI 和 confirmed settings，并把 confirmed target/power/serial 应用到正式 measurement 后启动真实相机 stream。
+- 2026-07-07: 新增 Operator 实时测试页：简化待测物类型选择、相机状态、温控面板、默认折叠 ROI、同页实时相机画面、ROI/A-B overlay、关键参数和 compact temperature-distance 曲线；隐藏离线数据集列表、当前帧检测结果和主界面工程字段。
+- 2026-07-07: 新增 Operator 结果页：简洁显示 run、AFAS status、正式点数、AS/AF/ΔT、最大斜率、raw/smoothed 点数、曲线和导出按钮；AFAS status 对缺少 `result_status` 但已含 AS/AF 的导入/停止结果回退显示为 `ok`。
+- 2026-07-07: 新增后端 `/api/imports/run-export` 和 `import_service.py`，支持 ZIP 中的 `run_export.json`、`frame_results.csv`、`parameters.json`、`temperature_distance.png`，可选文件缺失时返回 warnings 而不崩溃；同时支持 JSON 导入。
+- 2026-07-07: 新增 Operator 历史导入页，支持选择/拖放 ZIP/JSON，显示文件名、run id、对象类型、测宽方式、目标温度、功率、帧数、有效/无效、温度-距离点数、AS/AF/ΔT、AFAS 状态和导入曲线。
+
+#### Tests run
+
+```bash
+npm test
+npm run build
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_import_service.py backend/tests/integration/test_import_api.py backend/tests/integration/test_export_api.py backend/tests/integration/test_export_service.py -q
+```
+
+Result:
+
+```text
+frontend npm test: 65 passed
+frontend npm run build: passed
+backend import/export pytest: 11 passed
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022/`
+- Dataset: `sim-sim` profile, simulated camera backed by `golden_a_20260522_dev_lab` + simulated temperature
+- Page: Operator Live Test / Operator Results Export / Operator History Import / Engineering Setup
+- Steps: 启动 `scripts/g3_fast_start.sh sim-sim --no-open`；打开 `http://127.0.0.1:5176/?mode=operator`；确认默认 operator 导航和无离线 dataset rail；确认温控设置；开始实时测试，观察真实相机画面、ROI/A-B overlay、实时关键参数和曲线；点击 Stop；进入结果与导出，检查 AS/AF/ΔT/状态并点击导出；将下载的 ZIP 在历史导入页上传；检查导入参数、帧摘要、AS/AF/ΔT 和曲线；切换工程模式，检查原四个页签、离线数据集列表、源切换、冻结、检测当前帧、完整相机/温控字段和高级检测参数仍可见。
+- Expected: Operator 模式隐藏工程调试信息并完成 Live Test→Stop→Results Export→History Import；导入 ZIP 能展示参数、结果和曲线；Engineering 模式保持原能力。
+- Actual: Operator 默认显示实时测试 / 历史导入 / 结果与导出，无 dataset rail；Run `run-real_camera-20260707T041845463756Z` 实时显示帧画面、ROI/A-B overlay、303 个正式温度-距离点、同步正常和有效状态；Results 页显示 `AS=37.54 °C`、`AF=38.39 °C`、`ΔT=0.85 °C`、`最大斜率温度=38.55 °C`、`状态=正常`；下载 `yyt1771-g3-export-run-real_camera-20260707T041845463756Z.zip`，ZIP 包含 `run_export.json`、`frame_results.csv`、`parameters.json`、`temperature_distance.png`、`roi_ab_overlay.png`；History Import 上传该 ZIP 后显示参数、帧数 `303`、有效/无效 `303 / 0`、温度-距离点数 `303`、AS/AF/ΔT 和温度-距离曲线；Engineering 模式显示原 Setup/Run/Playback/Analysis tabs、离线数据集 rail、源切换、冻结、检测当前帧、完整工程字段和高级检测参数。
+- Result: PASS
+- Evidence: `output/playwright/p0075-operator-default-20260707.png`, `output/playwright/p0075-operator-live-stopped-20260707.png`, `output/playwright/p0075-operator-results-export-20260707.png`, `output/playwright/p0075-operator-import-20260707.png`, `output/playwright/p0075-engineering-mode-20260707.png`, `.playwright-cli/yyt1771-g3-export-run-real-camera-20260707T041845463756Z.zip`, `output/runs/run-real_camera-20260707T041845463756Z/run_manifest.json`, `output/runs/run-real_camera-20260707T041845463756Z/analysis_result.json`
+- Note: Playwright console also recorded intermittent `/api/camera/preview` `409 Conflict` messages during preview polling while most preview requests returned `200 OK`; no user-visible camera error occurred and the operator run/export/import flow completed. This was not treated as a blocker for P-0075.
 
 #### Current status
 

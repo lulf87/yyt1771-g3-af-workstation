@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -41,6 +41,7 @@ from yyt1771_g3.services.live_offline_run_service import (
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.export_service import export_run, export_run_bundle
+from yyt1771_g3.services.import_service import RunExportImportError, import_run_export_bytes
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
 from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
@@ -877,6 +878,30 @@ def download_run_export_bundle(run_id: str) -> FileResponse:
             },
         ) from exc
     return FileResponse(bundle_path, media_type="application/zip", filename=bundle_path.name)
+
+
+@app.post("/api/imports/run-export")
+async def import_run_export(file: UploadFile = File(...)) -> dict[str, Any]:
+    filename = file.filename or "upload"
+    try:
+        content = await file.read()
+        view = import_run_export_bytes(filename=filename, content=content)
+    except RunExportImportError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "stage": "import_run_export"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("import run export failed for filename=%s", filename)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Import failed: could not parse uploaded export; check backend logs",
+                "stage": "import_run_export",
+                "error": str(exc),
+            },
+        ) from exc
+    return view.model_dump(mode="json")
 
 
 @app.get("/api/exports/{run_id}/{filename}")

@@ -408,6 +408,23 @@ export type ExportDownloadResult = {
   size: number;
 };
 
+export type ImportedFrameSummary = {
+  total_frames: number;
+  valid_frames: number;
+  temperature_distance_points: number;
+  invalid_reason_counts: Record<string, number>;
+};
+
+export type ImportedRunView = {
+  filename: string;
+  warnings: string[];
+  run_manifest: RunManifest | null;
+  analysis_result: AnalysisResult | null;
+  measurement_definition: MeasurementDefinition | null;
+  frame_summary: ImportedFrameSummary;
+  temperature_distance_image_data_url: string | null;
+};
+
 type BlobDownloadAnchor = {
   href: string;
   download: string;
@@ -980,6 +997,19 @@ export async function downloadRunExportBundle(
     `yyt1771-g3-export-${runId}.zip`;
   triggerBlobDownload(blob, filename, options);
   return { filename, size: blob.size };
+}
+
+export async function importRunExportFile(file: File): Promise<ImportedRunView> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${API_BASE}/api/imports/run-export`, {
+    method: "POST",
+    body: formData
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `导入失败：后端返回 ${response.status}`));
+  }
+  return response.json() as Promise<ImportedRunView>;
 }
 
 export function parseContentDispositionFilename(value: string | null): string | null {
