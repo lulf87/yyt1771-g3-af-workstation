@@ -326,6 +326,96 @@ test("real camera setup probe posts measurement definition and optional frozen f
   }
 });
 
+test("real camera setup probe omits cached frame fields by default", async () => {
+  const { probeRealCameraSetupFrame } = await loadApiClientModule();
+  const measurement = {
+    measurement_id: "real-camera-setup-probe-fresh",
+    source: "real_camera",
+    object_class: "A_BALLOON_ENVELOPE",
+    detector: "BalloonEnvelopeDetector",
+    width_mode: "max_width",
+    measurement_coordinates: "source_pixel",
+    roi: {
+      type: "rotated_rect",
+      center_x: 60,
+      center_y: 35,
+      width: 70,
+      height: 40,
+      angle_deg: 0
+    },
+    detector_config: {
+      min_component_area_px: 20
+    }
+  };
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(
+      JSON.stringify({
+        dataset_id: "real_camera",
+        frame: {
+          frame_index: 1,
+          shape: [80, 120],
+          dtype: "uint8",
+          timestamp_ms: 1779448000456
+        },
+        measurement_definition: measurement,
+        detection_result: {
+          frame_index: 1,
+          detection_status: "VALID",
+          ab_points: { a: { x: 1, y: 2 }, b: { x: 10, y: 2 } },
+          distance_px: 9,
+          raw_best_candidate: null,
+          selected_candidate: null,
+          rejected_candidates: [],
+          quality: {
+            confidence: 1,
+            edge_strength: null,
+            contour_area: null,
+            roi_coverage: null,
+            jump_from_previous_px: null
+          },
+          rejected_reason: "",
+          debug_artifacts: {},
+          temperature_sync_status: "TEMP_SYNC_MISSING",
+          frame_timestamp_ms: 1779448000456,
+          temperature_timestamp_ms: null,
+          temperature_celsius: null,
+          temperature_delta_ms: null,
+          temperature_source: "",
+          temperature_sampled_this_frame: false
+        },
+        overlay: {
+          roi: measurement.roi,
+          ab_points: { a: { x: 1, y: 2 }, b: { x: 10, y: 2 } },
+          status: "VALID"
+        },
+        camera_status: "ok",
+        camera_meta: { model: "fixture" },
+        image_data_url: "data:image/png;base64,fresh"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  };
+
+  try {
+    const response = await probeRealCameraSetupFrame(measurement);
+
+    assert.equal(response.dataset_id, "real_camera");
+    assert.equal(response.image_data_url, "data:image/png;base64,fresh");
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/camera\/setup-probe$/);
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.measurement_definition.measurement_id, measurement.measurement_id);
+    assert.equal("frame_png_data_url" in body, false);
+    assert.equal("frame_timestamp_ms" in body, false);
+    assert.equal("camera_meta" in body, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("offline probe strips setup source before posting backend measurement definition", async () => {
   const { probeFrame } = await loadApiClientModule();
   const measurement = {

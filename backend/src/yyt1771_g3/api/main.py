@@ -597,6 +597,7 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
                 camera_meta=request.camera_meta or {},
             )
         else:
+            # Omitting frame_png_data_url captures a fresh preview frame and probes that exact frame.
             config = _hardware_config()
             camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
             with _camera_operation("setup_probe_capture", blocking=False):

@@ -7662,6 +7662,178 @@ FIXED_PENDING_BROWSER_RETEST
 
 ---
 
+### P-0067 — Operator Mode 实时测试页缺少“检测当前帧”入口
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/i18n.ts`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+实际使用模式 / Operator Mode 的“实时测试”页左侧相机区域只有相机状态，没有工程模式中已有的“检测当前帧”按钮。操作者无法在开始实时测试前用当前真实相机画面验证 ROI、检测方案、A/B overlay 和 distance。
+
+#### Expected
+
+```text
+Operator Mode 实时测试页提供“检测当前帧 / Probe current frame”按钮。
+点击按钮时必须让后端 /api/camera/setup-probe 自己采集最新帧并检测同一帧，不使用旧 React state 中缓存的 framePngDataUrl。
+检测完成后右侧画面显示本次检测返回的 image_data_url，并叠加 ROI、A/B 点、测量线和 debug overlay。
+Operator Mode 只显示简短检测摘要，不显示工程模式完整诊断卡。
+实时测试运行中按钮禁用，并提示“实时测试中不可单帧检测”。
+工程模式原有“检测当前帧”行为不变。
+```
+
+#### Actual
+
+修复前 Operator Mode 没有该按钮；只有工程模式 Setup real camera panel 中可触发当前帧检测。
+
+#### Root cause
+
+`PageContent` 已接收 `probing` 和 `onProbeRealCameraSetup`，但渲染 `OperatorRunPage` 时没有传入。`OperatorRunPage` 也没有接收 `probe`，因此其画布检测结果只来自 `liveRun.detectionResult` 或最后一次 `runResult`，不能显示 setup-probe 的单帧检测 overlay。
+
+#### Fix summary
+
+- `frontend/src/main.tsx`
+  - 新增 Operator 专用 `runOperatorRealCameraSetupProbe()`，调用 `probeRealCameraSetupFrame(currentMeasurement)`，不传 `framePngDataUrl`、旧 timestamp 或 camera_meta。
+  - Operator 相机区域新增“检测当前帧”按钮、loading 文案和运行中禁用提示。
+  - Operator 画布在未运行实时测试时优先使用 real-camera setup probe 的 `detection_result` 和 `image_data_url` 显示当前帧 overlay。
+  - Operator 只显示简短“当前帧检测有效/无效”摘要，不复用工程模式完整诊断卡。
+  - probe 期间暂停 setup preview 轮询，并为 preview polling 增加 generation guard，减少旧轮询循环继续排队。
+- `frontend/src/i18n.ts`
+  - 补充当前帧检测、运行中禁用、相机忙等中文文案，并将 `Probing` 改为“检测中”。
+- `frontend/src/api/client.ts` / `frontend/tests/apiClientUrls.test.mjs`
+  - 新增测试确认 setup-probe 默认请求体不包含缓存帧字段。
+- `frontend/tests/operatorProbeUi.test.mjs`
+  - 新增源码级 UI 不变量测试，覆盖 Operator 按钮、禁用条件、probe overlay 优先级、工程模式按钮保留。
+- `backend/src/yyt1771_g3/api/main.py`
+  - 增加注释说明 `frame_png_data_url` 省略时会抓取最新 preview frame 并检测同一帧。
+
+#### Tests run
+
+```bash
+cd frontend && npm test
+Result: PASS, 70 passed.
+
+cd frontend && npm run build
+Result: PASS.
+
+scripts/g3_fast_start.sh sim-sim --no-open
+Result: PASS, reused backend http://127.0.0.1:8022 and frontend http://127.0.0.1:5176.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` profile, simulated camera using G3 offline frame source; simulated temperature
+- Page: Operator Mode / 实时测试; Engineering Mode / 测量配置
+- Steps:
+  1. Start app with `scripts/g3_fast_start.sh sim-sim --no-open`.
+  2. Open `http://127.0.0.1:5176/?mode=operator`.
+  3. Verify Operator Mode 相机区域显示“检测当前帧”按钮.
+  4. Click “检测当前帧”.
+  5. Inspect network request `POST /api/camera/setup-probe`.
+  6. Verify request body contains `measurement_definition` and does not contain `frame_png_data_url`, `frame_timestamp_ms`, or `camera_meta`.
+  7. Verify Operator right-side frame title changes to “当前帧检测 · 帧 1”.
+  8. Verify frame image updates and overlay shows ROI, 正式测宽带, A/B points, measurement line, and distance.
+  9. Verify Operator left summary shows “当前帧检测有效: 测量距离 962.00 像素”.
+  10. Confirm settings, start simulated live test, verify “检测当前帧” is disabled and “实时测试中不可单帧检测” is visible, then stop the run.
+  11. Switch to Engineering Mode and verify original Setup real-camera “检测当前帧” button and full “当前帧检测结果” diagnostics card remain available.
+- Expected:
+  - Operator current-frame probe is available before live test.
+  - Click uses atomic setup-probe fresh capture path, not cached preview frame fields.
+  - Operator displays only a compact summary plus canvas overlay.
+  - Live test disables single-frame probing.
+  - Engineering Mode behavior remains unchanged.
+- Actual:
+  - All expected checks passed.
+  - `POST /api/camera/setup-probe` returned 200 OK.
+  - Request body omitted cached frame fields.
+  - Operator overlay displayed A/B labels and formal measurement band.
+  - Engineering Mode still displayed the original current-frame probe button and diagnostics card.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0067_operator_probe_current_frame_20260707.png`
+  - `output/playwright/p0067_operator_probe_disabled_during_run_20260707.png`
+  - `output/playwright/p0067_engineering_probe_still_present_20260707.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0068 — Simulated real camera live preview polling intermittently logs `/api/camera/preview` 409 in browser console
+
+- Status: OPEN
+- Priority: P2
+- Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+During P-0067 browser retest with `sim-sim`, continuous Operator/Setup real-camera preview polling intermittently logged browser console errors for `GET /api/camera/preview` returning `409 Conflict`.
+
+#### Expected
+
+Live preview polling should either avoid overlapping camera operations or handle expected busy responses without noisy browser console errors when the UI remains healthy.
+
+#### Actual
+
+The UI remained responsive and current-frame setup-probe worked, but Playwright console logs contained intermittent `Failed to load resource: the server responded with a status of 409 (Conflict)` entries for `/api/camera/preview`. This was observed before and after the Operator current-frame probe click; the actual `POST /api/camera/setup-probe` returned 200 OK.
+
+#### Suspected cause
+
+The backend camera operation lock intentionally returns 409 when another camera operation owns the simulated/real camera. Preview polling may still race with another preview or camera operation under the fast default live display interval. The exact source of the overlapping preview calls needs a focused investigation.
+
+#### Fix summary
+
+Not fixed in this PR. P-0067 added a frontend guard to pause polling while Operator probing is active, but intermittent preview-only 409s remain outside the current issue scope.
+
+#### Tests run
+
+```bash
+scripts/g3_fast_start.sh sim-sim --no-open
+Playwright Chromium browser retest during P-0067
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` profile, simulated camera and simulated temperature
+- Page: Operator Mode / 实时测试
+- Steps:
+  1. Open Operator Mode with real camera setup source.
+  2. Let live preview polling run.
+  3. Inspect Playwright console and network requests.
+- Expected:
+  - Preview polling should avoid visible browser console resource errors during normal display.
+- Actual:
+  - Intermittent `GET /api/camera/preview` 409 entries appeared while the UI still displayed camera status `ok`.
+- Result: FAIL
+- Evidence:
+  - Playwright console log: `.playwright-cli/console-2026-07-07T05-14-12-986Z.log`
+
+#### Final status
+
+OPEN
+
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。

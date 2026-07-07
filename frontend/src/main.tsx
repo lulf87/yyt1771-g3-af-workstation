@@ -544,6 +544,7 @@ function App() {
   const liveRunIdRef = useRef<string | null>(null);
   const liveRunProcessedFramesRef = useRef(0);
   const cameraPreviewRequestInFlightRef = useRef(false);
+  const cameraPreviewPollGenerationRef = useRef(0);
   const measurementRef = useRef<MeasurementDefinition | null>(null);
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
@@ -592,12 +593,14 @@ function App() {
 
   useEffect(() => {
     if (!shouldPollRealCameraPreview(pageForSetupEffects, setupSource, cameraPreviewState)) return;
-    if (runningCamera) return;
+    if (runningCamera || probing) return;
     let cancelled = false;
     let timer: number | null = null;
+    const generation = cameraPreviewPollGenerationRef.current + 1;
+    cameraPreviewPollGenerationRef.current = generation;
     const pollLiveFrame = async () => {
       await previewRealCameraFrame("live", { clearProbe: false });
-      if (cancelled) return;
+      if (cancelled || cameraPreviewPollGenerationRef.current !== generation) return;
       const previewIntervalMs = setupPreviewPollingIntervalMs(
         cameraPreviewState?.cameraStatus,
         measurementRef.current?.detector_config.setup_preview_fps
@@ -609,6 +612,9 @@ function App() {
     void pollLiveFrame();
     return () => {
       cancelled = true;
+      if (cameraPreviewPollGenerationRef.current === generation) {
+        cameraPreviewPollGenerationRef.current += 1;
+      }
       if (timer != null) window.clearTimeout(timer);
     };
   }, [
@@ -617,7 +623,8 @@ function App() {
     cameraPreviewState?.mode,
     cameraPreviewState?.cameraStatus,
     measurement?.detector_config.setup_preview_fps,
-    runningCamera
+    runningCamera,
+    probing
   ]);
 
   useEffect(() => {
@@ -716,6 +723,31 @@ function App() {
       setCameraPreviewRefreshStatus("ok");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setProbe(null);
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  async function runOperatorRealCameraSetupProbe() {
+    const currentMeasurement = measurementRef.current;
+    if (!currentMeasurement) return;
+    setProbing(true);
+    setError("");
+    try {
+      const response = await probeRealCameraSetupFrame(currentMeasurement);
+      applyRealCameraProbeResponse(response, "live");
+      setProbe(response);
+      setCameraPreviewRefreshStatus("ok");
+    } catch (err) {
+      const detail = err instanceof ApiError ? apiErrorDetailObject(err.detail) : null;
+      setError(
+        err instanceof ApiError && (err.status === 409 || detail?.camera_status === "busy")
+          ? uiText(language, "Camera is busy. Stop the live test before probing current frame.")
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      );
       setProbe(null);
     } finally {
       setProbing(false);
@@ -1316,6 +1348,7 @@ function App() {
               onImportedRun={setImportedRun}
               onProbe={runProbe}
               onProbeRealCameraSetup={runRealCameraSetupProbe}
+              onOperatorProbeCurrentFrame={runOperatorRealCameraSetupProbe}
               onStartRun={startLiveOfflineRun}
               onStopRun={stopLiveOfflineRun}
               onPreviewRealCamera={refreshRealCameraSetupFrame}
@@ -1424,6 +1457,7 @@ function PageContent({
   onImportedRun,
   onProbe,
   onProbeRealCameraSetup,
+  onOperatorProbeCurrentFrame,
   onStartRun,
   onStopRun,
   onPreviewRealCamera,
@@ -1472,6 +1506,7 @@ function PageContent({
   onImportedRun: (view: ImportedRunView | null) => void;
   onProbe: (frameIndex?: number) => void;
   onProbeRealCameraSetup: () => void;
+  onOperatorProbeCurrentFrame: () => void;
   onStartRun: () => void;
   onStopRun: () => void;
   onPreviewRealCamera: () => void;
@@ -1609,6 +1644,8 @@ function PageContent({
         cameraPreviewState={cameraPreviewState}
         activeSourceShape={activeSourceShape}
         activeFrameTitle={activeFrameTitle}
+        probe={displayedProbe}
+        probing={probing}
         operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
         operatorStartMessage={operatorStartMessage}
         temperatureStatus={temperatureStatus}
@@ -1622,6 +1659,7 @@ function PageContent({
         onOperatorSettingsPatch={onOperatorSettingsPatch}
         onOperatorSettingsConfirm={onOperatorSettingsConfirm}
         onOperatorStartRun={onOperatorStartRun}
+        onProbeRealCameraSetup={onOperatorProbeCurrentFrame}
         onStopRun={onStopRun}
         onReadCurrentTemperature={onReadCurrentTemperature}
         onRefreshSerialPorts={onRefreshSerialPorts}
@@ -1739,6 +1777,8 @@ function OperatorRunPage({
   cameraPreviewState,
   activeSourceShape,
   activeFrameTitle,
+  probe,
+  probing,
   operatorSettings,
   operatorStartMessage,
   temperatureStatus,
@@ -1752,6 +1792,7 @@ function OperatorRunPage({
   onOperatorSettingsPatch,
   onOperatorSettingsConfirm,
   onOperatorStartRun,
+  onProbeRealCameraSetup,
   onStopRun,
   onReadCurrentTemperature,
   onRefreshSerialPorts,
@@ -1769,6 +1810,8 @@ function OperatorRunPage({
   cameraPreviewState: RealCameraPreviewState | null;
   activeSourceShape: number[];
   activeFrameTitle: string;
+  probe: ProbeResponse | null;
+  probing: boolean;
   operatorSettings: OperatorConfirmedSettings;
   operatorStartMessage: string;
   temperatureStatus: TemperatureStatusResponse | null;
@@ -1782,6 +1825,7 @@ function OperatorRunPage({
   onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onOperatorSettingsConfirm: () => void;
   onOperatorStartRun: () => void;
+  onProbeRealCameraSetup: () => void;
   onStopRun: () => void;
   onReadCurrentTemperature: () => void;
   onRefreshSerialPorts: () => void;
@@ -1791,20 +1835,33 @@ function OperatorRunPage({
   const language = useUiLanguage();
   const t = useUiText();
   const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
+  const setupProbeDetection = !runningCamera && probe?.dataset_id === "real_camera" ? probe.detection_result : null;
+  const latestRunResultDetection = runResult?.run_manifest.detection_results.length
+    ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
+    : null;
   const latestDetection =
     liveRun?.detectionResult ??
-    (runResult?.run_manifest.detection_results.length
-      ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
-      : null);
+    setupProbeDetection ??
+    latestRunResultDetection;
+  const setupProbeFrameUrl = setupProbeDetection ? cameraPreviewUrl : "";
+  const latestRunResultFrameUrl = runResult?.run_manifest.run_id && latestRunResultDetection
+    ? runFrameImageUrl(runResult.run_manifest.run_id, latestRunResultDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
+    : "";
   const latestFrameUrl =
     liveRun?.frameUrl ??
-    (runResult?.run_manifest.run_id && latestDetection
-      ? runFrameImageUrl(runResult.run_manifest.run_id, latestDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
-      : cameraPreviewUrl);
+    (setupProbeFrameUrl || latestRunResultFrameUrl || cameraPreviewUrl);
   const latestFrameShape =
     liveRun?.frameShape ??
+    (setupProbeDetection ? probe?.frame.shape ?? cameraPreview?.shape ?? activeSourceShape : null) ??
     runResult?.run_manifest.frame_records[runResult.run_manifest.frame_records.length - 1]?.shape ??
     activeSourceShape;
+  const latestFrameTitle = liveRun?.detectionResult
+    ? `${t("Real camera run")} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
+    : setupProbeDetection
+      ? `${t("Current frame probe")} · ${t("frame")} ${setupProbeDetection.frame_index}`
+      : latestDetection
+        ? `${t("Real camera run")} · ${t("frame")} ${latestDetection.frame_index}`
+        : activeFrameTitle;
   const serialPortOptions = uniqueStrings([
     operatorSettings.serialPort ?? "",
     measurement.detector_config.temperature_serial_port ?? "",
@@ -1812,6 +1869,9 @@ function OperatorRunPage({
   ]);
   const currentTemperature = temperatureStatus?.reading.celsius ?? latestDetection?.temperature_celsius ?? null;
   const cameraOk = (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "") === "ok";
+  const hasMeasurementRoi = measurement.roi.width > 0 && measurement.roi.height > 0;
+  const probeCurrentFrameDisabled = probing || runningCamera || !cameraOk || !hasMeasurementRoi;
+  const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
 
   function changeObjectClass(value: string) {
     const option = OBJECT_CLASS_OPTIONS.find((item) => item.value === value);
@@ -1856,6 +1916,21 @@ function OperatorRunPage({
             <Metric label="Live display" value={cameraPreviewState?.mode === "frozen" ? "Paused" : "Live"} />
           </dl>
           {cameraPreviewError && !cameraOk ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
+          <button
+            className="primaryButton"
+            disabled={probeCurrentFrameDisabled}
+            onClick={onProbeRealCameraSetup}
+            type="button"
+          >
+            <SquareDashedMousePointer size={16} aria-hidden="true" />
+            {probing ? t("Probing") : t("Probe current frame")}
+          </button>
+          {runningCamera ? <div className="inlineWarning">{t("Single-frame probing is disabled during a live test")}</div> : null}
+          {setupProbeSummary ? (
+            <div className={setupProbeDetection?.detection_status === "VALID" ? "inlineSuccess" : "inlineWarning"}>
+              {setupProbeSummary}
+            </div>
+          ) : null}
         </div>
         <OperatorTemperaturePanel
           currentTemperature={currentTemperature}
@@ -1896,7 +1971,7 @@ function OperatorRunPage({
       <section className="operatorVisualStack">
         {latestFrameUrl ? (
           <FrameCanvas
-            title={latestDetection ? `${t("Real camera run")} · ${t("frame")} ${latestDetection.frame_index}` : activeFrameTitle}
+            title={latestFrameTitle}
             imageUrl={latestFrameUrl}
             sourceShape={latestFrameShape}
             roi={measurement.roi}
@@ -5604,6 +5679,14 @@ function mergeLiveAfasPreprocessing(
 function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized", language: UiLanguage = "en"): string {
   const value = distanceForResultSource(result, source);
   return value == null ? uiNone(language) : `${value.toFixed(2)}${uiNumberSuffix(language, " px")}`;
+}
+
+function operatorProbeSummary(result: DetectionResult, language: UiLanguage): string {
+  if (result.detection_status === "VALID") {
+    return `${uiText(language, "Current frame probe valid")}: ${uiText(language, "Distance")} ${formatDistance(result, result.result_display_source ?? "stabilized", language)}`;
+  }
+  const reason = result.rejected_reason || result.detection_status || uiNone(language);
+  return `${uiText(language, "Current frame probe invalid")}: ${localizeDisplayString(reason, language)}`;
 }
 
 function formatTemperature(result: DetectionResult | null, language: UiLanguage = "en"): string {
