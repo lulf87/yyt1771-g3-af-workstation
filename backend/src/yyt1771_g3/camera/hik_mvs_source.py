@@ -529,7 +529,7 @@ def _load_sdk_module_from_source(module_source: Path, library_path: Path) -> Any
 
 def _patch_sdk_load_library_source(source_text: str, library_path: str) -> str:
     patched = source_text
-    escaped = library_path.replace("\\", "\\\\")
+    literal = repr(library_path)
     replacements = [
         "/usr/local/lib/libMvCameraControl.dylib",
         "libMvCameraControl.dylib",
@@ -541,9 +541,9 @@ def _patch_sdk_load_library_source(source_text: str, library_path: str) -> str:
     ]
     for needle in replacements:
         for quote in ('"', "'"):
-            patched = patched.replace(f"LoadLibrary({quote}{needle}{quote})", f"LoadLibrary(r{quote}{escaped}{quote})")
-            patched = patched.replace(f"CDLL({quote}{needle}{quote})", f"CDLL(r{quote}{escaped}{quote})")
-            patched = patched.replace(f"WinDLL({quote}{needle}{quote})", f"WinDLL(r{quote}{escaped}{quote})")
+            patched = patched.replace(f"LoadLibrary({quote}{needle}{quote})", f"LoadLibrary({literal})")
+            patched = patched.replace(f"CDLL({quote}{needle}{quote})", f"CDLL({literal})")
+            patched = patched.replace(f"WinDLL({quote}{needle}{quote})", f"WinDLL({literal})")
     return patched
 
 

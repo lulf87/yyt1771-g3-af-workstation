@@ -231,6 +231,32 @@ def test_patch_sdk_load_library_source_supports_dylib_so_and_dll() -> None:
     assert "MvCameraControl.dll" in patched
 
 
+def test_patch_sdk_load_library_source_preserves_windows_backslashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library_path = r"C:\Program Files (x86)\MVS\Development\Libraries\win64\MvCameraControl.dll"
+    source_text = "\n".join(
+        [
+            "import ctypes",
+            'loaded = ctypes.cdll.LoadLibrary("/usr/local/lib/libMvCameraControl.dylib")',
+        ]
+    )
+    loaded_paths: list[str] = []
+
+    def fake_load_library(path: str):  # noqa: ANN202
+        loaded_paths.append(path)
+        return SimpleNamespace(path=path)
+
+    monkeypatch.setattr("ctypes.cdll.LoadLibrary", fake_load_library)
+
+    patched = mvs._patch_sdk_load_library_source(source_text, library_path)
+    namespace: dict[str, Any] = {}
+    exec(compile(patched, "<patched_mvs_sdk>", "exec"), namespace)
+
+    assert loaded_paths == [library_path]
+    assert namespace["loaded"].path == library_path
+
+
 def os_path_entries() -> list[str]:
     return [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
 

@@ -128,6 +128,8 @@ Windows 真实硬件模式可通过 sdk_python_paths / sdk_library_dir / sdk_lib
 - 2026-07-07: `/api/operator/source-status` 接入 SDK loadability 和串口可见性；missing SDK / missing COM 使真实硬件状态不可用。
 - 2026-07-07: 新增 `/api/temperature/ports` alias，保留 `/api/temperature/serial-ports`；显式选择不存在串口时返回 `Serial port COM3 is not available`。
 - 2026-07-07: 新增 Windows real/simulated hardware YAML 示例、PowerShell bootstrap/start/check scripts、Windows setup 文档和 `windows-latest` GitHub Actions smoke job。
+- 2026-07-07: 修复 PR #2 Windows smoke 中 Hik MVS official binding override 的 Windows 反斜杠路径问题；`_patch_sdk_load_library_source` 改用 Python 字符串字面量生成，避免 `r"..."` 与预转义反斜杠叠加导致 `LoadLibrary` 收到错误路径。
+- 2026-07-07: 新增 Windows runtime text asset hidden Unicode 检查，覆盖 Windows 文档、YAML、PowerShell 脚本、CI workflow 和相关 backend/frontend 测试/客户端文件，防止 bidi/control/zero-width 字符进入 CI 资产。
 
 #### Verification log
 
@@ -136,6 +138,10 @@ Windows 真实硬件模式可通过 sdk_python_paths / sdk_library_dir / sdk_lib
 - 2026-07-07: `PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_real_hardware_config backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_missing_windows_sdk backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_backend backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_temperature backend/tests/integration/test_camera_api.py::test_temperature_ports_alias_returns_discovered_windows_com_ports backend/tests/integration/test_camera_api.py::test_temperature_status_endpoint_reports_missing_selected_com_port -q` 通过，6 passed。
 - 2026-07-07: `npm test` 通过，76 passed；`npm run build` 通过。
 - 2026-07-07: 本机 macOS 未安装 `pwsh`，PowerShell 脚本在本地通过静态 asset tests 覆盖；实际 PowerShell parser syntax check 已加入 `.github/workflows/ci.yml` 的 `windows-latest` job。
+- 2026-07-07: 下载并检查 GitHub Actions run `28877499613` / job `85656471509` 日志，失败点为 `backend/tests/unit/test_camera_lazy_import.py::test_hik_sdk_loader_uses_profile_library_path_override_for_official_binding`，traceback 显示 patched SDK source 传入 `C:\\Users\\...\\libMvCameraControl.dylib`，mock 期望单反斜杠语义路径。
+- 2026-07-07: 新增回归测试 `test_patch_sdk_load_library_source_preserves_windows_backslashes`；修复前本地按预期失败，修复后与原 CI 失败用例一起通过：`PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit/test_camera_lazy_import.py::test_patch_sdk_load_library_source_preserves_windows_backslashes backend/tests/unit/test_camera_lazy_import.py::test_hik_sdk_loader_uses_profile_library_path_override_for_official_binding -q`，2 passed。
+- 2026-07-07: 本地 Windows smoke 等价后端命令通过：`PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit/test_hardware_config.py backend/tests/unit/test_camera_lazy_import.py backend/tests/unit/test_source_provenance.py backend/tests/unit/test_serial_ports.py backend/tests/unit/test_windows_runtime_assets.py backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_real_hardware_config backend/tests/integration/test_camera_api.py::test_operator_source_status_reports_missing_windows_sdk backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_backend backend/tests/integration/test_camera_api.py::test_operator_real_camera_run_rejects_simulated_temperature backend/tests/integration/test_camera_api.py::test_temperature_ports_alias_returns_discovered_windows_com_ports backend/tests/integration/test_camera_api.py::test_temperature_status_endpoint_reports_missing_selected_com_port -q`，37 passed。
+- 2026-07-07: `git diff --check` 通过；`npm test` 通过，76 passed；`npm run build` 通过。
 
 #### Browser retest log
 
