@@ -159,6 +159,10 @@ export type OperatorSourceStatus = {
   camera_backend?: string;
   temperature_backend: string;
   temperature_serial_port_configured?: boolean;
+  temperature_port_available?: boolean | null;
+  camera_sdk_available?: boolean | null;
+  camera_sdk_error?: string;
+  camera_sdk_details?: Record<string, unknown>;
   offline_datasets_available: boolean;
   errors: string[];
   warnings: string[];

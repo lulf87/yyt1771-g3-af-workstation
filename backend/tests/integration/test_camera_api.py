@@ -580,6 +580,12 @@ def test_operator_source_status_reports_real_hardware_config(monkeypatch) -> Non
         ),
     )
     monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+    monkeypatch.setattr(
+        api_main,
+        "get_hik_mvs_sdk_status",
+        lambda profile: {"available": True, "error": "", "details": {"platform": "Windows"}},
+    )
+    monkeypatch.setattr(api_main, "_temperature_port_available", lambda port: True)
 
     client = TestClient(api_main.app)
     response = client.get("/api/operator/source-status")
@@ -591,6 +597,58 @@ def test_operator_source_status_reports_real_hardware_config(monkeypatch) -> Non
     assert payload["real_temperature_available"] is True
     assert payload["camera_is_simulated"] is False
     assert payload["temperature_is_simulated"] is False
+    assert payload["camera_sdk_available"] is True
+    assert payload["temperature_port_available"] is True
+
+
+def test_operator_source_status_reports_missing_windows_sdk(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, SerialPortConfig, TempConfig
+
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="hik_gige_mvs",
+                sdk_python_paths=["C:/Program Files (x86)/MVS/Development/Samples/Python/MvImport"],
+                sdk_library_dir="C:/Program Files (x86)/MVS/Development/Libraries/win64",
+                sdk_library_path="C:/Program Files (x86)/MVS/Development/Libraries/win64/MvCameraControl.dll",
+                model="MV-CA060-11GM",
+                serial_number="DEV-001",
+            ),
+            temp=TempConfig(
+                backend="lu92xx_modbus_rtu",
+                serial=SerialPortConfig(port="COM3"),
+            ),
+        ),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+    monkeypatch.setattr(
+        api_main,
+        "get_hik_mvs_sdk_status",
+        lambda profile: {
+            "available": False,
+            "error": (
+                "Hik MVS SDK is not available on Windows. Install MVS, set camera.sdk_python_paths "
+                "to the MvImport directory, and set camera.sdk_library_dir to the folder containing "
+                "MvCameraControl.dll."
+            ),
+            "details": {"platform": "Windows", "HIK_MVS_LIBRARY_DIR": ""},
+        },
+    )
+    monkeypatch.setattr(api_main, "_temperature_port_available", lambda port: True)
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/operator/source-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["real_hardware_available"] is False
+    assert payload["real_camera_available"] is False
+    assert payload["real_temperature_available"] is True
+    assert payload["camera_sdk_available"] is False
+    assert "Hik MVS SDK is not available on Windows" in payload["errors"][0]
 
 
 def test_operator_source_status_reports_simulated_camera_and_temperature(monkeypatch) -> None:  # noqa: ANN001
@@ -700,6 +758,50 @@ def test_operator_real_camera_run_rejects_simulated_backend(monkeypatch, tmp_pat
     assert response.json()["detail"]["source_status"]["real_hardware_available"] is False
 
 
+def test_operator_real_camera_run_rejects_simulated_temperature(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig
+
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="hik_gige_mvs",
+                model="MV-CA060-11GM",
+                serial_number="DEV-001",
+            ),
+            temp=TempConfig(backend="simulated_temperature"),
+        ),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+    monkeypatch.setattr(
+        api_main,
+        "get_hik_mvs_sdk_status",
+        lambda profile: {"available": True, "error": "", "details": {"platform": "Windows"}},
+    )
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/real-camera-runs",
+        json={
+            "operator_mode": True,
+            "operator_data_source": "real_camera",
+            "max_frames": 1,
+            "target_fps": 8.0,
+            "camera_profile": {"backend": "hik_gige_mvs", "pixel_format": "mono8"},
+            "measurement_definition": _operator_measurement_payload("operator-real-run-temp-guard"),
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["source_status"]["real_camera_available"] is True
+    assert detail["source_status"]["real_temperature_available"] is False
+    assert "temperature backend is simulated" in detail["source_status"]["errors"]
+
+
 def test_temperature_status_endpoint_reads_configured_controller(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
     from yyt1771_g3.api import main as api_main
@@ -760,6 +862,27 @@ def test_temperature_serial_ports_endpoint_returns_discovered_ports(monkeypatch)
     assert response.json()["ports"][0]["device"] == "COM5"
 
 
+def test_temperature_ports_alias_returns_discovered_windows_com_ports(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.temperature.serial_ports import SerialPortInfo
+
+    monkeypatch.setattr(
+        api_main,
+        "list_serial_ports",
+        lambda: [
+            SerialPortInfo(device="COM3", name="COM3", description="USB Serial", hwid="VID:PID"),
+            SerialPortInfo(device="COM10", name="COM10", description="USB Serial", hwid="VID:PID"),
+        ],
+    )
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: api_main.HardwareConfig())
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/ports")
+
+    assert response.status_code == 200
+    assert [port["device"] for port in response.json()["ports"]] == ["COM3", "COM10"]
+
+
 def test_temperature_serial_ports_endpoint_includes_configured_port(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.core.hardware_config import HardwareConfig, SerialPortConfig, TempConfig
@@ -781,6 +904,24 @@ def test_temperature_serial_ports_endpoint_includes_configured_port(monkeypatch)
 
     assert response.status_code == 200
     assert [port["device"] for port in response.json()["ports"]] == ["COM5", "/dev/ttys000"]
+
+
+def test_temperature_status_endpoint_reports_missing_selected_com_port(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.temperature.serial_ports import SerialPortInfo
+
+    monkeypatch.setattr(
+        api_main,
+        "list_serial_ports",
+        lambda: [SerialPortInfo(device="COM4", name="COM4", description="USB Serial", hwid="VID:PID")],
+    )
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/status", params={"port": "COM3"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Serial port COM3 is not available"
 
 
 def test_real_camera_run_endpoint_passes_temperature_controller_and_profile(monkeypatch, tmp_path) -> None:  # noqa: ANN001

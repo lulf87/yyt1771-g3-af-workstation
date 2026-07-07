@@ -36,6 +36,10 @@ camera:
   gain_db: 0.0
   timeout_ms: 1000
   target_frame_rate_hz: 10
+  sdk_python_paths:
+    - "C:/Program Files (x86)/MVS/Development/Samples/Python/MvImport"
+  sdk_library_dir: "C:/Program Files (x86)/MVS/Development/Libraries/win64"
+  sdk_library_path: "C:/Program Files (x86)/MVS/Development/Libraries/win64/MvCameraControl.dll"
   device_roi:
     x: 512
     y: 342
@@ -79,6 +83,9 @@ run:
     assert config.camera.backend == "hik_gige_mvs"
     assert config.camera.device_roi.width == 2048
     assert config.camera.target_frame_rate_hz == 10.0
+    assert config.camera.sdk_python_paths == ["C:/Program Files (x86)/MVS/Development/Samples/Python/MvImport"]
+    assert config.camera.sdk_library_dir == "C:/Program Files (x86)/MVS/Development/Libraries/win64"
+    assert config.camera.sdk_library_path == "C:/Program Files (x86)/MVS/Development/Libraries/win64/MvCameraControl.dll"
     assert config.temp.serial.port == "COM5"
     assert config.temp.register_map.process_value.start_address == 264
     assert config.temp.register_map.target_or_stop_value.encode_scale == 10.0
@@ -88,6 +95,32 @@ run:
     assert config.run.save_raw_frames is True
     assert config.run.save_preview_frames is False
     assert config.run.preview_max_width == 960
+
+
+def test_load_hardware_config_preserves_windows_paths_and_com10(tmp_path: Path) -> None:
+    config_path = tmp_path / "realcamera_temp.windows.local.yaml"
+    config_path.write_text(
+        """
+camera:
+  backend: hik_gige_mvs
+  sdk_python_paths:
+    - "D:/Hikrobot/MVS/Development/Samples/Python/MvImport"
+  sdk_library_dir: "D:/Hikrobot/MVS/Development/Libraries/win64"
+  sdk_library_path: "D:/Hikrobot/MVS/Development/Libraries/win64/MvCameraControl.dll"
+temp:
+  backend: lu92xx_modbus_rtu
+  serial:
+    port: "COM10"
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_hardware_config(config_path)
+
+    assert config.camera.sdk_python_paths == ["D:/Hikrobot/MVS/Development/Samples/Python/MvImport"]
+    assert config.camera.sdk_library_dir == "D:/Hikrobot/MVS/Development/Libraries/win64"
+    assert config.camera.sdk_library_path == "D:/Hikrobot/MVS/Development/Libraries/win64/MvCameraControl.dll"
+    assert config.temp.serial.port == "COM10"
 
 
 def test_load_hardware_config_reads_simulated_temperature_settings(tmp_path: Path) -> None:

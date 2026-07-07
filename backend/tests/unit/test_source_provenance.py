@@ -112,6 +112,46 @@ def test_operator_source_status_requires_real_camera_and_real_temperature() -> N
     assert status["errors"] == []
 
 
+def test_operator_source_status_marks_missing_sdk_unavailable() -> None:
+    status = operator_source_status(
+        camera_profile={
+            "backend": "hik_gige_mvs",
+            "model": "MV-CA060-11GM",
+            "serial_number": "DEV-001",
+        },
+        temperature_backend="lu92xx_modbus_rtu",
+        temperature_serial_port="COM3",
+        camera_sdk_available=False,
+        camera_sdk_error="MvCameraControl.dll not found",
+    )
+
+    assert status["real_hardware_available"] is False
+    assert status["real_camera_available"] is False
+    assert status["real_temperature_available"] is True
+    assert status["camera_sdk_available"] is False
+    assert "MvCameraControl.dll not found" in status["errors"]
+
+
+def test_operator_source_status_marks_missing_temperature_port_unavailable() -> None:
+    status = operator_source_status(
+        camera_profile={
+            "backend": "hik_gige_mvs",
+            "model": "MV-CA060-11GM",
+            "serial_number": "DEV-001",
+        },
+        temperature_backend="lu92xx_modbus_rtu",
+        temperature_serial_port="COM3",
+        camera_sdk_available=True,
+        temperature_port_available=False,
+    )
+
+    assert status["real_hardware_available"] is False
+    assert status["real_camera_available"] is True
+    assert status["real_temperature_available"] is False
+    assert status["temperature_port_available"] is False
+    assert "Serial port COM3 is not available" in status["errors"]
+
+
 def test_operator_source_status_rejects_simulated_dataset_camera() -> None:
     status = operator_source_status(
         camera_profile={

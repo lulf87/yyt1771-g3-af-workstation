@@ -139,6 +139,10 @@ def operator_source_status(
     temperature_backend: str | None = None,
     temperature_source: str | None = None,
     temperature_serial_port: str | None = None,
+    camera_sdk_available: bool | None = None,
+    camera_sdk_error: str = "",
+    camera_sdk_details: dict[str, Any] | None = None,
+    temperature_port_available: bool | None = None,
     offline_datasets_available: bool = False,
     offline_dataset_error: str = "",
 ) -> dict[str, Any]:
@@ -158,8 +162,13 @@ def operator_source_status(
     real_temperature_backend = _normalized(temperature) in REAL_TEMPERATURE_BACKENDS
     camera_is_simulated = bool(provenance.get("camera_is_simulated", False))
     temperature_is_simulated = bool(provenance.get("temperature_is_simulated", False))
-    real_camera_available = real_camera_backend and not camera_is_simulated
-    real_temperature_available = real_temperature_backend and not temperature_is_simulated and serial_configured
+    real_camera_available = real_camera_backend and not camera_is_simulated and camera_sdk_available is not False
+    real_temperature_available = (
+        real_temperature_backend
+        and not temperature_is_simulated
+        and serial_configured
+        and temperature_port_available is not False
+    )
     errors: list[str] = []
     warnings: list[str] = []
     if not real_camera_available:
@@ -167,6 +176,8 @@ def operator_source_status(
             errors.append("camera backend is simulated")
         if not real_camera_backend:
             errors.append("camera backend is not a supported real hardware backend")
+        if real_camera_backend and not camera_is_simulated and camera_sdk_available is False:
+            errors.append(camera_sdk_error or "Hik MVS SDK is not available")
     if not real_temperature_available:
         if temperature_is_simulated:
             errors.append("temperature backend is simulated")
@@ -174,6 +185,8 @@ def operator_source_status(
             errors.append("temperature backend is not a supported real controller backend")
         if real_temperature_backend and not serial_configured:
             errors.append("temperature serial port is not configured")
+        if real_temperature_backend and serial_configured and temperature_port_available is False:
+            errors.append(f"Serial port {str(temperature_serial_port or '').strip()} is not available")
     if offline_dataset_error:
         warnings.append(offline_dataset_error)
 
@@ -188,6 +201,10 @@ def operator_source_status(
         "camera_backend": camera_backend,
         "temperature_backend": temperature,
         "temperature_serial_port_configured": serial_configured,
+        "temperature_port_available": temperature_port_available,
+        "camera_sdk_available": camera_sdk_available,
+        "camera_sdk_error": camera_sdk_error,
+        "camera_sdk_details": camera_sdk_details or {},
         "offline_datasets_available": offline_datasets_available,
         "errors": errors,
         "warnings": warnings,
