@@ -92,6 +92,7 @@
 | P-0074 | RESOLVED_BROWSER_VERIFIED | P0 | backend / real camera storage / export | 真实采集默认每帧保存完整 raw `.npy`，长时间运行会快速占满磁盘 | 2026-07-07 | 2026-07-07 | Codex | 模拟相机+模拟温控真实浏览器 Run→Stop→Analysis→Export 复测通过，217 帧 raw_frame_count=0，仅保存 latest preview |
 | P-0075 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / operator mode / export import | 需要新增实际使用界面模式并支持导出文件历史导入 | 2026-07-07 | 2026-07-07 | Codex | Operator Mode Run→Stop→Results Export→History Import + Engineering Mode 浏览器复测已通过 |
 | P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
+| P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
 
 ---
 
@@ -7948,6 +7949,94 @@ Result: PASS, 152 passed in 114.59s.
   - `output/playwright/p0069_operator_offline_export_20260707.zip`
   - `output/playwright/p0069_operator_import_20260707.png`
   - `output/playwright/p0069_engineering_mode_preserved_20260707.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0077 — Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/main.tsx`, `frontend/tests/operatorProbeUi.test.mjs`
+- Found date: 2026-07-07
+- Last update: 2026-07-07
+- Owner/tool: Codex
+
+#### Problem
+
+用户在 Operator Mode / 实际使用 / 实时测试页截图中标出两处来源 provenance 提示卡：左侧数据来源区域下方和右侧图像上方均显示“模拟相机 + 模拟温控 / G3 simulated dataset camera / 当前相机后端为模拟相机，请勿作为真实测试数据”。该提示在实时测试主工作流中过于醒目且重复，用户要求去除。
+
+#### Expected
+
+```text
+Operator 实时测试页不再显示截图中红框标出的来源提示卡。
+不改变后端 provenance 数据、不改变开始按钮模拟/真实语义、不改变导出/导入中来源追溯能力。
+结果页和历史导入页仍可显示来源 badge / warning，用于导出和导入结果追溯。
+```
+
+#### Actual
+
+修复前 `OperatorRunPage` 在左侧控制面板和右侧视觉区域各渲染一个带 warning 的 `SourceProvenanceBadge`；实时趋势标题旁还保留一个紧凑来源 badge。
+
+#### Root cause
+
+P-0076 引入 provenance badge 时为了确保来源醒目，在 Operator 实时页多个位置重复展示。用户后续确认实时测试页不需要这些提示卡。
+
+#### Fix summary
+
+- `frontend/src/main.tsx`
+  - 移除 Operator 实时测试页左侧控制面板中的 `SourceProvenanceBadge`。
+  - 移除右侧图像上方的紧凑 `SourceProvenanceBadge`。
+  - 移除实时趋势标题旁的紧凑 `SourceProvenanceBadge`，只保留普通小字来源标签。
+  - 删除仅供实时页 badge 使用的 `operatorSourceWarning()`。
+- `frontend/tests/operatorProbeUi.test.mjs`
+  - 更新源码级 UI 不变量，确认 Operator 实时页不再渲染 `sourceProvenance` badge，也不再绑定 `sourceWarning`。
+
+#### Tests run
+
+```bash
+cd frontend && npm test -- --runInBand
+Result: PASS, 72 passed.
+
+cd frontend && npm run build
+Result: PASS.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-07
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `sim-sim` hardware profile; simulated camera source backed by `golden_a_20260522_dev_lab`
+- Page: Operator Mode / 实时测试
+- Steps:
+  1. Start/reuse app with `scripts/g3_fast_start.sh sim-sim --no-open`.
+  2. Open `http://127.0.0.1:5176/?mode=operator`.
+  3. Set `localStorage["yyt1771-g3-operator-source"] = "real_camera"` and reload.
+  4. Verify left panel still shows data source selector and real camera status.
+  5. Verify the left provenance warning card is absent.
+  6. Verify the right-side image area no longer has the provenance warning card above the frame.
+  7. Verify live trend header no longer contains the compact provenance badge card; only a small source label remains.
+- Expected:
+  - The two screenshot-highlighted prompt cards are gone.
+  - Operator current-frame probe button and live camera display remain available.
+  - No measurement/provenance backend fields are changed.
+- Actual:
+  - Expected UI checks passed.
+  - Screenshot evidence shows the prompt cards removed.
+  - Browser console still showed intermittent `/api/camera/preview` 409 entries; this is the pre-existing P-0068 preview polling issue and is not introduced by this UI-only change.
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0077_operator_source_prompt_removed_20260707.png`
 
 #### Final status
 

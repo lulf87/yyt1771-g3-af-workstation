@@ -1981,7 +1981,6 @@ function OperatorRunPage({
     liveRun,
     runResult
   });
-  const sourceWarning = operatorSourceWarning(operatorDataSource, sourceProvenance, language);
   const setupProbeDetection = !operatorRunActive && probe ? probe.detection_result : null;
   const latestRunResultDetection = runResult?.run_manifest.detection_results.length
     ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
@@ -2045,7 +2044,6 @@ function OperatorRunPage({
           onDataset={onSelectedDataset}
           onSource={onOperatorDataSource}
         />
-        <SourceProvenanceBadge provenance={sourceProvenance} language={language} warning={sourceWarning} />
         <div className="controlStack">
           <h3>{t("Test object")}</h3>
           <label className="field">
@@ -2135,7 +2133,6 @@ function OperatorRunPage({
         </div>
       </section>
       <section className="operatorVisualStack">
-        <SourceProvenanceBadge provenance={sourceProvenance} language={language} compact warning={sourceWarning} />
         {latestFrameUrl ? (
           <FrameCanvas
             title={latestFrameTitle}
@@ -2161,7 +2158,6 @@ function OperatorRunPage({
               <h2>{t("Live Trend")}</h2>
               <p>{provenanceLabel(sourceProvenance, language)}</p>
             </div>
-            <SourceProvenanceBadge provenance={sourceProvenance} language={language} compact />
             <div className="runTrendStatusLabel">{liveRun?.status === "running" ? t("Current run so far") : t("Full run")}</div>
           </div>
           {latestAnalysis ? (
@@ -5675,23 +5671,6 @@ function currentSourceProvenance({
     cameraPreview?.provenance ??
     unknownFallbackProvenance()
   );
-}
-
-function operatorSourceWarning(
-  source: OperatorDataSource,
-  provenance: SourceProvenance | null | undefined,
-  language: UiLanguage
-): string {
-  if (source === "offline_dataset") {
-    return uiText(
-      language,
-      "Offline/simulated material is active. Use this only for UI or algorithm debugging; it is not real test data."
-    );
-  }
-  if (provenance?.camera_is_simulated) {
-    return uiText(language, "Current camera backend is simulated. Do not use this as real test data.");
-  }
-  return sourceProvenanceWarning(provenance, language);
 }
 
 function sourceProvenanceWarning(

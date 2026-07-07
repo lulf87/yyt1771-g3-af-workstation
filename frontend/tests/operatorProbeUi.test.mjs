@@ -74,7 +74,9 @@ test("operator current-frame probe result drives image overlay without engineeri
   assert.match(operatorPage, /abPoints=\{latestDetection\?\.ab_points \?\? null\}/);
   assert.match(operatorPage, /debugArtifacts=\{latestDetection\?\.debug_artifacts \?\? null\}/);
   assert.match(operatorPage, /operatorProbeSummary\(setupProbeDetection, language\)/);
-  assert.match(operatorPage, /<SourceProvenanceBadge provenance=\{sourceProvenance\}/);
+  assert.doesNotMatch(operatorPage, /<SourceProvenanceBadge provenance=\{sourceProvenance\}/);
+  assert.doesNotMatch(operatorPage, /warning=\{sourceWarning\}/);
+  assert.doesNotMatch(operatorPage, /operatorSourceWarning/);
   assert.doesNotMatch(operatorPage, /SetupProbeStatus/);
   assert.doesNotMatch(operatorPage, /Probe Result/);
 });
