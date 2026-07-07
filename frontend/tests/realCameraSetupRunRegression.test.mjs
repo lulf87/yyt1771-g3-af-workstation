@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execTscSync } from "./tscTestHelper.mjs";
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test, { after } from "node:test";
@@ -17,8 +17,8 @@ after(() => {
 async function loadSetupSourcesModule() {
   rmSync(setupOutDir, { recursive: true, force: true });
   mkdirSync(setupOutDir, { recursive: true });
-  execFileSync(
-    resolve(rootDir, "node_modules/.bin/tsc"),
+  execTscSync(
+    rootDir,
     [
       "--target",
       "ES2020",
@@ -42,8 +42,8 @@ async function loadSetupSourcesModule() {
 async function loadApiClientModule() {
   rmSync(apiOutDir, { recursive: true, force: true });
   mkdirSync(apiOutDir, { recursive: true });
-  execFileSync(
-    resolve(rootDir, "node_modules/.bin/tsc"),
+  execTscSync(
+    rootDir,
     [
       "--target",
       "ES2020",

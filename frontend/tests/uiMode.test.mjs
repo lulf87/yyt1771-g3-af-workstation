@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execTscSync } from "./tscTestHelper.mjs";
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test, { after } from "node:test";
@@ -15,8 +15,8 @@ after(() => {
 async function loadUiModeModule() {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  execFileSync(
-    resolve(rootDir, "node_modules/.bin/tsc"),
+  execTscSync(
+    rootDir,
     [
       "--target",
       "ES2020",

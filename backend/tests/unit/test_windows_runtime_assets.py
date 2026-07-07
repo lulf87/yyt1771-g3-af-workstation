@@ -24,7 +24,7 @@ WINDOWS_RUNTIME_TEXT_ASSETS = [
     ROOT / "backend" / "tests" / "unit" / "test_windows_runtime_assets.py",
     ROOT / "backend" / "tests" / "integration" / "test_camera_api.py",
     ROOT / "frontend" / "src" / "api" / "client.ts",
-    ROOT / "frontend" / "tests" / "operatorProbeUi.test.mjs",
+    *sorted((ROOT / "frontend" / "tests").glob("*.mjs")),
     *sorted((ROOT / "scripts" / "windows").glob("*.ps1")),
 ]
 
