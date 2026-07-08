@@ -20,6 +20,7 @@ from yyt1771_g3.core.models import (
     TemperatureRecord,
 )
 from yyt1771_g3.core.enums import (
+    CurvePointStatus,
     DetectionStatus,
     DetectorType,
     MeasurementCoordinateKind,
@@ -44,19 +45,64 @@ def test_measurement_definition_json_round_trip() -> None:
     payload = measurement.model_dump(mode="json")
 
     assert payload["measurement_coordinates"] == "source_pixel"
+    assert payload["detector_mode"] == "default"
     assert payload["roi"]["type"] == "rotated_rect"
     assert payload["detector_config"]["tie_width_epsilon_px"] == 2.0
     assert MeasurementDefinition.model_validate(payload) == measurement
 
 
+def test_measurement_definition_defaults_missing_detector_mode_for_legacy_payloads() -> None:
+    payload = {
+        "measurement_id": "legacy-c-default",
+        "object_class": "C_BUNDLE_ENVELOPE",
+        "detector": "BundleEnvelopeDetector",
+        "width_mode": "max_width",
+        "measurement_coordinates": "source_pixel",
+        "roi": {
+            "type": "rotated_rect",
+            "center_x": 20.0,
+            "center_y": 20.0,
+            "width": 30.0,
+            "height": 12.0,
+            "angle_deg": 0.0,
+        },
+    }
+
+    measurement = MeasurementDefinition.model_validate(payload)
+
+    assert measurement.detector_mode == "default"
+    assert measurement.object_class == ObjectClass.C_BUNDLE_ENVELOPE
+    assert measurement.detector == DetectorType.BUNDLE_ENVELOPE
+
+
 def test_detector_config_exposes_basic_contour_and_temporal_controls() -> None:
     config = DetectorConfig()
 
+    assert config.contrast_threshold == 30.0
     assert config.contour_close_kernel == 21
     assert config.contour_close_kernel_px == 21
     assert config.contour_smooth_window == 7
     assert config.temporal_stabilization_enabled is False
     assert config.temporal_stabilization_strength == "medium"
+    assert config.distance_outlier_filter_enabled is True
+    assert config.distance_outlier_reference_count == 5
+    assert config.distance_outlier_max_jump_px == 20.0
+    assert config.distance_outlier_baseline == "median"
+
+
+def test_detector_config_clamps_contrast_threshold() -> None:
+    assert DetectorConfig(contrast_threshold=-5).contrast_threshold == 0.0
+    assert DetectorConfig(contrast_threshold=300).contrast_threshold == 255.0
+
+
+def test_detector_config_clamps_distance_outlier_parameters() -> None:
+    low = DetectorConfig(distance_outlier_reference_count=-1, distance_outlier_max_jump_px=-10)
+    high = DetectorConfig(distance_outlier_reference_count=99, distance_outlier_max_jump_px=999)
+
+    assert low.distance_outlier_reference_count == 1
+    assert low.distance_outlier_max_jump_px == 1.0
+    assert high.distance_outlier_reference_count == 20
+    assert high.distance_outlier_max_jump_px == 200.0
 
 
 def test_rotated_roi_rejects_non_positive_size() -> None:
@@ -99,6 +145,9 @@ def test_detection_result_valid_and_invalid_contracts() -> None:
 
     assert valid.model_dump(mode="json")["detection_status"] == "VALID"
     assert valid.distance_px == 42.0
+    assert valid.measurement_segment == [candidate.a, candidate.b]
+    assert valid.curve_point_status == CurvePointStatus.VALID
+    assert valid.raw_detected_distance_px == 42.0
 
     invalid = DetectionResult(
         frame_index=2,

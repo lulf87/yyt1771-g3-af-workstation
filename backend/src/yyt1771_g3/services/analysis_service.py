@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from yyt1771_g3.core.enums import DetectionStatus, TemperatureSyncStatus
+from yyt1771_g3.core.enums import CurvePointStatus, DetectionStatus, TemperatureSyncStatus
 from yyt1771_g3.core.models import AnalysisResult, CurvePoint, DetectionResult, RunManifest
 from yyt1771_g3.services.afas_analysis import build_afas_postprocessing
 
@@ -83,7 +83,8 @@ def curve_points_for_detection(
     temperature_distance: CurvePoint | None = None
 
     distance_px = _distance_for_source(result, distance_source)
-    if result.detection_status == DetectionStatus.VALID and distance_px is not None:
+    formal_curve_point = _is_formal_curve_point(result)
+    if result.detection_status == DetectionStatus.VALID and distance_px is not None and formal_curve_point:
         distance_time = CurvePoint(
             x=time_x,
             y=float(distance_px),
@@ -100,6 +101,7 @@ def curve_points_for_detection(
     if (
         result.detection_status == DetectionStatus.VALID
         and distance_px is not None
+        and formal_curve_point
         and result.temperature_celsius is not None
         and result.temperature_sync_status in FORMAL_TEMPERATURE_DISTANCE_STATUSES
     ):
@@ -123,3 +125,7 @@ def _distance_for_source(result: DetectionResult, distance_source: str) -> float
     if distance_source == "stabilized":
         return result.stabilized_distance_px
     return result.distance_px
+
+
+def _is_formal_curve_point(result: DetectionResult) -> bool:
+    return result.curve_point_status == CurvePointStatus.VALID

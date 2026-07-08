@@ -51,6 +51,7 @@ export type DetectorConfig = {
   switch_after_n_frames?: number;
   jump_limit_px?: number;
   min_confidence?: number;
+  contrast_threshold?: number;
   dark_enhance_bg_kernel_px?: number;
   hysteresis_low_ratio?: number;
   min_component_area_px?: number;
@@ -76,8 +77,13 @@ export type DetectorConfig = {
   distance_jump_limit_px?: number;
   distance_jump_hold_frames?: number;
   distance_jump_policy?: "hold_previous" | "mark_invalid";
+  distance_outlier_filter_enabled?: boolean;
+  distance_outlier_reference_count?: number;
+  distance_outlier_max_jump_px?: number;
+  distance_outlier_baseline?: "last" | "mean" | "median";
   temporal_stabilization_enabled?: boolean;
   temporal_stabilization_strength?: "weak" | "medium" | "strong";
+  save_temporal_masks?: boolean;
   contour_box_mode?: "component_bbox" | "robust_component_bbox" | "measurement_band";
   contour_box_padding_px?: number;
   contour_box_quantile?: number;
@@ -170,6 +176,7 @@ export type MeasurementDefinition = {
   source: "offline_dataset" | "real_camera";
   object_class: string;
   detector: string;
+  detector_mode?: "default" | "c_envelope_legacy" | "contrast_widest_span";
   width_mode: "max_width" | "min_width";
   measurement_coordinates: "source_pixel";
   roi: RotatedROI;
@@ -195,6 +202,7 @@ export type DetectionResult = {
   frame_index: number;
   detection_status: string;
   ab_points: { a: ABPoint; b: ABPoint } | null;
+  measurement_segment: ABPoint[] | null;
   distance_px: number | null;
   raw_ab_points: { a: ABPoint; b: ABPoint } | null;
   raw_distance_px: number | null;
@@ -213,6 +221,15 @@ export type DetectionResult = {
     jump_from_previous_px: number | null;
   };
   rejected_reason: string;
+  curve_point_status: string;
+  curve_exclusion_reason: string;
+  raw_detected_distance_px: number | null;
+  distance_outlier_filtered: boolean;
+  distance_outlier_baseline_px: number | null;
+  distance_outlier_deviation_px: number | null;
+  distance_outlier_max_jump_px: number | null;
+  distance_outlier_reference_count: number | null;
+  distance_outlier_reference_values: number[];
   debug_artifacts: Record<string, unknown>;
   temperature_sync_status: string;
   frame_timestamp_ms: number | null;
@@ -291,6 +308,16 @@ export type CurvePoint = {
   y: number;
   frame_index: number;
   sync_status: string | null;
+};
+
+export type LivePointStatus = {
+  temperature_distance_present: boolean;
+  temperature_distance_point_count: number;
+  reason_if_missing: string;
+  detection_status: string;
+  curve_point_status: string;
+  temperature_sync_status: string;
+  distance_outlier_filtered: boolean;
 };
 
 export type ExportArtifact = {
@@ -394,12 +421,24 @@ export type LiveOfflineFrameEvent = {
   };
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;
+  live_point_status?: LivePointStatus;
 };
 
 export type LiveOfflineCompleteEvent = {
   event: "complete";
   run_manifest: RunManifest;
   analysis_result: AnalysisResult;
+};
+
+export type LiveOfflineProgressEvent = {
+  event: "stopping" | "saving_manifest" | "building_analysis";
+  run_id: string;
+  dataset_id?: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  processed_frames: number;
+  frame_count: number;
+  total_frames: number;
+  stop_reason?: string;
 };
 
 export type LiveOfflineErrorEvent = {
@@ -410,6 +449,7 @@ export type LiveOfflineErrorEvent = {
 
 export type LiveOfflineRunStreamEvent =
   | LiveOfflineFrameEvent
+  | LiveOfflineProgressEvent
   | LiveOfflineCompleteEvent
   | LiveOfflineErrorEvent;
 

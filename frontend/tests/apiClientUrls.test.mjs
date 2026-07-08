@@ -271,6 +271,7 @@ test("real camera setup probe posts measurement definition and optional frozen f
     source: "real_camera",
     object_class: "A_BALLOON_ENVELOPE",
     detector: "BalloonEnvelopeDetector",
+    detector_mode: "default",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: {
@@ -353,6 +354,7 @@ test("real camera setup probe posts measurement definition and optional frozen f
     const body = JSON.parse(calls[0].init.body);
     assert.equal(body.measurement_definition.source, undefined);
     assert.equal(body.measurement_definition.measurement_id, measurement.measurement_id);
+    assert.equal(body.measurement_definition.detector_mode, "default");
     assert.deepEqual(body.measurement_definition.roi, measurement.roi);
     assert.deepEqual(body.measurement_definition.detector_config, measurement.detector_config);
     assert.equal(body.frame_png_data_url, "data:image/png;base64,frozen");
@@ -618,6 +620,7 @@ test("real camera run posts the saved setup measurement definition without overr
     source: "real_camera",
     object_class: "C_BUNDLE_ENVELOPE",
     detector: "BundleEnvelopeDetector",
+    detector_mode: "contrast_widest_span",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: {
@@ -685,6 +688,7 @@ test("real camera run posts the saved setup measurement definition without overr
     assert.equal(body.measurement_definition.source, undefined);
     assert.equal(body.measurement_definition.measurement_id, measurement.measurement_id);
     assert.equal(body.measurement_definition.detector, measurement.detector);
+    assert.equal(body.measurement_definition.detector_mode, "contrast_widest_span");
     assert.deepEqual(body.measurement_definition.roi, measurement.roi);
     assert.deepEqual(body.measurement_definition.detector_config, measurement.detector_config);
     assert.equal(body.max_frames, 77);

@@ -16,6 +16,7 @@ from yyt1771_g3.core.models import (
     MeasurementDefinition,
     RotatedROI,
 )
+from yyt1771_g3.services import real_camera_run_service as real_service
 from yyt1771_g3.services.real_camera_run_service import _attach_temperature, iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureReading
@@ -321,6 +322,46 @@ def test_real_camera_run_default_sync_tolerance_accepts_serial_temperature_windo
     assert len(result.analysis.temperature_distance) == 2
 
 
+def test_real_camera_run_filters_distance_outliers_before_analysis(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    run_store = RunStore(tmp_path / "runs")
+    distances = {1: 500.0, 2: 503.0, 3: 506.0, 4: 550.0, 5: 520.0}
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        return _valid_detection(frame_index=frame_index, distance=distances[frame_index]), stability_state
+
+    monkeypatch.setattr(real_service, "_detect_frame_for_run", fake_detect)
+    measurement = _real_camera_measurement(max_frames=5).model_copy(
+        update={
+            "detector_config": DetectorConfig(
+                max_frames_per_run=5,
+                distance_outlier_max_jump_px=20.0,
+                distance_outlier_reference_count=5,
+                distance_outlier_baseline="median",
+            )
+        }
+    )
+
+    result = run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        temperature_controller=FakeTemperatureController(),
+        measurement=measurement,
+        max_frames=5,
+        target_fps=10.0,
+    )
+
+    assert [item.curve_point_status for item in result.manifest.detection_results] == [
+        "valid",
+        "valid",
+        "valid",
+        "distance_jump_outlier",
+        "valid",
+    ]
+    assert result.manifest.detection_results[3].detection_status == DetectionStatus.VALID
+    assert result.manifest.detection_results[3].distance_px == 550.0
+    assert [point.frame_index for point in result.analysis.temperature_distance] == [1, 2, 3, 5]
+
+
 def test_real_camera_stream_without_frame_limit_saves_partial_run_on_close(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     measurement = MeasurementDefinition(
@@ -401,6 +442,15 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
         "save_preview_frames": True,
         "preview_path": "preview_frames/latest.png",
     }
+    assert ok_events[0]["live_point_status"] == {
+        "temperature_distance_present": True,
+        "temperature_distance_point_count": 1,
+        "reason_if_missing": "",
+        "detection_status": "VALID",
+        "curve_point_status": "valid",
+        "temperature_sync_status": "TEMP_SYNC_OK",
+        "distance_outlier_filtered": False,
+    }
     ok_run_dir = run_store.run_dir(ok_events[-1]["run_manifest"]["run_id"])
     assert not (ok_run_dir / "raw_frames" / "frame_000001.npy").exists()
     assert (ok_run_dir / "preview_frames" / "latest.png").is_file()
@@ -411,6 +461,15 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
     assert stale_events[0]["sync_config"]["temp_sync_target_ms"] == 10.0
     assert stale_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
     assert stale_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_STALE"
+    assert stale_events[0]["live_point_status"] == {
+        "temperature_distance_present": False,
+        "temperature_distance_point_count": 0,
+        "reason_if_missing": "temperature_sync_not_formal",
+        "detection_status": "VALID",
+        "curve_point_status": "valid",
+        "temperature_sync_status": "TEMP_SYNC_STALE",
+        "distance_outlier_filtered": False,
+    }
 
 
 def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) -> None:
@@ -444,7 +503,17 @@ def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) 
         )
     )
 
-    assert [event["event"] for event in events] == ["frame", "complete"]
+    assert [event["event"] for event in events] == [
+        "frame",
+        "stopping",
+        "saving_manifest",
+        "building_analysis",
+        "complete",
+    ]
+    assert events[1]["run_id"] == events[0]["run_id"]
+    assert events[1]["processed_frames"] == 1
+    assert events[2]["processed_frames"] == 1
+    assert events[3]["processed_frames"] == 1
     run_id = events[0]["run_id"]
     manifest = run_store.read_run_manifest(run_id)
     assert manifest.config_snapshot["max_frames"] is None
@@ -455,6 +524,50 @@ def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) 
     assert source.closed is True
     assert temperature.stopped is True
     assert temperature.closed is True
+
+
+def test_real_camera_stream_does_not_write_temporal_masks_by_default(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = _real_camera_measurement(max_frames=2)
+    measurement.detector_config.temporal_stabilization_enabled = True
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=FakeCameraSource(),
+            temperature_controller=FakeTemperatureController(),
+            measurement=measurement,
+            max_frames=2,
+            target_fps=8.0,
+        )
+    )
+
+    run_dir = run_store.run_dir(events[-1]["run_manifest"]["run_id"])
+    temporal_mask_dir = run_dir / "temporal_masks"
+    assert events[-1]["run_manifest"]["config_snapshot"]["save_temporal_masks"] is False
+    assert not temporal_mask_dir.exists() or list(temporal_mask_dir.glob("*.png")) == []
+
+
+def test_real_camera_stream_writes_temporal_masks_when_enabled(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    measurement = _real_camera_measurement(max_frames=2)
+    measurement.detector_config.temporal_stabilization_enabled = True
+    measurement.detector_config.save_temporal_masks = True
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=FakeCameraSource(),
+            temperature_controller=FakeTemperatureController(),
+            measurement=measurement,
+            max_frames=2,
+            target_fps=8.0,
+        )
+    )
+
+    run_dir = run_store.run_dir(events[-1]["run_manifest"]["run_id"])
+    assert events[-1]["run_manifest"]["config_snapshot"]["save_temporal_masks"] is True
+    assert list((run_dir / "temporal_masks").glob("*.png"))
 
 
 def test_real_camera_stream_stops_when_target_temperature_reached(tmp_path: Path) -> None:
@@ -488,7 +601,14 @@ def test_real_camera_stream_stops_when_target_temperature_reached(tmp_path: Path
         )
     )
 
-    assert [event["event"] for event in events] == ["frame", "frame", "complete"]
+    assert [event["event"] for event in events] == [
+        "frame",
+        "frame",
+        "stopping",
+        "saving_manifest",
+        "building_analysis",
+        "complete",
+    ]
     assert events[0]["total_frames"] == 0
     assert events[1]["processed_frames"] == 2
     manifest = run_store.read_run_manifest(events[-1]["run_manifest"]["run_id"])

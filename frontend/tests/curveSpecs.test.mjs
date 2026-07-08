@@ -734,7 +734,10 @@ test("run trend model breaks invalid and stale points out of the formal curve", 
     { mode: "full", width: 900, height: 420 }
   );
 
-  assert.deepEqual(model.formalSegments, []);
+  assert.deepEqual(
+    model.formalSegments.map((segment) => segment.map((point) => point.frameIndex)),
+    [[1, 2], [5]]
+  );
   assert.deepEqual(
     model.referencePoints.map((point) => point.frameIndex),
     [1, 2, 5]
@@ -785,7 +788,7 @@ test("run trend model explains stale status rugs when no formal temperature-dist
   assert.equal(model.valueStrip.tempSyncTargetMs, 10);
 });
 
-test("run trend model renders raw frame points as scatter while connecting backend smoothed temperatures", async () => {
+test("run trend model uses formal live points as primary while keeping AFAS smoothed preview secondary", async () => {
   const { buildRunTrendModel } = await loadCurveModule();
 
   const model = buildRunTrendModel(
@@ -808,8 +811,8 @@ test("run trend model renders raw frame points as scatter while connecting backe
     { mode: "full", width: 900, height: 420 }
   );
 
-  assert.equal(model.source, "smoothed");
-  assert.equal(model.sourceLabel, "Backend smoothed temperature-distance");
+  assert.equal(model.source, "raw");
+  assert.equal(model.sourceLabel, "Live temperature-distance points");
   assert.deepEqual(
     model.referencePoints.map((point) => [point.frameIndex, point.temperature, point.distance]),
     [
@@ -821,17 +824,127 @@ test("run trend model renders raw frame points as scatter while connecting backe
   );
   assert.deepEqual(
     model.formalPoints.map((point) => point.temperature),
-    [1.20, 1.21, 1.24]
+    [1.20, 1.20, 1.21, 1.24]
   );
   assert.deepEqual(
     model.formalSegments.map((segment) => segment.map((point) => point.temperature)),
-    [[1.20, 1.21, 1.24]]
+    [[1.20, 1.20, 1.21, 1.24]]
   );
+  assert.equal(model.previewSource, "smoothed");
+  assert.equal(model.previewLabel, "AFAS preprocessing preview");
+  assert.deepEqual(
+    model.previewPoints.map((point) => point.temperature),
+    [1.20, 1.21, 1.24]
+  );
+  assert.match(model.previewNote, /batch/i);
   assert.equal(model.latestPoint?.frameIndex, 4);
   assert.equal(model.latestPoint?.source, "raw");
 });
 
-test("run trend y axis keeps pixel jitter from filling the plot", async () => {
+test("run trend model keeps growing formal points when AFAS preview is unchanged", async () => {
+  const { buildRunTrendModel } = await loadCurveModule();
+
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      temperature_distance: [
+        { x: 1.20, y: 500, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+        { x: 1.21, y: 503, frame_index: 2, sync_status: "TEMP_SYNC_OK" },
+        { x: 1.22, y: 506, frame_index: 3, sync_status: "TEMP_SYNC_OK" },
+        { x: 1.23, y: 509, frame_index: 4, sync_status: "TEMP_SYNC_OK" },
+        { x: 1.24, y: 512, frame_index: 5, sync_status: "TEMP_SYNC_OK" }
+      ],
+      afas_preprocessing: {
+        preview_status: "unchanged",
+        smoothed: {
+          temperature_celsius: [1.20, 1.21],
+          values: [500, 503],
+          applied: true
+        }
+      }
+    },
+    { mode: "full", width: 900, height: 420 }
+  );
+
+  assert.equal(model.sourceLabel, "Live temperature-distance points");
+  assert.equal(model.formalPoints.length, 5);
+  assert.equal(model.previewStatus, "unchanged");
+  assert.equal(model.previewPoints.length, 2);
+});
+
+test("run trend model keeps twenty linear live points primary when AFAS smoothed preview is curved", async () => {
+  const { buildRunTrendModel } = await loadCurveModule();
+  const livePoints = Array.from({ length: 20 }, (_, index) => ({
+    x: 20 + index,
+    y: 500 + index * 2,
+    frame_index: index + 1,
+    sync_status: "TEMP_SYNC_OK"
+  }));
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      temperature_distance: livePoints,
+      afas_preprocessing: {
+        preview_status: "updated",
+        smoothed: {
+          temperature_celsius: [20, 24, 28, 32, 36, 39],
+          values: [500, 520, 510, 535, 525, 538],
+          applied: true
+        }
+      }
+    },
+    { mode: "full", width: 900, height: 420 }
+  );
+
+  assert.equal(model.formalPoints.length, 20);
+  assert.deepEqual(
+    model.formalPoints.map((point) => point.distance),
+    livePoints.map((point) => point.y)
+  );
+  assert.equal(model.previewPoints.length, 6);
+  assert.notDeepEqual(
+    model.previewPoints.map((point) => point.distance),
+    model.formalPoints.slice(0, 6).map((point) => point.distance)
+  );
+});
+
+test("run trend temperature gap breaks line segments without hiding formal points", async () => {
+  const { buildRunTrendModel } = await loadCurveModule();
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      all_frames: [
+        {
+          frame_index: 1,
+          detection_status: "VALID",
+          distance_px: 500,
+          temperature_celsius: 20,
+          temperature_sync_status: "TEMP_SYNC_OK"
+        },
+        {
+          frame_index: 2,
+          detection_status: "VALID",
+          distance_px: 505,
+          temperature_celsius: 40,
+          temperature_sync_status: "TEMP_SYNC_OK"
+        }
+      ],
+      temperature_distance: [
+        { x: 20, y: 500, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+        { x: 40, y: 505, frame_index: 2, sync_status: "TEMP_SYNC_OK" }
+      ]
+    },
+    { mode: "full", width: 900, height: 420, maxTemperatureConnectionGapCelsius: 5 }
+  );
+
+  assert.equal(model.formalPoints.length, 2);
+  assert.deepEqual(
+    model.formalSegments.map((segment) => segment.map((point) => point.frameIndex)),
+    [[1], [2]]
+  );
+});
+
+test("run trend y axis reflects formal live points instead of hiding them behind preview", async () => {
   const { buildRunTrendModel } = await loadCurveModule();
 
   const model = buildRunTrendModel(
@@ -855,11 +968,12 @@ test("run trend y axis keeps pixel jitter from filling the plot", async () => {
     { mode: "latest", width: 900, height: 420 }
   );
 
-  assert.ok(model.yRange.max - model.yRange.min >= 40);
-  assert.ok(model.yRange.max < 1040);
+  assert.equal(model.sourceLabel, "Live temperature-distance points");
+  assert.ok(model.yRange.max >= 1068);
+  assert.equal(model.previewPoints.length, 3);
 });
 
-test("run trend y axis ignores a single raw reference outlier when backend formal curve is unavailable", async () => {
+test("run trend y axis uses live formal curve when AFAS preview is unavailable", async () => {
   const { buildRunTrendModel } = await loadCurveModule();
 
   const model = buildRunTrendModel(
@@ -877,9 +991,9 @@ test("run trend y axis ignores a single raw reference outlier when backend forma
   );
 
   assert.equal(model.source, "raw");
+  assert.equal(model.formalPoints.length, 4);
   assert.equal(model.referencePoints.length, 4);
-  assert.ok(model.yRange.max - model.yRange.min >= 40);
-  assert.ok(model.yRange.max < 1030);
+  assert.ok(model.yRange.max >= 1060);
 });
 
 test("run trend sticky y axis expands near guards without shrinking during live updates", async () => {
@@ -922,7 +1036,7 @@ test("run trend model shows the current run so far even when latest mode is requ
   const full = buildRunTrendModel(analysis, { mode: "full", width: 900, height: 420 });
 
   assert.equal(latest.windowMode, "latest");
-  assert.equal(latest.formalPoints.length, 0);
+  assert.equal(latest.formalPoints.length, 140);
   assert.equal(latest.referencePoints.length, 140);
   assert.equal(latest.referencePoints[0].frameIndex, 1);
   assert.equal(latest.latestPoint?.frameIndex, 140);
@@ -932,11 +1046,11 @@ test("run trend model shows the current run so far even when latest mode is requ
     latest.referencePoints.map((point) => point.frameIndex),
     full.referencePoints.map((point) => point.frameIndex)
   );
-  assert.equal(full.formalPoints.length, 0);
+  assert.equal(full.formalPoints.length, 140);
   assert.equal(full.referencePoints.length, 140);
 });
 
-test("run trend model does not crop backend smoothed curve to a local latest temperature window", async () => {
+test("run trend model does not let backend smoothed preview replace the live formal curve", async () => {
   const { buildRunTrendModel } = await loadCurveModule();
   const temperatureDistance = Array.from({ length: 140 }, (_, index) => ({
     x: 20 + index * 0.1,
@@ -958,11 +1072,13 @@ test("run trend model does not crop backend smoothed curve to a local latest tem
 
   const model = buildRunTrendModel(analysis, { mode: "latest", width: 900, height: 420 });
 
-  assert.equal(model.source, "smoothed");
+  assert.equal(model.source, "raw");
+  assert.equal(model.sourceLabel, "Live temperature-distance points");
   assert.deepEqual(
-    model.formalPoints.map((point) => point.temperature),
+    model.previewPoints.map((point) => point.temperature),
     [20, 22, 24, 26, 28, 30, 32, 33.9]
   );
+  assert.equal(model.formalPoints.length, 140);
   assert.equal(model.referencePoints.length, 140);
   assert.ok(model.xRange.min <= 20);
   assert.ok(model.xRange.max >= 33.9);
@@ -974,6 +1090,16 @@ test("run page exposes current-run-so-far status instead of latest/full window b
   assert.match(source, /Current run so far/);
   assert.doesNotMatch(source, /Latest window/);
   assert.doesNotMatch(source, /aria-label="Run trend window"/);
+});
+
+test("run page exposes clear stop progress and AFAS preview semantics", () => {
+  const source = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
+
+  assert.match(source, /Collecting stop request/);
+  assert.match(source, /Saving run data/);
+  assert.match(source, /Building result analysis/);
+  assert.match(source, /AFAS preprocessing preview/);
+  assert.match(source, /batch-updated trend reference/);
 });
 
 test("industrial curve frame model exposes shared Run and Analysis variants with readable text", async () => {

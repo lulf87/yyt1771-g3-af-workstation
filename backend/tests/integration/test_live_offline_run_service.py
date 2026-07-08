@@ -77,13 +77,13 @@ def _write_registry(config_path: Path, dataset_root: Path) -> None:
     )
 
 
-def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object] | None = None) -> DetectionResult:
+def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object] | None = None, distance: float = 50.0) -> DetectionResult:
     candidate = DetectionCandidate(
         candidate_id=f"row-{frame_index}",
         axis_position_px=20.0,
-        width_px=50.0,
+        width_px=distance,
         a=ABPoint(x=35.0, y=20.0),
-        b=ABPoint(x=85.0, y=20.0),
+        b=ABPoint(x=35.0 + distance, y=20.0),
         confidence=0.9,
         metadata={"local_min_along_px": 10.0, "local_max_along_px": 60.0},
     )
@@ -103,6 +103,121 @@ def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object]
             **(debug or {}),
         },
     )
+
+
+def test_live_offline_run_filters_distance_jump_outliers_before_analysis(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=5)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    distances = {1: 500.0, 2: 503.0, 3: 506.0, 4: 550.0, 5: 520.0}
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        return _fake_policy_detection(frame_index, "fast", distance=distances[frame_index]), stability_state
+
+    monkeypatch.setattr(live_service, "_detect_frame_for_run", fake_detect)
+    measurement = MeasurementDefinition(
+        measurement_id="run-distance-outlier-measurement",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            distance_outlier_filter_enabled=True,
+            distance_outlier_reference_count=5,
+            distance_outlier_max_jump_px=20.0,
+            distance_outlier_baseline="median",
+        ),
+    )
+
+    result = run_live_offline_dataset(
+        registry,
+        run_store,
+        dataset_id="golden_run",
+        measurement=measurement,
+        start_frame=1,
+        max_frames=5,
+        target_fps=8.0,
+    )
+
+    detections = result.manifest.detection_results
+    assert [item.curve_point_status for item in detections] == [
+        "valid",
+        "valid",
+        "valid",
+        "distance_jump_outlier",
+        "valid",
+    ]
+    assert detections[3].detection_status == DetectionStatus.VALID
+    assert detections[3].distance_px == 550.0
+    assert detections[3].distance_outlier_filtered is True
+    assert [point.frame_index for point in result.analysis.temperature_distance] == [1, 2, 3, 5]
+    assert result.manifest.config_snapshot["distance_outlier_filter_enabled"] is True
+    assert result.manifest.config_snapshot["distance_outlier_max_jump_px"] == 20.0
+
+
+def test_streamed_live_offline_run_omits_filtered_outlier_from_frame_curve_event(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=4)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    distances = {1: 500.0, 2: 503.0, 3: 506.0, 4: 550.0}
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        return _fake_policy_detection(frame_index, "fast", distance=distances[frame_index]), stability_state
+
+    monkeypatch.setattr(live_service, "_detect_frame_for_run", fake_detect)
+    measurement = MeasurementDefinition(
+        measurement_id="stream-distance-outlier-measurement",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(distance_outlier_max_jump_px=20.0),
+    )
+
+    events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=measurement,
+            start_frame=1,
+            max_frames=4,
+            target_fps=8.0,
+        )
+    )
+
+    frame_events = [event for event in events if event["event"] == "frame"]
+    assert frame_events[-1]["detection_result"]["curve_point_status"] == "distance_jump_outlier"
+    assert frame_events[-1]["curve_points"]["distance_time"] is None
+    assert frame_events[-1]["curve_points"]["temperature_distance"] is None
+    assert frame_events[-1]["curve_points"]["raw_distance_time"] is None
+    assert frame_events[-1]["curve_points"]["raw_temperature_distance"] is None
+    assert frame_events[0]["live_point_status"] == {
+        "temperature_distance_present": True,
+        "temperature_distance_point_count": 1,
+        "reason_if_missing": "",
+        "detection_status": "VALID",
+        "curve_point_status": "valid",
+        "temperature_sync_status": "TEMP_SYNC_OK",
+        "distance_outlier_filtered": False,
+    }
+    assert frame_events[-1]["live_point_status"] == {
+        "temperature_distance_present": False,
+        "temperature_distance_point_count": 3,
+        "reason_if_missing": "distance_outlier_filtered",
+        "detection_status": "VALID",
+        "curve_point_status": "distance_jump_outlier",
+        "temperature_sync_status": "TEMP_SYNC_OK",
+        "distance_outlier_filtered": True,
+    }
 
 
 def test_live_offline_run_saves_manifest_and_analysis(tmp_path: Path) -> None:
@@ -306,7 +421,7 @@ def test_streamed_live_offline_run_saves_partial_result_when_stopped(tmp_path: P
     assert stopped_result.manifest.config_snapshot["stop_reason"] == "stream_closed"
 
 
-def test_streamed_live_offline_run_frame_events_emit_lightweight_smoothed_afas_preview(tmp_path: Path) -> None:
+def test_streamed_live_offline_run_frame_events_defer_smoothed_afas_preview_for_short_runs(tmp_path: Path) -> None:
     dataset_root = tmp_path / "dataset"
     dataset_root.mkdir()
     _write_run_dataset(dataset_root, frame_count=21)
@@ -359,26 +474,13 @@ def test_streamed_live_offline_run_frame_events_emit_lightweight_smoothed_afas_p
         for event in frame_events
         if event["afas_preprocessing"].get("preview_status") == "updated"
     ]
-    assert updated_previews
-    preview = updated_previews[-1]
-    assert set(preview) == {
-        "preview_status",
-        "point_count",
-        "temperature_distance_point_count",
-        "preview_interval_frames",
-        "schema_version",
-        "parameters",
-        "smoothed",
-        "warnings",
+    assert updated_previews == []
+    assert frame_events[-1]["afas_preprocessing"] == {
+        "preview_status": "deferred_until_complete",
+        "point_count": 21,
+        "temperature_distance_point_count": 21,
+        "preview_interval_frames": 300,
     }
-    assert preview["temperature_distance_point_count"] == 20
-    assert len(preview["smoothed"]["temperature_celsius"]) == 20
-    assert len(preview["smoothed"]["values"]) == 20
-    assert preview["smoothed"]["applied"] is True
-    assert preview["smoothed"]["effective_savgol_window_length"] == 11
-    assert "raw" not in preview
-    assert "grouped" not in preview
-    assert "outlier_repair" not in preview
     assert all(event["afas_analysis"] == {"result_status": "pending"} for event in frame_events)
 
     complete = [event for event in events if event["event"] == "complete"][0]
@@ -696,6 +798,8 @@ def test_streamed_live_offline_run_short_frame_events_defer_afas_preview(tmp_pat
         assert event["afas_preprocessing"] == {
             "preview_status": "deferred_until_complete",
             "point_count": event["processed_frames"],
+            "temperature_distance_point_count": event["processed_frames"],
+            "preview_interval_frames": 300,
         }
         assert event["afas_analysis"] == {"result_status": "pending"}
 
@@ -706,3 +810,49 @@ def test_streamed_live_offline_run_short_frame_events_defer_afas_preview(tmp_pat
     assert final_preview["grouped"]["temperature_celsius"] == [21.0, 22.0]
     assert final_preview["smoothed"]["temperature_celsius"] == [21.0, 22.0]
     assert complete["analysis_result"]["afas_analysis"]["reason"] == "insufficient_points"
+
+
+def test_streamed_live_offline_run_unchanged_afas_preview_does_not_stop_temperature_distance_points(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=3)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    monkeypatch.setattr(live_service, "AFAS_PREVIEW_INTERVAL_FRAMES", 2)
+    measurement = MeasurementDefinition(
+        measurement_id="run-afas-preview-unchanged-measurement",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            min_component_area_px=20,
+            max_frames_per_run=3,
+            mask_open_kernel_px=1,
+            mask_close_kernel_px=1,
+            mask_dilate_kernel_px=1,
+        ),
+    )
+
+    events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=measurement,
+            start_frame=1,
+            max_frames=3,
+            target_fps=8.0,
+        )
+    )
+
+    frame_events = [event for event in events if event["event"] == "frame"]
+    assert frame_events[-1]["afas_preprocessing"]["preview_status"] == "unchanged"
+    assert frame_events[-1]["curve_points"]["temperature_distance"]["frame_index"] == 3
+    assert frame_events[-1]["live_point_status"]["temperature_distance_present"] is True
+    assert frame_events[-1]["live_point_status"]["temperature_distance_point_count"] == 3

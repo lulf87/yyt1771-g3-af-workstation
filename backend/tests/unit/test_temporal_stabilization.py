@@ -89,3 +89,71 @@ def test_centered_temporal_stabilization_preserves_raw_and_recomputes_stabilized
     assert middle.debug_artifacts["temporal_neighbor_count"] == 2
     assert middle.debug_artifacts["temporal_removed_mask_pixel_count"] > 0
     assert "_raw_mask_array" not in middle.debug_artifacts
+
+
+def test_c_temporal_stabilization_default_mode_uses_legacy_wire_candidate() -> None:
+    measurement = MeasurementDefinition(
+        measurement_id="temporal-c-default-test",
+        object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+        detector=DetectorType.BUNDLE_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=45.0, center_y=25.0, width=90.0, height=50.0),
+        detector_config=DetectorConfig(
+            temporal_stabilization_enabled=True,
+            temporal_stabilization_strength="medium",
+            contour_close_kernel=1,
+            contour_close_kernel_px=1,
+            min_window_pixels=1,
+            wire_min_component_area_px=1,
+            wire_min_length_px=3.0,
+            wire_min_elongation=1.2,
+            wire_box_padding_px=0.0,
+        ),
+    )
+    results = [
+        _detection(1, _mask(), 20.0),
+        _detection(2, _mask(with_spur=True), 54.0),
+        _detection(3, _mask(), 20.0),
+    ]
+
+    stabilized = stabilize_detection_sequence(results, measurement, filter_mode="centered")
+
+    middle = stabilized[1]
+    assert middle.raw_distance_px == 54.0
+    assert middle.stabilized_distance_px is not None
+    assert middle.selected_candidate is not None
+    assert middle.selected_candidate.candidate_id == "archived-wire-bundle-projection"
+    assert middle.debug_artifacts["temporal_stabilization_applied"] is True
+
+
+def test_c_temporal_stabilization_contrast_mode_uses_contrast_widest_span_candidate() -> None:
+    measurement = MeasurementDefinition(
+        measurement_id="temporal-c-contrast-test",
+        object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+        detector=DetectorType.BUNDLE_ENVELOPE,
+        detector_mode="contrast_widest_span",
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=45.0, center_y=25.0, width=90.0, height=50.0),
+        detector_config=DetectorConfig(
+            temporal_stabilization_enabled=True,
+            temporal_stabilization_strength="medium",
+            contour_close_kernel=1,
+            contour_close_kernel_px=1,
+            min_window_pixels=1,
+        ),
+    )
+    results = [
+        _detection(1, _mask(), 20.0),
+        _detection(2, _mask(with_spur=True), 54.0),
+        _detection(3, _mask(), 20.0),
+    ]
+
+    stabilized = stabilize_detection_sequence(results, measurement, filter_mode="centered")
+
+    middle = stabilized[1]
+    assert middle.raw_distance_px == 54.0
+    assert middle.stabilized_distance_px is not None
+    assert middle.stabilized_distance_px < 30.0
+    assert middle.selected_candidate is not None
+    assert middle.selected_candidate.candidate_id.startswith("contrast-widest-span-v-")
+    assert middle.debug_artifacts["temporal_stabilization_applied"] is True

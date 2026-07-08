@@ -112,7 +112,10 @@ def _a_mesh_flags(
 
 def _c_wire_flags(debug: dict[str, Any]) -> list[str]:
     flags: list[str] = []
-    if debug.get("contour_measurement_mode") != "archived_wire_bundle_projection":
+    mode = debug.get("contour_measurement_mode")
+    if mode == "contrast_widest_span":
+        return flags
+    if mode != "archived_wire_bundle_projection":
         flags.append("C_CONTOUR_MODE_NOT_ARCHIVED_WIRE_BUNDLE_PROJECTION")
     if debug.get("wire_projection_mode") != "stable_support_columns":
         flags.append("C_WIRE_PROJECTION_NOT_STABLE_SUPPORT_COLUMNS")
@@ -146,6 +149,12 @@ def _debug_excerpt(debug: dict[str, Any]) -> dict[str, Any]:
         "wire_global_quantile_length_px",
         "wire_support_group_min_along_px",
         "wire_support_group_max_along_px",
+        "detection_mode",
+        "contrast_threshold",
+        "selected_scan_v",
+        "selected_left_u",
+        "selected_right_u",
+        "selected_width_px",
     ]
     return {key: debug[key] for key in keys if key in debug}
 

@@ -928,7 +928,14 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
 
     assert response.status_code == 200
     events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
-    assert [event["event"] for event in events] == ["frame", "frame", "complete"]
+    assert [event["event"] for event in events] == [
+        "frame",
+        "frame",
+        "stopping",
+        "saving_manifest",
+        "building_analysis",
+        "complete",
+    ]
     assert events[0]["dataset_id"] == "real_camera"
     assert events[0]["frame_count"] == 2
     assert "/preview/latest.png" in events[0]["frame_url"]
@@ -937,6 +944,9 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
     assert events[0]["storage"]["raw_frame_saved"] is False
     assert events[0]["storage"]["preview_path"] == "preview_frames/latest.png"
     assert events[1]["processed_frames"] == 2
+    assert events[2]["processed_frames"] == 2
+    assert events[3]["processed_frames"] == 2
+    assert events[4]["processed_frames"] == 2
     assert events[-1]["run_manifest"]["config_snapshot"]["max_frames"] == 2
     assert events[-1]["run_manifest"]["config_snapshot"]["save_raw_frames"] is False
     assert events[-1]["run_manifest"]["config_snapshot"]["raw_frame_count"] == 0

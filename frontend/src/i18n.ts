@@ -208,11 +208,29 @@ const ZH_TEXT: Record<string, string> = {
   "No formal temperature-distance points": "暂无正式温度-距离点",
   "Current distance": "当前距离",
   "Current temperature": "当前温度",
+  "Latest formal frame": "最近正式点帧号",
+  "Latest formal temperature": "最近正式点温度",
+  "Latest formal distance": "最近正式点距离",
   "Sync status": "同步状态",
   "Valid / Invalid": "有效 / 无效",
   "Temp-distance points": "温度-距离点数",
+  "Current frame did not enter the formal curve: detection is invalid": "当前帧未进入正式曲线：检测无效",
+  "Current frame did not enter the formal curve: curve point status is not valid": "当前帧未进入正式曲线：曲线点状态无效",
+  "Current frame did not enter the formal curve: distance is missing": "当前帧未进入正式曲线：缺少距离",
+  "Current frame did not enter the formal curve: temperature is missing": "当前帧未进入正式曲线：缺少温度",
+  "Current frame did not enter the formal curve: temperature sync status is not formal": "当前帧未进入正式曲线：温度同步状态不满足正式分析",
+  "Current frame did not enter the formal curve: distance jump outlier was filtered": "当前帧未进入正式曲线：距离异常跳变已过滤",
+  "Current frame did not enter the formal curve: unknown reason": "当前帧未进入正式曲线：未知原因",
   "Run temperature-distance trend chart": "测量温度-距离趋势图",
   "curve point": "曲线点",
+  "Live temperature-distance points": "实时温度-距离点",
+  "AFAS preprocessing preview": "AFAS 预处理平滑预览",
+  "preview unchanged": "平滑预览未更新",
+  "deferred until complete": "完成后生成",
+  "batch-updated trend reference": "批次更新趋势参考",
+  "Collecting stop request": "正在停止采集",
+  "Saving run data": "正在保存数据",
+  "Building result analysis": "正在生成结果分析",
   "backend smoothed curve": "后端平滑曲线",
   "backend binned curve": "后端温度分组曲线",
   "raw scatter": "原始散点",
@@ -327,9 +345,25 @@ const ZH_TEXT: Record<string, string> = {
   "A balloon envelope": "A 类球囊/网状结构整体外包络",
   "C bundle envelope": "C 类多细支/多线束整体外包络",
   "D reserved object": "D 类预留对象",
+  "Detection method": "检测方式",
+  "Original envelope detection": "原始外包络检测",
+  "Contrast widest-span detection": "对比度最宽跨度检测",
   BalloonEnvelopeDetector: "球囊/网状结构外包络检测器",
   BundleEnvelopeDetector: "多细支/线束整体外包络检测器",
+  ContrastWidestSpanDetector: "对比度最宽跨度检测器",
+  LegacyBundleEnvelopeDetector: "旧版多细支/线束外包络检测器",
   ReservedObjectDetector: "预留对象检测器",
+  "Contrast threshold": "对比度阈值",
+  "Distance outlier filter": "距离异常点过滤",
+  "Maximum allowed jump (px)": "最大允许跳变（像素）",
+  "Reference valid point count": "对比最近有效点数量",
+  "Distance outlier baseline": "距离异常基准",
+  "Last valid": "最近一个有效点",
+  Mean: "平均值",
+  Median: "中位数",
+  "Contrast mask": "对比度掩膜",
+  "Selected scanline overlay": "最大跨度扫描线",
+  "Final overlay": "最终叠加图",
   max_width: "整体最大宽度",
   min_width: "整体最小宽度（预留）",
   "Fast AF/As Run": "快速转变点测量",
@@ -474,6 +508,12 @@ export function uiObjectClass(language: UiLanguage, value: string): string {
 }
 
 export function uiDetector(language: UiLanguage, value: string): string {
+  return uiValue(language, value);
+}
+
+export function uiDetectorMode(language: UiLanguage, value: string): string {
+  if (value === "default" || value === "c_envelope_legacy") return uiText(language, "Original envelope detection");
+  if (value === "contrast_widest_span") return uiText(language, "Contrast widest-span detection");
   return uiValue(language, value);
 }
 

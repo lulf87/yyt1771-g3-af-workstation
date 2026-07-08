@@ -23,6 +23,8 @@ from yyt1771_g3.core.models import (
 )
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
+from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter
+from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.run_detector_policy import (
     RunDetectorPolicyState,
     analyze_detection_suspicion,
@@ -41,7 +43,7 @@ from yyt1771_g3.vision.stability import CandidateSelectionState
 from yyt1771_g3.vision.temporal_stabilization import CausalTemporalStabilizer
 
 
-AFAS_PREVIEW_INTERVAL_FRAMES = 10
+AFAS_PREVIEW_INTERVAL_FRAMES = 300
 REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS = 1000.0
 
 
@@ -79,8 +81,9 @@ def run_real_camera(
     policy_state = RunDetectorPolicyState()
     temporal_stabilizer = CausalTemporalStabilizer(
         measurement,
-        artifact_dir=run_dir / "temporal_masks",
+        artifact_dir=_temporal_mask_artifact_dir(measurement, run_dir),
     )
+    distance_outlier_filter = CausalDistanceOutlierFilter(measurement.detector_config)
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -108,6 +111,7 @@ def run_real_camera(
                 preview_max_width=preview_max_width,
             )
             detection = temporal_stabilizer.apply(detection)
+            detection = distance_outlier_filter.apply(detection)
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
             detection_results.append(detection)
@@ -168,8 +172,9 @@ def iter_real_camera_run_events(
     policy_state = RunDetectorPolicyState()
     temporal_stabilizer = CausalTemporalStabilizer(
         measurement,
-        artifact_dir=run_dir / "temporal_masks",
+        artifact_dir=_temporal_mask_artifact_dir(measurement, run_dir),
     )
+    distance_outlier_filter = CausalDistanceOutlierFilter(measurement.detector_config)
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -200,6 +205,7 @@ def iter_real_camera_run_events(
                 preview_max_width=preview_max_width,
             )
             detection = temporal_stabilizer.apply(detection)
+            detection = distance_outlier_filter.apply(detection)
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
             detection_results.append(detection)
@@ -231,8 +237,15 @@ def iter_real_camera_run_events(
                 break
             frame_index += 1
 
-        saved_result = _save_real_camera_run_result(
-            run_store,
+        final_stop_reason = stop_reason if stop_reason in {"manual_stop_requested", "target_temperature_reached"} else "complete"
+        yield _run_stage_event(
+            run_id=run_id,
+            event="stopping",
+            processed_frames=len(frame_records),
+            frame_count=frame_limit,
+            stop_reason=final_stop_reason,
+        )
+        manifest = _build_real_camera_run_manifest(
             run_id=run_id,
             measurement=measurement,
             frame_records=frame_records,
@@ -246,10 +259,26 @@ def iter_real_camera_run_events(
             save_raw_frames=save_raw_frames,
             save_preview_frames=save_preview_frames,
             preview_max_width=preview_max_width,
-            stop_reason=stop_reason
-            if stop_reason in {"manual_stop_requested", "target_temperature_reached"}
-            else "complete",
+            stop_reason=final_stop_reason,
         )
+        yield _run_stage_event(
+            run_id=run_id,
+            event="saving_manifest",
+            processed_frames=len(frame_records),
+            frame_count=frame_limit,
+            stop_reason=final_stop_reason,
+        )
+        run_store.write_run_manifest(manifest)
+        yield _run_stage_event(
+            run_id=run_id,
+            event="building_analysis",
+            processed_frames=len(frame_records),
+            frame_count=frame_limit,
+            stop_reason=final_stop_reason,
+        )
+        analysis = build_analysis_result(manifest)
+        run_store.write_analysis_result(analysis)
+        saved_result = RealCameraRunResult(manifest=manifest, analysis=analysis)
         yield {
             "event": "complete",
             "run_manifest": saved_result.manifest.model_dump(mode="json"),
@@ -300,6 +329,45 @@ def _save_real_camera_run_result(
     preview_max_width: int,
     stop_reason: str,
 ) -> RealCameraRunResult:
+    manifest = _build_real_camera_run_manifest(
+        run_id=run_id,
+        measurement=measurement,
+        frame_records=frame_records,
+        temperature_records=temperature_records,
+        detection_results=detection_results,
+        max_frames=max_frames,
+        target_fps=target_fps,
+        camera_profile=camera_profile,
+        temp_sync_target_ms=temp_sync_target_ms,
+        temperature_backend=temperature_backend,
+        save_raw_frames=save_raw_frames,
+        save_preview_frames=save_preview_frames,
+        preview_max_width=preview_max_width,
+        stop_reason=stop_reason,
+    )
+    analysis = build_analysis_result(manifest)
+    run_store.write_run_manifest(manifest)
+    run_store.write_analysis_result(analysis)
+    return RealCameraRunResult(manifest=manifest, analysis=analysis)
+
+
+def _build_real_camera_run_manifest(
+    *,
+    run_id: str,
+    measurement: MeasurementDefinition,
+    frame_records: list[FrameRecord],
+    temperature_records: list[TemperatureRecord],
+    detection_results: list[DetectionResult],
+    max_frames: int | None,
+    target_fps: float | None,
+    camera_profile: dict[str, Any] | None,
+    temp_sync_target_ms: float,
+    temperature_backend: str,
+    save_raw_frames: bool,
+    save_preview_frames: bool,
+    preview_max_width: int,
+    stop_reason: str,
+) -> RunManifest:
     first_frame = frame_records[0] if frame_records else None
     first_temperature = temperature_records[0] if temperature_records else None
     provenance = camera_runtime_provenance(
@@ -321,6 +389,8 @@ def _save_real_camera_run_result(
             "mode": "real_camera_run",
             "operator_data_source": "real_camera",
             "provenance": provenance,
+            "detector_mode": measurement.detector_mode,
+            "contrast_threshold": measurement.detector_config.contrast_threshold,
             "max_frames": max_frames,
             "processed_frames": len(frame_records),
             "stop_reason": stop_reason,
@@ -337,14 +407,16 @@ def _save_real_camera_run_result(
             "preview_frame_mode": "latest_overwrite" if save_preview_frames else "disabled",
             "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
             "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
+            "save_temporal_masks": measurement.detector_config.save_temporal_masks,
             "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
+            "distance_outlier_filter_enabled": measurement.detector_config.distance_outlier_filter_enabled,
+            "distance_outlier_reference_count": measurement.detector_config.distance_outlier_reference_count,
+            "distance_outlier_max_jump_px": measurement.detector_config.distance_outlier_max_jump_px,
+            "distance_outlier_baseline": measurement.detector_config.distance_outlier_baseline,
         },
         software={"package": "yyt1771_g3", "phase": "G3-M8"},
     )
-    analysis = build_analysis_result(manifest)
-    run_store.write_run_manifest(manifest)
-    run_store.write_analysis_result(analysis)
-    return RealCameraRunResult(manifest=manifest, analysis=analysis)
+    return manifest
 
 
 def _bounded_frame_limit(max_frames: int | None, measurement: MeasurementDefinition) -> int:
@@ -574,6 +646,28 @@ def _target_temperature_reached(
     return target is not None and temperature is not None and float(temperature) >= float(target)
 
 
+def _temporal_mask_artifact_dir(measurement: MeasurementDefinition, run_dir: Path) -> Path | None:
+    return run_dir / "temporal_masks" if measurement.detector_config.save_temporal_masks else None
+
+
+def _run_stage_event(
+    *,
+    run_id: str,
+    event: str,
+    processed_frames: int,
+    frame_count: int | None,
+    stop_reason: str,
+) -> dict[str, Any]:
+    return {
+        "event": event,
+        "run_id": run_id,
+        "processed_frames": processed_frames,
+        "frame_count": frame_count or 0,
+        "total_frames": frame_count or 0,
+        "stop_reason": stop_reason,
+    }
+
+
 def _frame_event(
     *,
     run_id: str,
@@ -627,6 +721,11 @@ def _frame_event(
         },
         "afas_preprocessing": afas_preprocessing,
         "afas_analysis": {"result_status": "pending"},
+        "live_point_status": build_live_point_status(
+            detection,
+            curve_points,
+            temperature_distance_point_count=int(afas_preprocessing.get("temperature_distance_point_count", 0) or 0),
+        ),
     }
 
 
@@ -652,6 +751,8 @@ def _live_afas_preprocessing_preview(
         return {
             "preview_status": "deferred_until_complete",
             "point_count": processed_frames,
+            "temperature_distance_point_count": len(temperature_distance_points),
+            "preview_interval_frames": AFAS_PREVIEW_INTERVAL_FRAMES,
         }
     if processed_frames % AFAS_PREVIEW_INTERVAL_FRAMES != 0 or not temperature_distance_points:
         return {

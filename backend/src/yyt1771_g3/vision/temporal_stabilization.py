@@ -8,9 +8,10 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from yyt1771_g3.core.enums import DetectionStatus, DetectorType
+from yyt1771_g3.core.enums import DetectionStatus, DetectorMode, DetectorType, ObjectClass
 from yyt1771_g3.core.models import ABPoints, DetectionCandidate, DetectionResult, DetectorConfig, MeasurementDefinition
 from yyt1771_g3.vision.detectors import (
+    _contrast_widest_span_candidate,
     _mesh_envelope_candidate,
     _outer_envelope_contour,
     _wire_projection_candidate,
@@ -282,7 +283,19 @@ def _remove_temporal_outliers(
 def _candidate_from_mask(mask: np.ndarray, measurement: MeasurementDefinition) -> DetectionCandidate | None:
     if measurement.detector == DetectorType.BALLOON_ENVELOPE:
         return _mesh_envelope_candidate(mask, measurement.roi, measurement.detector_config)
-    if measurement.detector == DetectorType.BUNDLE_ENVELOPE:
+    if measurement.object_class == ObjectClass.C_BUNDLE_ENVELOPE and measurement.detector in {
+        DetectorType.BUNDLE_ENVELOPE,
+        DetectorType.CONTRAST_WIDEST_SPAN,
+        DetectorType.LEGACY_BUNDLE_ENVELOPE,
+    }:
+        if measurement.detector_mode == DetectorMode.CONTRAST_WIDEST_SPAN:
+            candidate, _debug = _contrast_widest_span_candidate(mask, measurement.roi, measurement.detector_config)
+            return candidate
+        return _wire_projection_candidate(mask, measurement.roi, measurement.detector_config)
+    if measurement.detector == DetectorType.CONTRAST_WIDEST_SPAN:
+        candidate, _debug = _contrast_widest_span_candidate(mask, measurement.roi, measurement.detector_config)
+        return candidate
+    if measurement.detector == DetectorType.LEGACY_BUNDLE_ENVELOPE:
         return _wire_projection_candidate(mask, measurement.roi, measurement.detector_config)
     return None
 

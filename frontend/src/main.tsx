@@ -52,13 +52,13 @@ import {
   type AfasPreprocessingParameters,
   type AnalysisResult,
   type CameraPreviewResponse,
-  type CurvePoint,
   type DetectionResult,
   type DiagnosticImages,
   type MeasurementDefinition,
   type ExportArtifact,
   type ImportedRunView,
   type LiveOfflineFrameEvent,
+  type LiveOfflineProgressEvent,
   type OfflineDatasetListItem,
   type OfflineDatasetSummary,
   type OperatorSourceStatus,
@@ -70,6 +70,15 @@ import {
   type SourceProvenance,
   type TemperatureStatusResponse
 } from "./api/client";
+import {
+  appendLiveAnalysis,
+  buildLiveRunDiagnostics,
+  detectionWithSyncConfig,
+  emptyAnalysis,
+  emptyLiveRunDiagnostics,
+  livePointStatusMessage,
+  type LiveRunDiagnostics
+} from "./liveRunAnalysis";
 import {
   SourceProvenanceBadge,
   provenanceLabel,
@@ -144,6 +153,7 @@ import {
   readInitialUiLanguage,
   uiDatasetLabel,
   uiDetector,
+  uiDetectorMode,
   uiNone,
   uiNumberSuffix,
   uiObjectClass,
@@ -194,6 +204,7 @@ type LiveRunState = {
   operatorDataSource: OperatorDataSource;
   provenance: SourceProvenance | null;
   status: "running" | "complete" | "stopped";
+  statusMessage: string;
   frameIndex: number;
   frameUrl: string;
   frameCount: number;
@@ -202,6 +213,7 @@ type LiveRunState = {
   frameShape: number[] | null;
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
+  diagnostics: LiveRunDiagnostics;
 };
 
 type OperatorDataSource = "offline_dataset" | "real_camera";
@@ -222,6 +234,12 @@ const DEFAULT_CONFIG = {
   switch_after_n_frames: 3,
   jump_limit_px: 35,
   min_confidence: 0.15,
+  contrast_threshold: 30,
+  distance_outlier_filter_enabled: true,
+  distance_outlier_reference_count: 5,
+  distance_outlier_max_jump_px: 20,
+  distance_outlier_baseline: "median" as const,
+  save_temporal_masks: false,
   dark_enhance_bg_kernel_px: 41,
   hysteresis_low_ratio: 0.45,
   min_component_area_px: 80,
@@ -330,9 +348,17 @@ const OBJECT_CLASS_OPTIONS = [
   { value: "D_RESERVED_OBJECT", label: "D reserved object", detector: "ReservedObjectDetector", widthMode: "max_width" as const }
 ];
 
+const C_DETECTOR_MODE_OPTIONS = [
+  { value: "default", label: "Original envelope detection" },
+  { value: "c_envelope_legacy", label: "Original envelope detection" },
+  { value: "contrast_widest_span", label: "Contrast widest-span detection" }
+] as const;
+
 const DETECTOR_OPTIONS = [
   { value: "BalloonEnvelopeDetector", label: "BalloonEnvelopeDetector" },
+  { value: "ContrastWidestSpanDetector", label: "ContrastWidestSpanDetector" },
   { value: "BundleEnvelopeDetector", label: "BundleEnvelopeDetector" },
+  { value: "LegacyBundleEnvelopeDetector", label: "LegacyBundleEnvelopeDetector" },
   { value: "ReservedObjectDetector", label: "ReservedObjectDetector" }
 ];
 
@@ -398,6 +424,7 @@ type DetectorParameterGroup =
   | "Spur pruning"
   | "Contour diagnostics"
   | "Temporal stability"
+  | "Distance outlier filter"
   | "Run performance"
   | "Run";
 
@@ -440,6 +467,7 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   { key: "mask_open_kernel_px", label: "Mask open kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", title: "Larger values remove more isolated dark pixels." },
   { key: "mask_close_kernel_px", label: "Mask close kernel", type: "int", min: 1, max: 51, step: 2, group: "Mask", title: "Larger values bridge short gaps in the mesh mask." },
   { key: "mask_dilate_kernel_px", label: "Mask dilate kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", advanced: true, title: "Expands the detected mask after closing." },
+  { key: "contrast_threshold", label: "Contrast threshold", type: "float", min: 0, max: 255, step: 1, group: "Threshold", title: "Dark-object contrast below the ROI median background." },
   { key: "hysteresis_low_ratio", label: "Hysteresis low ratio", type: "float", min: 0.1, max: 0.9, step: 0.05, group: "Threshold", title: "Lower values retain weaker dark-line responses connected to strong responses." },
   { key: "dark_enhance_bg_kernel_px", label: "Dark enhance kernel", type: "int", min: 3, max: 101, step: 2, group: "Threshold", advanced: true, title: "Background estimation size for dark-line enhancement." },
   { key: "envelope_quantile", label: "Envelope quantile", type: "float", min: 0, max: 0.15, step: 0.005, group: "Envelope", title: "Ignores this fraction of extreme pixels on each side of a row window." },
@@ -492,6 +520,14 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
     { value: "hold_previous", label: "Hold previous" },
     { value: "mark_invalid", label: "Mark invalid" }
   ], title: "How Run handles unconfirmed distance jumps." },
+  { key: "distance_outlier_filter_enabled", label: "Distance outlier filter", type: "bool", group: "Distance outlier filter", title: "Drops sudden distance jumps before live curves and AFAS analysis." },
+  { key: "distance_outlier_max_jump_px", label: "Maximum allowed jump (px)", type: "float", min: 1, max: 200, step: 1, group: "Distance outlier filter", title: "Maximum accepted distance change from the recent valid baseline." },
+  { key: "distance_outlier_reference_count", label: "Reference valid point count", type: "int", min: 1, max: 20, step: 1, group: "Distance outlier filter", advanced: true, title: "Number of recent accepted distances used to compute the baseline." },
+  { key: "distance_outlier_baseline", label: "Distance outlier baseline", type: "select", group: "Distance outlier filter", advanced: true, options: [
+    { value: "last", label: "Last valid" },
+    { value: "mean", label: "Mean" },
+    { value: "median", label: "Median" }
+  ], title: "Baseline statistic used for distance jump filtering." },
   { key: "endpoint_jump_limit_px", label: "Endpoint jump limit px", type: "float", min: 0, max: 100, step: 1, group: "Temporal stability", advanced: true, title: "Suspicious-frame threshold for selected endpoint/axis jumps." },
   { key: "endpoint_jump_warmup_frames", label: "Endpoint jump warm-up", type: "int", min: 0, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Run frames ignored before endpoint-jump rerun decisions." },
   { key: "endpoint_jump_confirm_frames", label: "Endpoint jump confirm", type: "int", min: 1, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Consecutive endpoint-jump frames required before enhanced rerun." },
@@ -885,26 +921,13 @@ function App() {
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialLiveRun(selectedId, frameIndex, selectedDataset?.frame_count ?? frameIndex));
     const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
-    const maxBatchWaitMs = 180;
-    let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
     let lastPreviewUpdateMs = 0;
-    let batchFlushTimer: number | null = null;
-
-    const clearBatchFlushTimer = () => {
-      if (batchFlushTimer == null) return;
-      window.clearTimeout(batchFlushTimer);
-      batchFlushTimer = null;
-    };
-    const flushPendingFrameEvents = (forcePreview: boolean) => {
-      if (pendingFrameEvents.length === 0) return;
-      const events = pendingFrameEvents;
-      pendingFrameEvents = [];
+    const applyLiveFrameEvent = (event: LiveOfflineFrameEvent, forcePreview = false) => {
       const now = Date.now();
       const refreshPreview = forcePreview || now - lastPreviewUpdateMs >= previewIntervalMs;
       if (refreshPreview) lastPreviewUpdateMs = now;
-      setLiveRun((current) => updateLiveRunFromFrames(current, events, { refreshPreview }));
+      setLiveRun((current) => updateLiveRunFromFrame(current, event, { refreshPreview }));
     };
 
     try {
@@ -916,21 +939,8 @@ function App() {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
           liveRunProcessedFramesRef.current = event.processed_frames;
-          pendingFrameEvents.push(event);
-          const now = Date.now();
-          const shouldRefreshPreview = now - lastPreviewUpdateMs >= previewIntervalMs;
-          if (pendingFrameEvents.length >= runResultBatchSize || shouldRefreshPreview) {
-            clearBatchFlushTimer();
-            flushPendingFrameEvents(shouldRefreshPreview);
-          } else if (batchFlushTimer == null) {
-            batchFlushTimer = window.setTimeout(() => {
-              batchFlushTimer = null;
-              flushPendingFrameEvents(false);
-            }, maxBatchWaitMs);
-          }
+          applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          clearBatchFlushTimer();
-          flushPendingFrameEvents(true);
           liveRunIdRef.current = event.run_manifest.run_id;
           liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
           setLiveRun((current) =>
@@ -940,20 +950,21 @@ function App() {
                   status: "complete",
                   operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
+                  statusMessage: "",
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length
                 }
               : current
           );
+        } else if (isLiveProgressEvent(event)) {
+          setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
       setRunResult(response);
     } catch (err) {
-      clearBatchFlushTimer();
-      flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -981,7 +992,6 @@ function App() {
         setRunResult(null);
       }
     } finally {
-      clearBatchFlushTimer();
       if (runAbortRef.current === controller) {
         runAbortRef.current = null;
       }
@@ -995,6 +1005,7 @@ function App() {
           ? {
               ...current,
               status: "stopped",
+              statusMessage: "",
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -1304,26 +1315,13 @@ function App() {
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialRealCameraLiveRun());
     const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
-    const maxBatchWaitMs = 180;
-    let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
     let lastPreviewUpdateMs = 0;
-    let batchFlushTimer: number | null = null;
-
-    const clearBatchFlushTimer = () => {
-      if (batchFlushTimer == null) return;
-      window.clearTimeout(batchFlushTimer);
-      batchFlushTimer = null;
-    };
-    const flushPendingFrameEvents = (forcePreview: boolean) => {
-      if (pendingFrameEvents.length === 0) return;
-      const events = pendingFrameEvents;
-      pendingFrameEvents = [];
+    const applyLiveFrameEvent = (event: LiveOfflineFrameEvent, forcePreview = false) => {
       const now = Date.now();
       const refreshPreview = forcePreview || now - lastPreviewUpdateMs >= previewIntervalMs;
       if (refreshPreview) lastPreviewUpdateMs = now;
-      setLiveRun((current) => updateLiveRunFromFrames(current, events, { refreshPreview }));
+      setLiveRun((current) => updateLiveRunFromFrame(current, event, { refreshPreview }));
     };
 
     try {
@@ -1338,21 +1336,8 @@ function App() {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
           liveRunProcessedFramesRef.current = event.processed_frames;
-          pendingFrameEvents.push(event);
-          const now = Date.now();
-          const shouldRefreshPreview = now - lastPreviewUpdateMs >= previewIntervalMs;
-          if (pendingFrameEvents.length >= runResultBatchSize || shouldRefreshPreview) {
-            clearBatchFlushTimer();
-            flushPendingFrameEvents(shouldRefreshPreview);
-          } else if (batchFlushTimer == null) {
-            batchFlushTimer = window.setTimeout(() => {
-              batchFlushTimer = null;
-              flushPendingFrameEvents(false);
-            }, maxBatchWaitMs);
-          }
+          applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          clearBatchFlushTimer();
-          flushPendingFrameEvents(true);
           liveRunIdRef.current = event.run_manifest.run_id;
           liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
           setLiveRun((current) =>
@@ -1362,6 +1347,7 @@ function App() {
                   status: "complete",
                   operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
+                  statusMessage: "",
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length,
@@ -1371,14 +1357,14 @@ function App() {
                 }
               : current
           );
+        } else if (isLiveProgressEvent(event)) {
+          setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
       setRunResult(response);
     } catch (err) {
-      clearBatchFlushTimer();
-      flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1392,7 +1378,6 @@ function App() {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      clearBatchFlushTimer();
       if (runAbortRef.current === controller) {
         runAbortRef.current = null;
       }
@@ -1406,6 +1391,7 @@ function App() {
           ? {
               ...current,
               status: "stopped",
+              statusMessage: "",
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -1990,6 +1976,7 @@ function PageContent({
             sourceShape={activeSourceShape}
             roi={measurement.roi}
             abPoints={displayedProbe?.detection_result.ab_points ?? null}
+            measurementSegment={displayedProbe?.detection_result.measurement_segment ?? null}
             debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null}
             onRoiChange={updateRoi}
             onRoiCommit={isRealCameraSetup ? commitRoi : undefined}
@@ -2167,6 +2154,7 @@ function OperatorRunPage({
       ...measurement,
       object_class: value,
       detector: option?.detector ?? measurement.detector,
+      detector_mode: "default",
       width_mode: option?.widthMode ?? "max_width"
     });
     onPreviewAffectingChange({ kind: "object_class" });
@@ -2209,14 +2197,25 @@ function OperatorRunPage({
               ))}
             </select>
           </label>
-          <details className="advancedDetectorParameters">
-            <summary>{t("Advanced detection parameters")} · {t("Usually no change needed")}</summary>
-            <DetectorSetupControls
+          {measurement.object_class === "C_BUNDLE_ENVELOPE" ? (
+            <CDetectorModeControl
+              disabled={operatorRunActive}
               measurement={measurement}
               onMeasurement={onMeasurement}
               onPreviewAffectingChange={onPreviewAffectingChange}
             />
-          </details>
+          ) : null}
+          {isContrastWidestSpanMode(measurement) ? (
+            <ContrastThresholdControl
+              measurement={measurement}
+              onMeasurement={onMeasurement}
+              onPreviewAffectingChange={onPreviewAffectingChange}
+            />
+          ) : null}
+          <DistanceOutlierFilterControl
+            measurement={measurement}
+            onMeasurement={onMeasurement}
+          />
         </div>
         <div className="controlStack operatorCameraStatus">
           <h3>{isOfflineSource ? t("Offline material") : t("Camera")}</h3>
@@ -2315,6 +2314,7 @@ function OperatorRunPage({
             sourceShape={latestFrameShape}
             roi={measurement.roi}
             abPoints={latestDetection?.ab_points ?? null}
+            measurementSegment={latestDetection?.measurement_segment ?? null}
             debugArtifacts={latestDetection?.debug_artifacts ?? null}
             onRoiChange={operatorRunActive ? undefined : onRoiChange}
             onRoiCommit={operatorRunActive ? undefined : onRoiCommit}
@@ -2342,6 +2342,7 @@ function OperatorRunPage({
               runId={liveRun?.runId ?? runResult?.run_manifest.run_id ?? null}
               isRunning={liveRun?.status === "running"}
               targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
+              diagnostics={liveRun?.diagnostics ?? null}
               compact
             />
           ) : (
@@ -3092,6 +3093,7 @@ function DetectorSetupControls({
       {
         object_class: value,
         detector: option?.detector ?? measurement.detector,
+        detector_mode: "default",
         width_mode: option?.widthMode ?? "max_width"
       },
       { kind: "object_class" }
@@ -3111,6 +3113,13 @@ function DetectorSetupControls({
           ))}
         </select>
       </label>
+      {measurement.object_class === "C_BUNDLE_ENVELOPE" ? (
+        <CDetectorModeControl
+          measurement={measurement}
+          onMeasurement={onMeasurement}
+          onPreviewAffectingChange={onPreviewAffectingChange}
+        />
+      ) : null}
       <div className="detectorPresetGroup">
         {DETECTOR_PRESETS.map((preset) => (
           <button className="secondaryButton compactButton" key={preset.id} onClick={() => applyDetectorPreset(preset.patch)} type="button">
@@ -3160,6 +3169,135 @@ function DetectorSetupControls({
           onCommit={commitDetectorConfig}
         />
       </details>
+    </div>
+  );
+}
+
+function CDetectorModeControl({
+  measurement,
+  onMeasurement,
+  onPreviewAffectingChange,
+  disabled = false
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
+  disabled?: boolean;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+
+  function changeDetectorMode(value: MeasurementDefinition["detector_mode"]) {
+    const normalized = value ?? "default";
+    onMeasurement({
+      ...measurement,
+      detector: normalized === "contrast_widest_span" ? "ContrastWidestSpanDetector" : "BundleEnvelopeDetector",
+      detector_mode: normalized
+    });
+    onPreviewAffectingChange?.({ kind: "detector" });
+  }
+
+  return (
+    <label className="field">
+      <span>{t("Detection method")}</span>
+      <select
+        disabled={disabled}
+        onChange={(event) => changeDetectorMode(event.target.value as MeasurementDefinition["detector_mode"])}
+        value={measurement.detector_mode ?? "default"}
+      >
+        {C_DETECTOR_MODE_OPTIONS.filter((option) => option.value !== "c_envelope_legacy" || measurement.detector_mode === "c_envelope_legacy").map((option) => (
+          <option key={option.value} value={option.value}>
+            {uiDetectorMode(language, option.value)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function isContrastWidestSpanMode(measurement: MeasurementDefinition): boolean {
+  return measurement.object_class === "C_BUNDLE_ENVELOPE" && measurement.detector_mode === "contrast_widest_span";
+}
+
+function ContrastThresholdControl({
+  measurement,
+  onMeasurement,
+  onPreviewAffectingChange
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
+}) {
+  function patchContrastThreshold(value: number) {
+    const nextValue = Math.max(0, Math.min(255, Number.isFinite(value) ? value : DEFAULT_CONFIG.contrast_threshold));
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        contrast_threshold: nextValue
+      }
+    });
+  }
+
+  return (
+    <NumberField
+      label="Contrast threshold"
+      min={0}
+      max={255}
+      step={1}
+      value={measurement.detector_config.contrast_threshold ?? DEFAULT_CONFIG.contrast_threshold}
+      onChange={patchContrastThreshold}
+      onCommit={(value) => {
+        patchContrastThreshold(value);
+        onPreviewAffectingChange?.({ kind: "detector_config", key: "contrast_threshold" });
+      }}
+    />
+  );
+}
+
+function DistanceOutlierFilterControl({
+  measurement,
+  onMeasurement
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+}) {
+  const t = useUiText();
+  function patchDetectorConfig(patch: Partial<DetectorConfig>) {
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        ...patch
+      }
+    });
+  }
+
+  function patchMaximumAllowedJump(value: number) {
+    const fallback = DEFAULT_CONFIG.distance_outlier_max_jump_px;
+    const nextValue = Math.max(1, Math.min(200, Number.isFinite(value) ? value : fallback));
+    patchDetectorConfig({ distance_outlier_max_jump_px: nextValue });
+  }
+
+  return (
+    <div className="twoColumnControls">
+      <label className="field checkboxField">
+        <span>{t("Distance outlier filter")}</span>
+        <input
+          checked={measurement.detector_config.distance_outlier_filter_enabled ?? DEFAULT_CONFIG.distance_outlier_filter_enabled}
+          onChange={(event) => patchDetectorConfig({ distance_outlier_filter_enabled: event.target.checked })}
+          type="checkbox"
+        />
+      </label>
+      <NumberField
+        label="Maximum allowed jump (px)"
+        min={1}
+        max={200}
+        step={1}
+        value={measurement.detector_config.distance_outlier_max_jump_px ?? DEFAULT_CONFIG.distance_outlier_max_jump_px}
+        onChange={patchMaximumAllowedJump}
+        onCommit={patchMaximumAllowedJump}
+      />
     </div>
   );
 }
@@ -3677,6 +3815,7 @@ function FrameCanvas({
   sourceShape,
   roi,
   abPoints,
+  measurementSegment,
   debugArtifacts,
   onRoiChange,
   onRoiCommit,
@@ -3687,6 +3826,7 @@ function FrameCanvas({
   sourceShape: number[];
   roi: RotatedROI;
   abPoints: { a: ABPoint; b: ABPoint } | null;
+  measurementSegment?: ABPoint[] | null;
   debugArtifacts?: Record<string, unknown> | null;
   onRoiChange?: (roi: RotatedROI) => void;
   onRoiCommit?: (roi: RotatedROI) => void;
@@ -3830,7 +3970,7 @@ function FrameCanvas({
             </>
           ) : null}
           {debugArtifacts ? <ContourProjectionOverlay debugArtifacts={debugArtifacts} transform={transform} /> : null}
-          {abPoints ? <ABOverlay abPoints={abPoints} transform={transform} /> : null}
+          {abPoints ? <ABOverlay abPoints={abPoints} measurementSegment={measurementSegment} transform={transform} /> : null}
         </svg>
       </div>
     </figure>
@@ -4010,16 +4150,23 @@ function arrowHeadPath(start: ABPoint, end: ABPoint, size: number, spread: numbe
 
 function ABOverlay({
   abPoints,
+  measurementSegment,
   transform
 }: {
   abPoints: { a: ABPoint; b: ABPoint };
+  measurementSegment?: ABPoint[] | null;
   transform: FrameDisplayTransform;
 }) {
+  const segment = measurementSegment ?? [abPoints.a, abPoints.b];
+  const segmentStart = segment[0] ?? abPoints.a;
+  const segmentEnd = segment[1] ?? abPoints.b;
   const a = measurementPointToDisplay(abPoints.a, transform);
   const b = measurementPointToDisplay(abPoints.b, transform);
+  const lineStart = measurementPointToDisplay(segmentStart, transform);
+  const lineEnd = measurementPointToDisplay(segmentEnd, transform);
   return (
     <g className="abOverlay">
-      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
+      <line x1={lineStart.x} y1={lineStart.y} x2={lineEnd.x} y2={lineEnd.y} />
       <circle cx={a.x} cy={a.y} r={5} />
       <circle cx={b.x} cy={b.y} r={5} />
       <text x={a.x + 8} y={a.y - 8}>
@@ -4140,9 +4287,15 @@ function RunPage({
       ? t("Until stopped or target temperature")
       : Math.max(0, dataset.frame_count - startFrame + 1);
   const progressValue = displayedLiveRun
-    ? displayedLiveRun.totalFrames > 0
-      ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
-      : displayedLiveRun.processedFrames.toLocaleString()
+    ? displayedLiveRun.statusMessage
+      ? `${t(displayedLiveRun.statusMessage)} · ${
+          displayedLiveRun.totalFrames > 0
+            ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
+            : displayedLiveRun.processedFrames.toLocaleString()
+        }`
+      : displayedLiveRun.totalFrames > 0
+        ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
+        : displayedLiveRun.processedFrames.toLocaleString()
     : t("Idle");
   const latestDetection =
     displayedLiveRun?.detectionResult ??
@@ -4244,6 +4397,7 @@ function RunPage({
             runId={displayedLiveRun?.runId ?? manifest?.run_id ?? null}
             isRunning={displayedLiveRun?.status === "running"}
             targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
+            diagnostics={displayedLiveRun?.diagnostics ?? null}
           />
         </section>
         ) : null}
@@ -4255,6 +4409,7 @@ function RunPage({
               sourceShape={latestSourceShape}
               roi={measurement.roi}
               abPoints={abPointsForResultSource(latestDetection, resultSource)}
+              measurementSegment={latestDetection.measurement_segment ?? null}
               debugArtifacts={latestDetection.debug_artifacts}
               readOnly
             />
@@ -5238,12 +5393,14 @@ function RunTrendChart({
   runId,
   isRunning,
   targetTemperature,
+  diagnostics,
   compact = false
 }: {
   analysis: AnalysisResult;
   runId: string | null;
   isRunning: boolean;
   targetTemperature: number | null;
+  diagnostics?: LiveRunDiagnostics | null;
   compact?: boolean;
 }) {
   const language = useUiLanguage();
@@ -5293,7 +5450,7 @@ function RunTrendChart({
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - bounds.left) / bounds.width) * model.width;
     const y = ((event.clientY - bounds.top) / bounds.height) * model.height;
-    const candidates = [...model.formalPoints, ...model.referencePoints];
+    const candidates = [...model.formalPoints, ...model.referencePoints, ...model.previewPoints];
     let nearest = candidates[0];
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const point of candidates) {
@@ -5311,9 +5468,15 @@ function RunTrendChart({
   return (
     <div className="runTrendShell">
       <RunValueStrip valueStrip={model.valueStrip} compact={compact} />
+      {diagnostics ? <RunLiveDiagnostics diagnostics={diagnostics} compact={compact} /> : null}
       <figure className="runTrendFigure">
         <figcaption>
           <span>{t(model.sourceLabel)}</span>
+          {model.previewPoints.length ? (
+            <span title={runTrendPreviewExplanation(language)}>
+              {t(model.previewLabel)} · {runTrendPreviewStatusLabel(model.previewStatus, language)}
+            </span>
+          ) : null}
           <span>{isRunning ? t("Current run so far") : t("Full run")}</span>
         </figcaption>
         <IndustrialCurveView
@@ -5341,6 +5504,15 @@ function RunTrendChart({
               key={`run-reference-${point.frameIndex}-${point.temperature}`}
               r={2.3}
             />
+          ))}
+          {model.previewSegments.map((segment, index) => (
+            segment.length > 1 ? (
+              <polyline
+                className="runTrendPreviewLine"
+                key={`run-preview-segment-${index}`}
+                points={segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}
+              />
+            ) : null
           ))}
           {model.formalSegments.map((segment, index) => (
             segment.length > 1 ? (
@@ -5486,6 +5658,46 @@ function sameYAxisRange(
   );
 }
 
+function RunLiveDiagnostics({
+  diagnostics,
+  compact = false
+}: {
+  diagnostics: LiveRunDiagnostics;
+  compact?: boolean;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const missingMessage = livePointStatusMessage({
+    temperature_distance_present: diagnostics.latestCurvePointPresent,
+    temperature_distance_point_count: diagnostics.formalTemperatureDistancePointCount,
+    reason_if_missing: diagnostics.latestCurvePointMissingReason,
+    detection_status: diagnostics.detectionStatus ?? "",
+    curve_point_status: diagnostics.curvePointStatus ?? "",
+    temperature_sync_status: diagnostics.temperatureSyncStatus ?? "",
+    distance_outlier_filtered: diagnostics.distanceOutlierFiltered
+  });
+  const showMissingMessage =
+    !diagnostics.latestCurvePointPresent &&
+    missingMessage.length > 0 &&
+    diagnostics.latestDetectionDistancePx !== null &&
+    diagnostics.latestDetectionTemperatureC !== null;
+  return (
+    <div className="runLiveDiagnostics">
+      <dl className="runValueStrip runValueStrip--diagnostics">
+        <RunValue label="Formal temp-distance points" value={diagnostics.formalTemperatureDistancePointCount.toLocaleString()} />
+        <RunValue label="Latest formal frame" value={diagnostics.lastFormalPointFrameIndex?.toLocaleString() ?? uiNone(language)} />
+        {compact ? null : (
+          <>
+            <RunValue label="Latest formal temperature" value={formatNullableNumber(diagnostics.lastFormalPointTemperature, " °C", 2, language)} />
+            <RunValue label="Latest formal distance" value={formatNullableNumber(diagnostics.lastFormalPointDistance, uiNumberSuffix(language, " px"), 1, language)} />
+          </>
+        )}
+      </dl>
+      {showMissingMessage ? <p className="runPointNotice">{t(missingMessage)}</p> : null}
+    </div>
+  );
+}
+
 function RunValueStrip({
   valueStrip,
   compact = false
@@ -5580,9 +5792,23 @@ function formatRunTrendPointLabel(point: RunTrendPoint, language: UiLanguage = "
 }
 
 function runTrendLineLabel(source: RunTrendPoint["source"], language: UiLanguage = "en"): string {
-  if (source === "smoothed") return uiText(language, "backend smoothed curve");
-  if (source === "grouped") return uiText(language, "backend binned curve");
-  return uiText(language, "raw scatter");
+  if (source === "smoothed") return uiText(language, "AFAS preprocessing preview");
+  if (source === "grouped") return uiText(language, "AFAS preprocessing preview");
+  return uiText(language, "Live temperature-distance points");
+}
+
+function runTrendPreviewStatusLabel(status: string | null, language: UiLanguage = "en"): string {
+  if (status === "updated") return uiText(language, "updated");
+  if (status === "unchanged") return uiText(language, "preview unchanged");
+  if (status === "deferred_until_complete") return uiText(language, "deferred until complete");
+  return uiText(language, "batch-updated trend reference");
+}
+
+function runTrendPreviewExplanation(language: UiLanguage = "en"): string {
+  if (language === "zh") {
+    return "平滑曲线来自 AFAS 预处理，会按温度分组并进行 Savitzky-Golay 平滑。它可能与逐帧原始点不完全一致。实时判断请以原始正式点为准。该曲线按批次更新，仅用于趋势参考，不代表逐帧实时数据。";
+  }
+  return "The smoothed curve is generated by AFAS preprocessing using temperature grouping and Savitzky-Golay smoothing. It may differ from frame-by-frame points. Use formal live points for real-time monitoring. This is a batch-updated trend reference, not frame-by-frame live data.";
 }
 
 function runTrendLineLabelPoint(model: ReturnType<typeof buildRunTrendModel>): { x: number; y: number } {
@@ -5771,7 +5997,13 @@ function localizeDisplayString(value: string, language: UiLanguage): string {
   if (value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
     return uiObjectClass(language, value);
   }
-  if (value === "BalloonEnvelopeDetector" || value === "BundleEnvelopeDetector" || value === "ReservedObjectDetector") {
+  if (
+    value === "BalloonEnvelopeDetector" ||
+    value === "BundleEnvelopeDetector" ||
+    value === "ContrastWidestSpanDetector" ||
+    value === "LegacyBundleEnvelopeDetector" ||
+    value === "ReservedObjectDetector"
+  ) {
     return uiDetector(language, value);
   }
   if (value === "max_width" || value === "min_width") return uiWidthMode(language, value);
@@ -5852,6 +6084,7 @@ function createDefaultMeasurement(
     source: "offline_dataset",
     object_class: dataset.object_class,
     detector: dataset.default_detector,
+    detector_mode: "default",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: createDefaultRoiForShape(shape),
@@ -5987,6 +6220,7 @@ function createInitialLiveRun(datasetId: string, startFrame: number, frameCount:
     operatorDataSource: "offline_dataset",
     provenance: null,
     status: "running",
+    statusMessage: "",
     frameIndex: startFrame,
     frameUrl: frameIndexImageUrl(datasetId, startFrame, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
     frameCount,
@@ -5994,7 +6228,8 @@ function createInitialLiveRun(datasetId: string, startFrame: number, frameCount:
     processedFrames: 0,
     frameShape: null,
     detectionResult: null,
-    analysis: emptyAnalysis(runId)
+    analysis: emptyAnalysis(runId),
+    diagnostics: emptyLiveRunDiagnostics()
   };
 }
 
@@ -6006,6 +6241,7 @@ function createInitialRealCameraLiveRun(): LiveRunState {
     operatorDataSource: "real_camera",
     provenance: null,
     status: "running",
+    statusMessage: "",
     frameIndex: 0,
     frameUrl: "",
     frameCount: 0,
@@ -6013,21 +6249,9 @@ function createInitialRealCameraLiveRun(): LiveRunState {
     processedFrames: 0,
     frameShape: null,
     detectionResult: null,
-    analysis: emptyAnalysis(runId)
+    analysis: emptyAnalysis(runId),
+    diagnostics: emptyLiveRunDiagnostics()
   };
-}
-
-function updateLiveRunFromFrames(
-  current: LiveRunState | null,
-  events: LiveOfflineFrameEvent[],
-  options: { refreshPreview: boolean }
-): LiveRunState | null {
-  if (events.length === 0) return current;
-  return events.reduce<LiveRunState | null>((next, event, index) => (
-    updateLiveRunFromFrame(next, event, {
-      refreshPreview: options.refreshPreview && index === events.length - 1
-    })
-  ), current);
 }
 
 function updateLiveRunFromFrame(
@@ -6043,6 +6267,7 @@ function updateLiveRunFromFrame(
     operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
     provenance: event.provenance ?? null,
     status: "running" as const,
+    statusMessage: "",
     frameIndex: event.frame_index,
     frameUrl: apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
     frameCount: event.frame_count,
@@ -6050,7 +6275,8 @@ function updateLiveRunFromFrame(
     processedFrames: 0,
     frameShape: event.frame_record.shape,
     detectionResult: null,
-    analysis: emptyAnalysis(runId)
+    analysis: emptyAnalysis(runId),
+    diagnostics: emptyLiveRunDiagnostics()
   };
   const detection = detectionWithSyncConfig(event.detection_result, event.sync_config);
   const analysis = appendLiveAnalysis(
@@ -6062,6 +6288,7 @@ function updateLiveRunFromFrame(
     runId,
     event.sync_config
   );
+  const diagnostics = buildLiveRunDiagnostics(previous.diagnostics, event, analysis, detection);
   return {
     ...previous,
     runId,
@@ -6069,78 +6296,49 @@ function updateLiveRunFromFrame(
     operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : event.operator_data_source === "offline_dataset" ? "offline_dataset" : previous.operatorDataSource,
     provenance: event.provenance ?? previous.provenance,
     status: "running",
-    frameIndex: refreshPreview ? event.frame_index : previous.frameIndex,
+    statusMessage: "",
+    frameIndex: event.frame_index,
     frameUrl: refreshPreview ? apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }) : previous.frameUrl,
     frameCount: event.frame_count,
     totalFrames: event.total_frames,
     processedFrames: event.processed_frames,
     frameShape: refreshPreview ? event.frame_record.shape : previous.frameShape,
-    detectionResult: refreshPreview ? detection : previous.detectionResult,
-    analysis
+    detectionResult: detection,
+    analysis,
+    diagnostics
   };
 }
 
-function emptyAnalysis(runId: string): AnalysisResult {
+function isLiveProgressEvent(event: { event: string }): event is LiveOfflineProgressEvent {
+  return event.event === "stopping" || event.event === "saving_manifest" || event.event === "building_analysis";
+}
+
+function updateLiveRunFromProgress(
+  current: LiveRunState | null,
+  event: LiveOfflineProgressEvent
+): LiveRunState | null {
+  if (!current) return current;
   return {
-    analysis_id: `${runId}-live-preview`,
-    run_id: runId,
-    all_frames: [],
-    distance_time: [],
-    raw_distance_time: [],
-    stabilized_distance_time: [],
-    temperature_time: [],
-    temperature_distance: [],
-    raw_temperature_distance: [],
-    stabilized_temperature_distance: [],
-    afas_preprocessing: {},
-    afas_analysis: {},
-    export_artifacts: [],
-    created_at: new Date().toISOString()
+    ...current,
+    runId: event.run_id || current.runId,
+    datasetId: event.dataset_id ?? current.datasetId,
+    operatorDataSource: event.operator_data_source === "real_camera"
+      ? "real_camera"
+      : event.operator_data_source === "offline_dataset"
+        ? "offline_dataset"
+        : current.operatorDataSource,
+    status: "running",
+    statusMessage: liveRunProgressLabel(event.event),
+    processedFrames: event.processed_frames,
+    frameCount: event.frame_count,
+    totalFrames: event.total_frames,
   };
 }
 
-function appendLiveAnalysis(
-  analysis: AnalysisResult,
-  detection: DetectionResult,
-  curvePoints: LiveOfflineFrameEvent["curve_points"],
-  afasPreprocessing: LiveOfflineFrameEvent["afas_preprocessing"],
-  afasAnalysis: LiveOfflineFrameEvent["afas_analysis"],
-  runId: string,
-  syncConfig?: LiveOfflineFrameEvent["sync_config"]
-): AnalysisResult {
-  const nextSyncConfig = syncConfig?.temp_sync_target_ms !== undefined
-    ? { ...analysis.sync_config, temp_sync_target_ms: syncConfig.temp_sync_target_ms }
-    : analysis.sync_config;
-  return {
-    ...analysis,
-    run_id: runId,
-    analysis_id: `${runId}-live-preview`,
-    all_frames: [...analysis.all_frames, detection],
-    distance_time: appendCurvePoint(analysis.distance_time, curvePoints.distance_time),
-    raw_distance_time: appendCurvePoint(analysis.raw_distance_time ?? [], curvePoints.raw_distance_time ?? liveRawDistancePoint(detection)),
-    stabilized_distance_time: appendCurvePoint(analysis.stabilized_distance_time ?? [], curvePoints.stabilized_distance_time ?? liveStabilizedDistancePoint(detection)),
-    temperature_time: appendCurvePoint(analysis.temperature_time, curvePoints.temperature_time),
-    temperature_distance: appendCurvePoint(analysis.temperature_distance, curvePoints.temperature_distance),
-    raw_temperature_distance: appendCurvePoint(analysis.raw_temperature_distance ?? [], curvePoints.raw_temperature_distance ?? liveRawTemperatureDistancePoint(detection)),
-    stabilized_temperature_distance: appendCurvePoint(analysis.stabilized_temperature_distance ?? [], curvePoints.stabilized_temperature_distance ?? liveStabilizedTemperatureDistancePoint(detection)),
-    afas_preprocessing: mergeLiveAfasPreprocessing(analysis.afas_preprocessing, afasPreprocessing),
-    afas_analysis: afasAnalysis,
-    sync_config: nextSyncConfig
-  };
-}
-
-function appendCurvePoint(points: CurvePoint[], point: CurvePoint | null): CurvePoint[] {
-  return point ? [...points, point] : points;
-}
-
-function detectionWithSyncConfig(
-  detection: DetectionResult,
-  syncConfig?: LiveOfflineFrameEvent["sync_config"]
-): DetectionResult {
-  const tempSyncTargetMs = numberFromUnknown(syncConfig?.temp_sync_target_ms);
-  return tempSyncTargetMs === null
-    ? detection
-    : { ...detection, temp_sync_target_ms: tempSyncTargetMs };
+function liveRunProgressLabel(event: LiveOfflineProgressEvent["event"]): string {
+  if (event === "stopping") return "Collecting stop request";
+  if (event === "saving_manifest") return "Saving run data";
+  return "Building result analysis";
 }
 
 function analysisWithSyncConfigSnapshot(
@@ -6206,71 +6404,6 @@ function distanceForResultSource(result: DetectionResult | null, source: Detecti
   if (!result) return null;
   if (source === "raw") return result.raw_distance_px ?? result.distance_px;
   return result.stabilized_distance_px ?? result.distance_px;
-}
-
-function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
-  const distance = detection.raw_distance_px;
-  if (detection.detection_status !== "VALID" || distance == null) return null;
-  return {
-    x: detection.frame_timestamp_ms ?? detection.frame_index,
-    y: distance,
-    frame_index: detection.frame_index,
-    sync_status: detection.temperature_sync_status
-  };
-}
-
-function liveStabilizedDistancePoint(detection: DetectionResult): CurvePoint | null {
-  const distance = detection.stabilized_distance_px;
-  if (detection.detection_status !== "VALID" || distance == null) return null;
-  return {
-    x: detection.frame_timestamp_ms ?? detection.frame_index,
-    y: distance,
-    frame_index: detection.frame_index,
-    sync_status: detection.temperature_sync_status
-  };
-}
-
-function liveRawTemperatureDistancePoint(detection: DetectionResult): CurvePoint | null {
-  return liveTemperatureDistancePoint(detection, detection.raw_distance_px);
-}
-
-function liveStabilizedTemperatureDistancePoint(detection: DetectionResult): CurvePoint | null {
-  return liveTemperatureDistancePoint(detection, detection.stabilized_distance_px);
-}
-
-function liveTemperatureDistancePoint(detection: DetectionResult, distance: number | null): CurvePoint | null {
-  if (detection.detection_status !== "VALID" || distance == null || detection.temperature_celsius == null) return null;
-  if (!["TEMP_SYNC_OK", "TEMP_SYNC_INTERPOLATED"].includes(detection.temperature_sync_status)) return null;
-  return {
-    x: detection.temperature_celsius,
-    y: distance,
-    frame_index: detection.frame_index,
-    sync_status: detection.temperature_sync_status
-  };
-}
-
-function mergeLiveAfasPreprocessing(
-  previous: Record<string, unknown>,
-  incoming: Record<string, unknown>
-): Record<string, unknown> {
-  const incomingRecord = readRecord(incoming);
-  if (Object.keys(readRecord(incomingRecord.smoothed)).length > 0) {
-    return incomingRecord;
-  }
-
-  const previousRecord = readRecord(previous);
-  if (Object.keys(readRecord(previousRecord.smoothed)).length === 0) {
-    return incomingRecord;
-  }
-
-  return {
-    ...previousRecord,
-    preview_status: incomingRecord.preview_status ?? previousRecord.preview_status,
-    point_count: incomingRecord.point_count ?? previousRecord.point_count,
-    temperature_distance_point_count:
-      incomingRecord.temperature_distance_point_count ?? previousRecord.temperature_distance_point_count,
-    preview_interval_frames: incomingRecord.preview_interval_frames ?? previousRecord.preview_interval_frames
-  };
 }
 
 function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized", language: UiLanguage = "en"): string {

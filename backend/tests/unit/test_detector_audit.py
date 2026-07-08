@@ -145,3 +145,28 @@ def test_audit_requires_c_stable_support_columns() -> None:
 
     assert summary["error_count"] == 1
     assert summary["flagged_frames"][0]["flags"] == ["C_WIRE_PROJECTION_NOT_STABLE_SUPPORT_COLUMNS"]
+
+
+def test_audit_accepts_c_contrast_widest_span_mode() -> None:
+    manifest = _manifest(
+        [
+            _valid(
+                1,
+                180.0,
+                {
+                    "contour_measurement_mode": "contrast_widest_span",
+                    "detection_mode": "contrast_widest_span",
+                    "selected_left_u": 12.0,
+                    "selected_right_u": 192.0,
+                    "selected_width_px": 180.0,
+                },
+            )
+        ],
+        object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+        detector=DetectorType.BUNDLE_ENVELOPE,
+    )
+
+    summary = audit_run_manifest(manifest, adjacent_jump_warn_px=12.0)
+
+    assert summary["error_count"] == 0
+    assert summary["warning_count"] == 0
