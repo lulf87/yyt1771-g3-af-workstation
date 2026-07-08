@@ -99,10 +99,98 @@
 | P-0081 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector mode | C 类默认必须保留原始外包络检测，对比度最宽跨度检测只能作为可选模式 | 2026-07-08 | 2026-07-08 | Codex | golden_c Operator 默认 legacy probe、可选 contrast probe、live run 和 export 浏览器复测通过 |
 | P-0082 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real run curves | 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run→Stop 浏览器复测通过，stream 阶段事件和 temporal mask 默认关闭已验证 |
 | P-0083 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / live run trend | 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run 中正式点从 24 增至 53，停止后保存 78 点；浏览器复测通过 |
+| P-0084 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / export / live trend | 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑 | 2026-07-08 | 2026-07-08 | Codex | Operator 简化、温控不可用守卫和工程模式保留已浏览器复测；导出弹窗完整 run 流程待真机/可完成 run 环境复测 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0084 — 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/api/client.ts`, Operator Mode UI / export
+- Found date: 2026-07-08
+- Last update: 2026-07-08
+
+#### Problem
+
+当前 Operator Mode 仍暴露离线数据集、A/C 待测物类型、检测方式、相机/温控工程诊断字段和手动读取温度按钮，不符合实际操作者界面要求。导出按钮直接触发浏览器下载，无法引导选择保存文件夹；实时趋势图也需要前端显示层轻量平滑，但不能使用 AFAS 后处理曲线作为实时主线。
+
+#### Expected
+
+```text
+实际使用模式固定真实相机 + 真实温控，不显示离线数据集、A/C 类型或检测方式。
+实际使用模式固定 detector_mode = contrast_widest_span，只显示对比度阈值和最大允许跳变。
+相机区域只保留“检测当前帧”，温度每 500ms 自动刷新，实时测试中使用 stream 温度。
+结果页保留 AFAS 平滑窗口、高/低温区间和重新分析能力。
+导出先打开保存位置选择弹窗，支持 File System Access API + IndexedDB 记住目录，并有浏览器下载 fallback。
+实时曲线使用 display-only 轻量平滑，不修改正式 temperature_distance 和 AFAS 输入。
+工程模式保留完整功能。
+```
+
+#### Resolution log
+
+- 2026-07-08: 初始登记，状态 `IN_PROGRESS`。计划见 `docs/superpowers/plans/2026-07-08-operator-ui-export-picker.md`。
+- 2026-07-08: Operator Run 左侧改为实际使用结构：固定真实相机/真实温控语义，隐藏离线数据集、A/C 待测物类型、检测方式、相机/温控工程字段和手动读取温度按钮；仅保留“对比度阈值”和“最大允许跳变（像素）”。
+- 2026-07-08: Operator 单帧检测和实时 run 请求统一套用实际使用测量定义：`source=real_camera`、`object_class=C_BUNDLE_ENVELOPE`、`detector_mode=contrast_widest_span`、距离异常点过滤默认启用。
+- 2026-07-08: 新增 Operator 空闲温度自动轮询 helper，未运行时每 500ms 读取温度；实时运行中不额外抢占串口，使用 stream 温度。
+- 2026-07-08: 结果页保留 AFAS 参数再处理控件和“重新分析”；导出按钮改为先打开保存位置弹窗，支持 File System Access API、IndexedDB 保存目录 handle 和不支持浏览器的默认下载 fallback。
+- 2026-07-08: 新增 live display smoothing helper，Operator 实时曲线使用 display-only 轻量平滑，不写回 `analysis.temperature_distance`，不改变 AFAS 输入或导出原始数据。
+- 2026-07-08: 浏览器复测发现 `/dev/cu.usbserial-1210` 打不开时 Operator 仍显示“真实硬件已连接”；已补充温控不可用守卫，温控错误会使 Operator 显示“真实硬件不可用”并禁用“检测当前帧”和“开始实时测试”。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorProbeUi.test.mjs tests/detectorControls.test.mjs tests/operatorActualUseUi.test.mjs tests/exportSaveTarget.test.mjs tests/apiClientUrls.test.mjs tests/curveSpecs.test.mjs
+Result: PASS, 79 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+cd frontend
+npm test
+Result: PASS, 103 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_export_service.py backend/tests/integration/test_camera_api.py -q
+Result: PASS, 27 passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-08
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real-real profile (`hik_gige_mvs` + `lu92xx_modbus_rtu`, configured port `/dev/cu.usbserial-1210`)
+- Page: Operator `实时测试`, Engineering `测量配置` / `实时测量` / `历史回放`
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real`，复用 backend `http://127.0.0.1:8022` 和 frontend `http://127.0.0.1:5176/`。
+  2. 打开 Operator 实时测试页，观察左侧实际使用界面结构。
+  3. 等待温控自动轮询返回本机串口错误。
+  4. 检查 Operator 是否隐藏离线数据集、待测物类型、检测方式、相机工程字段和“读取温度”按钮。
+  5. 检查温控不可用时是否显示“真实硬件不可用”，并禁用“检测当前帧”和“开始实时测试”。
+  6. 切换工程模式，检查离线数据集 rail、数据来源切换、A/C 待测物、检测方式、高级参数、完整相机信息、完整温控信息和“读取温度”仍保留。
+  7. 尝试通过工程模式离线 run 生成当前 run 以复测导出弹窗。
+- Expected:
+  - Operator 实际使用模式只显示两个检测参数、单帧检测按钮、自动温控设置、折叠 ROI 和开始/停止。
+  - 真实硬件不可用时不回退离线/模拟，并清楚显示错误。
+  - 工程模式完整能力不被删除。
+  - 导出按钮在有当前 run 时打开保存位置弹窗，而不是立即下载。
+- Actual:
+  - Operator 页面未显示离线数据集、A/C 待测物类型、检测方式、相机工程字段或“读取温度”按钮；只显示“对比度阈值”和“最大允许跳变（像素）”。
+  - 本机温控串口 `/dev/cu.usbserial-1210` 不存在时，Operator 显示“真实硬件不可用，请检查相机和温控配置。”，并展示具体串口错误；“检测当前帧”和“开始实时测试”均禁用。
+  - 工程模式仍显示离线数据集、真实相机切换、待测物类型、检测方式、高级参数、完整相机/温控诊断和“读取温度”按钮。
+  - 导出弹窗完整浏览器流程未完成：当前 real-real 环境温控串口不可用；尝试工程模式离线 run 时 stream 卡在首帧，未产生可导出的当前 run。导出保存逻辑已由前端自动化测试覆盖 File System Access API、IndexedDB handle、fallback download 和“点击导出先打开弹窗”。
+- Result: PASS for Operator simplification, hardware-unavailable guard, and Engineering preservation; export picker full browser run flow remains pending.
+- Evidence: `output/playwright/p0084_operator_hardware_unavailable_20260708.png`
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
 
 ### P-0001 — 待测物体整体外包络识别必须稳定，不能依赖内部纹理或简单凸包
 

@@ -1836,6 +1836,61 @@ input {
   overflow-wrap: anywhere;
 }
 
+.modalBackdrop {
+  align-items: center;
+  background: rgba(23, 31, 42, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 50;
+}
+
+.exportSaveDialog {
+  background: #ffffff;
+  border: 1px solid #cfd6dd;
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.26);
+  display: grid;
+  gap: 14px;
+  max-width: 520px;
+  padding: 18px;
+  width: min(520px, 100%);
+}
+
+.exportSaveDialog header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.exportSaveDialog h2 {
+  font-size: 18px;
+  line-height: 1.25;
+  margin: 0;
+}
+
+.iconButton {
+  align-items: center;
+  background: #f6f8fa;
+  border: 1px solid #cfd6dd;
+  border-radius: 6px;
+  color: #26313f;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 18px;
+  height: 34px;
+  justify-content: center;
+  line-height: 1;
+  width: 34px;
+}
+
+.operatorReanalysisPanel {
+  align-self: start;
+}
+
 .analysisAfasToolbar {
   display: flex;
   align-items: center;

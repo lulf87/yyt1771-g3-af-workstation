@@ -534,6 +534,10 @@ export type ExportDownloadOptions = {
   url?: BlobDownloadUrlFactory;
 };
 
+export type ExportBundleBlob = ExportDownloadResult & {
+  blob: Blob;
+};
+
 export type SerialPortInfo = {
   device: string;
   name: string;
@@ -1093,6 +1097,12 @@ export async function downloadRunExportBundle(
   runId: string,
   options: ExportDownloadOptions = {}
 ): Promise<ExportDownloadResult> {
+  const bundle = await fetchRunExportBundle(runId);
+  triggerBlobDownload(bundle.blob, bundle.filename, options);
+  return { filename: bundle.filename, size: bundle.size };
+}
+
+export async function fetchRunExportBundle(runId: string): Promise<ExportBundleBlob> {
   const response = await fetch(`${API_BASE}/api/runs/${runId}/exports/download`, {
     method: "POST"
   });
@@ -1105,8 +1115,7 @@ export async function downloadRunExportBundle(
   }
   const filename = parseContentDispositionFilename(response.headers.get("Content-Disposition")) ??
     `yyt1771-g3-export-${runId}.zip`;
-  triggerBlobDownload(blob, filename, options);
-  return { filename, size: blob.size };
+  return { blob, filename, size: blob.size };
 }
 
 export async function importRunExportFile(file: File): Promise<ImportedRunView> {

@@ -140,7 +140,12 @@ export type IndustrialCurveFrameModel = IndustrialCurveFrameInput & {
 };
 
 export type RunTrendWindowMode = "latest" | "full";
-export type RunTrendPointSource = "smoothed" | "grouped" | "raw";
+export type RunTrendPointSource = "smoothed" | "grouped" | "raw" | "live_smoothed";
+
+export type LiveDisplaySmoothingOptions = {
+  enabled?: boolean;
+  windowSize?: number;
+};
 
 export type RunTrendModelOptions = {
   mode: RunTrendWindowMode;
@@ -148,6 +153,7 @@ export type RunTrendModelOptions = {
   height: number;
   yAxis?: RunTrendYAxisOptions;
   maxTemperatureConnectionGapCelsius?: number;
+  displaySmoothing?: LiveDisplaySmoothingOptions;
 };
 
 export type RunTrendYAxisRange = {
@@ -501,7 +507,7 @@ export function buildRunTrendModel(
   const allStatusData = normalizeRunTrendStatusData(analysis, frameMap);
   const visibleReferenceData = allReferenceData;
   const visibleStatusData = allStatusData;
-  const trendSource = readRunTrendCurveSource(analysis);
+  const trendSource = readRunTrendCurveSource(analysis, options.displaySmoothing);
   const previewSource = readRunTrendPreviewSource(analysis);
   const allFormalData = trendSource.points
     ? normalizeRunTrendDataPoints(trendSource.points, trendSource.source, frameMap, { preserveMissingFrameIndex: true })
@@ -659,11 +665,42 @@ export function resolveRunTrendStickyYAxisRange(
   };
 }
 
-function readRunTrendCurveSource(analysis: AnalysisCurveSource): {
+export function smoothLiveDisplaySeries(
+  points: CurvePointInput[],
+  options: LiveDisplaySmoothingOptions = {}
+): CurvePointInput[] {
+  const windowSize = Math.max(1, Math.round(options.windowSize ?? 5));
+  if (windowSize <= 1 || points.length <= 2) return points.map((point) => ({ ...point }));
+  const radius = Math.floor(windowSize / 2);
+  return points.map((point, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(points.length - 1, index + radius);
+    const values: number[] = [];
+    for (let cursor = start; cursor <= end; cursor += 1) {
+      const value = readFiniteNumber(points[cursor]?.y);
+      if (value !== null) values.push(value);
+    }
+    if (!values.length) return { ...point };
+    const y = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return { ...point, y };
+  });
+}
+
+function readRunTrendCurveSource(
+  analysis: AnalysisCurveSource,
+  displaySmoothing: LiveDisplaySmoothingOptions | undefined
+): {
   source: RunTrendPointSource;
   label: string;
   points: CurvePointInput[] | null;
 } {
+  if (displaySmoothing?.enabled && analysis.temperature_distance.length) {
+    return {
+      source: "live_smoothed",
+      label: "Live smoothed trend",
+      points: smoothLiveDisplaySeries(analysis.temperature_distance, displaySmoothing)
+    };
+  }
   return {
     source: "raw",
     label: "Live temperature-distance points",

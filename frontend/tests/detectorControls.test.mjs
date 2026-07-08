@@ -49,22 +49,28 @@ test("basic detector controls only expose contour and temporal core parameters",
   }
 });
 
-test("operator mode exposes C detector mode control without advanced detector internals", () => {
-  const match = mainSource.match(/function OperatorRunPage\(\{[\s\S]*?function OperatorSourceControls\(\{/);
-  assert.ok(match, "OperatorRunPage block should exist");
-  const block = match[0];
+test("operator actual-use mode hides object and detector mode while exposing only contrast and jump threshold", () => {
+  const pageMatch = mainSource.match(/function OperatorRunPage\(\{[\s\S]*?function OperatorDetectionParameterPanel\(\{/);
+  assert.ok(pageMatch, "OperatorRunPage block should exist");
+  const pageBlock = pageMatch[0];
+  const panelMatch = mainSource.match(/function OperatorDetectionParameterPanel\(\{[\s\S]*?function OperatorSourceControls\(\{/);
+  assert.ok(panelMatch, "OperatorDetectionParameterPanel block should exist");
+  const panelBlock = panelMatch[0];
 
-  assert.match(block, /<CDetectorModeControl/);
-  assert.match(block, /isContrastWidestSpanMode\(measurement\) \? \(/);
-  assert.match(block, /<ContrastThresholdControl/);
-  assert.match(block, /<DistanceOutlierFilterControl/);
-  assert.match(block, /Object class/);
-  assert.doesNotMatch(block, /<DetectorSetupControls/);
-  assert.doesNotMatch(block, /Advanced detection parameters/);
-  assert.doesNotMatch(block, /advancedDetectorParameters/);
+  assert.match(pageBlock, /<OperatorDetectionParameterPanel/);
+  assert.match(panelBlock, /contrast_threshold/);
+  assert.match(panelBlock, /distance_outlier_max_jump_px/);
+  assert.doesNotMatch(pageBlock, /<CDetectorModeControl/);
+  assert.doesNotMatch(pageBlock, /<DistanceOutlierFilterControl/);
+  assert.doesNotMatch(pageBlock, /Object class/);
+  assert.doesNotMatch(pageBlock, /Detection method/);
+  assert.doesNotMatch(pageBlock, /distance_outlier_filter_enabled/);
+  assert.doesNotMatch(pageBlock, /<DetectorSetupControls/);
+  assert.doesNotMatch(pageBlock, /Advanced detection parameters/);
+  assert.doesNotMatch(pageBlock, /advancedDetectorParameters/);
 });
 
-test("operator distance outlier filter exposes only enable and max jump controls", () => {
+test("engineering distance outlier filter keeps enable and max jump controls", () => {
   const match = mainSource.match(/function DistanceOutlierFilterControl\([\s\S]*?function DetectorParameterGroups\(/);
   assert.ok(match, "DistanceOutlierFilterControl block should exist");
   const block = match[0];
