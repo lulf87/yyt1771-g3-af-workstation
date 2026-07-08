@@ -43,6 +43,12 @@ from yyt1771_g3.services.live_offline_run_service import (
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.export_service import export_run, export_run_bundle
+from yyt1771_g3.services.hardware_setup_service import (
+    HardwareSetupError,
+    build_hardware_environment_report,
+    discover_hardware_cameras,
+    save_hardware_binding,
+)
 from yyt1771_g3.services.import_service import RunExportImportError, import_run_export_bytes
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
@@ -361,6 +367,25 @@ class RealCameraSetupProbeRequest(BaseModel):
 class AnalysisRecomputeRequest(BaseModel):
     afas_preprocessing_parameters: dict[str, Any] | None = None
     afas_analysis_parameters: dict[str, Any] | None = None
+
+
+class HardwareCameraBindingRequest(BaseModel):
+    backend: str = "hik_gige_mvs"
+    transport: str = "gige_vision"
+    model: str = ""
+    serial_number: str = ""
+    ip: str = ""
+    user_defined_name: str = ""
+
+
+class HardwareTemperatureBindingRequest(BaseModel):
+    backend: str = "lu92xx_modbus_rtu"
+    serial_port: str = ""
+
+
+class HardwareBindingRequest(BaseModel):
+    camera: HardwareCameraBindingRequest
+    temperature: HardwareTemperatureBindingRequest
 
 
 def _run_store() -> RunStore:
@@ -758,6 +783,65 @@ def get_hardware_profile() -> dict[str, Any]:
     }
 
 
+@app.get("/api/hardware/setup/environment")
+def get_hardware_setup_environment() -> dict[str, Any]:
+    return build_hardware_environment_report(_hardware_config())
+
+
+@app.get("/api/hardware/cameras")
+def get_hardware_cameras() -> list[dict[str, Any]]:
+    try:
+        return discover_hardware_cameras(_hardware_config())
+    except CameraUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "camera_status": "unavailable",
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+    except HardwareSetupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "camera_status": "unavailable",
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+
+
+@app.post("/api/hardware/binding/test")
+def check_hardware_binding(request: HardwareBindingRequest) -> dict[str, Any]:
+    config = _hardware_config()
+    camera_result = _test_bound_camera(config, request.camera)
+    temperature_result = _test_bound_temperature(config, request.temperature)
+    failed = camera_result["status"] == "failed" or temperature_result["status"] == "failed"
+    return {
+        "overall_status": "failed" if failed else "passed",
+        "camera": camera_result,
+        "temperature": temperature_result,
+    }
+
+
+@app.post("/api/hardware/binding")
+def save_hardware_binding_endpoint(request: HardwareBindingRequest) -> dict[str, Any]:
+    try:
+        return save_hardware_binding(
+            camera=request.camera.model_dump(mode="json"),
+            temperature=request.temperature.model_dump(mode="json"),
+        )
+    except HardwareSetupError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+
+
 @app.get("/api/temperature/serial-ports")
 def get_temperature_serial_ports() -> dict[str, Any]:
     try:
@@ -928,6 +1012,86 @@ def build_temperature_controller(config: HardwareConfig):  # noqa: ANN201
     if not config.temp.serial.port.strip():
         return None
     return LU92XXModbusRtuController(config.temp)
+
+
+def _test_bound_camera(config: HardwareConfig, camera: HardwareCameraBindingRequest) -> dict[str, Any]:
+    camera_profile = {
+        **config.camera.to_profile(),
+        **camera.model_dump(mode="json"),
+    }
+    source = None
+    try:
+        source = _build_camera_source(camera_profile)
+        frame = source.preview_frame()
+    except CameraUnavailableError as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "suggestion": "Check the selected Hik camera, SDK paths, network address, and exclusive access.",
+            "details": exc.details,
+        }
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "suggestion": "Check the selected camera and close other software using it.",
+            "details": {"error": str(exc)},
+        }
+    finally:
+        if source is not None:
+            try:
+                source.close()
+            except Exception:
+                pass
+    return {
+        "status": "passed",
+        "message": "Camera test frame captured.",
+        "suggestion": "",
+        "details": {
+            "shape": list(frame.array.shape),
+            "timestamp_ms": frame.timestamp_ms,
+            "model": str(frame.camera_meta.get("model", camera.model)),
+            "serial_number": str(frame.camera_meta.get("serial_number", camera.serial_number)),
+            "ip": str(frame.camera_meta.get("ip", camera.ip)),
+        },
+    }
+
+
+def _test_bound_temperature(config: HardwareConfig, temperature: HardwareTemperatureBindingRequest) -> dict[str, Any]:
+    bound_config = _hardware_config_with_temperature_port(config, temperature.serial_port)
+    controller = build_temperature_controller(bound_config)
+    if controller is None:
+        return {
+            "status": "failed",
+            "message": "LU92XX temperature controller is not configured.",
+            "suggestion": "Select a temperature serial port.",
+            "details": {"serial_port": temperature.serial_port},
+        }
+    try:
+        reading = controller.read_temperature()
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "suggestion": "Check the temperature controller power, Modbus address, and serial-port permissions.",
+            "details": {"error": str(exc), "serial_port": temperature.serial_port},
+        }
+    finally:
+        try:
+            controller.close()
+        except Exception:
+            pass
+    return {
+        "status": "passed",
+        "message": "Temperature controller responded.",
+        "suggestion": "",
+        "details": {
+            "timestamp_ms": reading.timestamp_ms,
+            "celsius": reading.celsius,
+            "source": reading.source,
+            "serial_port": bound_config.temp.serial.port,
+        },
+    }
 
 
 @app.post("/api/runs/{run_id}/exports")

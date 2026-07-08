@@ -28,12 +28,14 @@ import {
   fetchRunExportBundle,
   frameIndexImageUrl,
   frameImageUrl,
+  getHardwareSetupEnvironment,
   getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
   getRunAvailability,
   getOfflineDatasetSummary,
   importRunExportFile,
+  listHardwareCameras,
   listTemperatureSerialPorts,
   listOfflineDatasets,
   previewRealCamera,
@@ -44,9 +46,11 @@ import {
   releaseRealCameraPreview,
   recomputeRunAnalysis,
   runFrameImageUrl,
+  saveHardwareBinding,
   stopRealCameraRun,
   streamLiveOfflineRun,
   streamRealCameraRun,
+  testHardwareBinding,
   type ABPoint,
   type ApiErrorDetail,
   type AfasAnalysisParameters,
@@ -57,6 +61,11 @@ import {
   type DiagnosticImages,
   type MeasurementDefinition,
   type ExportArtifact,
+  type HardwareBinding,
+  type HardwareBindingSaveResponse,
+  type HardwareBindingTestResponse,
+  type HardwareCameraDevice,
+  type HardwareSetupEnvironment,
   type ImportedRunView,
   type LiveOfflineFrameEvent,
   type LiveOfflineProgressEvent,
@@ -586,6 +595,7 @@ function App() {
   const [uiMode, setUiMode] = useState<UiMode>(initialUiMode);
   const [page, setPage] = useState<Page>(() => defaultPageForUiMode(initialUiMode));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
+  const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
   const [setupSource, setSetupSource] = useState<SetupSourceKind>(() =>
     initialUiMode === "operator" ? initialOperatorDataSource : "offline_dataset"
   );
@@ -862,6 +872,11 @@ function App() {
     } finally {
       setLoadingOperatorSourceStatus(false);
     }
+  }
+
+  async function handleDeviceSetupSaved() {
+    await refreshOperatorSourceStatus();
+    await refreshSerialPorts();
   }
 
   function changeUiMode(nextMode: UiMode) {
@@ -1504,6 +1519,9 @@ function App() {
             ))}
           </select>
         </label>
+        <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
+          <Settings size={17} aria-hidden="true" />
+        </button>
         <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
           <RefreshCcw size={17} aria-hidden="true" />
         </button>
@@ -1595,11 +1613,17 @@ function App() {
               onStartRealCameraRun={startRealCameraRun}
               onReadCurrentTemperature={readCurrentTemperature}
               onRefreshSerialPorts={refreshSerialPorts}
+              onOpenDeviceSetup={() => setDeviceSetupOpen(true)}
               page={page}
             />
           ) : null}
         </section>
       </section>
+      <DeviceSetupWizard
+        open={deviceSetupOpen}
+        onClose={() => setDeviceSetupOpen(false)}
+        onSaved={handleDeviceSetupSaved}
+      />
     </main>
     </UiLanguageContext.Provider>
   );
@@ -1712,6 +1736,7 @@ function PageContent({
   onStartRealCameraRun,
   onReadCurrentTemperature,
   onRefreshSerialPorts,
+  onOpenDeviceSetup,
   page
 }: {
   dataset: OfflineDatasetListItem;
@@ -1769,6 +1794,7 @@ function PageContent({
   onStartRealCameraRun: () => void;
   onReadCurrentTemperature: () => void;
   onRefreshSerialPorts: () => void;
+  onOpenDeviceSetup: () => void;
   page: Page;
 }) {
   const language = useUiLanguage();
@@ -1922,6 +1948,7 @@ function PageContent({
         onProbeRealCameraSetup={onOperatorProbeCurrentFrame}
         onStopRun={onStopRun}
         onRefreshSerialPorts={onRefreshSerialPorts}
+        onOpenDeviceSetup={onOpenDeviceSetup}
         onRoiChange={updateRoi}
         onRoiCommit={commitRoi}
       />
@@ -2058,6 +2085,7 @@ function OperatorRunPage({
   onProbeRealCameraSetup,
   onStopRun,
   onRefreshSerialPorts,
+  onOpenDeviceSetup,
   onRoiChange,
   onRoiCommit
 }: {
@@ -2093,6 +2121,7 @@ function OperatorRunPage({
   onProbeRealCameraSetup: () => void;
   onStopRun: () => void;
   onRefreshSerialPorts: () => void;
+  onOpenDeviceSetup: () => void;
   onRoiChange: (roi: RotatedROI) => void;
   onRoiCommit: (roi: RotatedROI) => void;
 }) {
@@ -2166,6 +2195,7 @@ function OperatorRunPage({
             loading={loadingOperatorSourceStatus}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
+            onOpenDeviceSetup={onOpenDeviceSetup}
           />
         ) : null}
         <OperatorDetectionParameterPanel
@@ -2242,6 +2272,7 @@ function OperatorRunPage({
             loading={loadingOperatorSourceStatus}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
+            onOpenDeviceSetup={onOpenDeviceSetup}
           />
         ) : latestFrameUrl ? (
           <FrameCanvas
@@ -2413,20 +2444,349 @@ function OperatorSourceControls({
   );
 }
 
+const HARDWARE_SETUP_STEPS = [
+  "Environment check",
+  "Scan camera",
+  "Select temperature controller",
+  "Test binding",
+  "Save configuration"
+] as const;
+
+function DeviceSetupWizard({
+  open,
+  onClose,
+  onSaved
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const t = useUiText();
+  const [activeStep, setActiveStep] = useState(0);
+  const [environment, setEnvironment] = useState<HardwareSetupEnvironment | null>(null);
+  const [cameras, setCameras] = useState<HardwareCameraDevice[]>([]);
+  const [ports, setPorts] = useState<SerialPortInfo[]>([]);
+  const [selectedCameraKey, setSelectedCameraKey] = useState("");
+  const [selectedPort, setSelectedPort] = useState("");
+  const [testResult, setTestResult] = useState<HardwareBindingTestResponse | null>(null);
+  const [saveResult, setSaveResult] = useState<HardwareBindingSaveResponse | null>(null);
+  const [loadingWizard, setLoadingWizard] = useState(false);
+  const [testingBinding, setTestingBinding] = useState(false);
+  const [savingBinding, setSavingBinding] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setActiveStep(0);
+    setTestResult(null);
+    setSaveResult(null);
+    setError("");
+    void refreshWizardData();
+  }, [open]);
+
+  if (!open) return null;
+
+  const selectedCamera = cameras.find((camera) => hardwareCameraKey(camera) === selectedCameraKey) ?? null;
+  const binding = selectedCamera && selectedPort
+    ? {
+        camera: selectedCamera,
+        temperature: {
+          backend: "lu92xx_modbus_rtu",
+          serial_port: selectedPort
+        }
+      } satisfies HardwareBinding
+    : null;
+  const canAdvance =
+    activeStep === 0
+      ? true
+      : activeStep === 1
+        ? Boolean(selectedCamera)
+        : activeStep === 2
+          ? Boolean(selectedPort)
+          : activeStep === 3
+            ? testResult?.overall_status === "passed"
+            : true;
+
+  async function refreshWizardData() {
+    setLoadingWizard(true);
+    setError("");
+    const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
+      getHardwareSetupEnvironment(),
+      listHardwareCameras(),
+      listTemperatureSerialPorts()
+    ]);
+    if (environmentResult.status === "fulfilled") {
+      setEnvironment(environmentResult.value);
+    } else {
+      setEnvironment(null);
+      setError(environmentResult.reason instanceof Error ? environmentResult.reason.message : String(environmentResult.reason));
+    }
+    if (cameraResult.status === "fulfilled") {
+      setCameras(cameraResult.value);
+      setSelectedCameraKey((current) => current || hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value)));
+    } else {
+      setCameras([]);
+      setSelectedCameraKey("");
+      setError(cameraResult.reason instanceof Error ? cameraResult.reason.message : String(cameraResult.reason));
+    }
+    if (portResult.status === "fulfilled") {
+      setPorts(portResult.value);
+      setSelectedPort((current) => current || portResult.value[0]?.device || "");
+    } else {
+      setPorts([]);
+      setSelectedPort("");
+      setError(portResult.reason instanceof Error ? portResult.reason.message : String(portResult.reason));
+    }
+    setLoadingWizard(false);
+  }
+
+  async function runBindingTest() {
+    if (!binding) {
+      setError(t("Select camera and serial port before testing"));
+      return;
+    }
+    setTestingBinding(true);
+    setError("");
+    try {
+      const result = await testHardwareBinding(binding);
+      setTestResult(result);
+      if (result.overall_status === "passed") setActiveStep(4);
+    } catch (err) {
+      setTestResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingBinding(false);
+    }
+  }
+
+  async function saveBinding() {
+    if (!binding) {
+      setError(t("Select camera and serial port before saving"));
+      return;
+    }
+    setSavingBinding(true);
+    setError("");
+    try {
+      const result = await saveHardwareBinding(binding);
+      setSaveResult(result);
+      await onSaved();
+    } catch (err) {
+      setSaveResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingBinding(false);
+    }
+  }
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section aria-modal="true" className="deviceSetupDialog" role="dialog">
+        <header>
+          <div>
+            <h2>{t("Device setup")}</h2>
+            <p>{t("Camera and temperature controller binding")}</p>
+          </div>
+          <button aria-label={t("Cancel")} className="iconButton" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+        <ol className="wizardStepList">
+          {HARDWARE_SETUP_STEPS.map((step, index) => (
+            <li className={index === activeStep ? "active" : index < activeStep ? "complete" : ""} key={step}>
+              <button onClick={() => setActiveStep(index)} type="button">
+                <span>{index + 1}</span>
+                {t(step)}
+              </button>
+            </li>
+          ))}
+        </ol>
+        {error ? <div className="inlineError">{error}</div> : null}
+        {loadingWizard ? <div className="statusBlock">{t("Scanning")}</div> : null}
+        <div className="wizardBody">
+          {activeStep === 0 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Environment check")}</h3>
+              <HardwareCheckList checks={environment?.checks ?? []} />
+              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshWizardData} type="button">
+                <RefreshCcw size={16} aria-hidden="true" />
+                {t("Refresh checks")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 1 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Scan camera")}</h3>
+              <div className="wizardDeviceList">
+                {cameras.map((camera) => (
+                  <label className={camera.is_supported_model ? "wizardDeviceOption" : "wizardDeviceOption warning"} key={hardwareCameraKey(camera)}>
+                    <input
+                      checked={hardwareCameraKey(camera) === selectedCameraKey}
+                      disabled={!camera.is_supported_model}
+                      onChange={() => setSelectedCameraKey(hardwareCameraKey(camera))}
+                      type="radio"
+                    />
+                    <span>
+                      <strong>{camera.model || t("Unknown camera")}</strong>
+                      <small>
+                        {camera.serial_number || t("No serial")} · {camera.ip || camera.transport || t("None")}
+                      </small>
+                      {camera.user_defined_name ? <small>{camera.user_defined_name}</small> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {!cameras.length ? <div className="statusBlock">{t("No cameras found")}</div> : null}
+              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshWizardData} type="button">
+                <Camera size={16} aria-hidden="true" />
+                {t("Scan camera")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 2 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Select temperature controller")}</h3>
+              <label className="field">
+                <span>{t("Temperature serial port")}</span>
+                <select onChange={(event) => setSelectedPort(event.target.value)} value={selectedPort}>
+                  <option value="">{t("Select serial port")}</option>
+                  {ports.map((port) => (
+                    <option key={port.device || port.name} value={port.device}>
+                      {port.device || port.name} {port.description ? `· ${port.description}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!ports.length ? <div className="statusBlock">{t("No serial ports found")}</div> : null}
+              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshWizardData} type="button">
+                <Usb size={16} aria-hidden="true" />
+                {t("Refresh ports")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 3 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Test binding")}</h3>
+              <HardwareBindingSummary camera={selectedCamera} serialPort={selectedPort} />
+              {testResult ? <HardwareTestResult result={testResult} /> : null}
+              <button className="primaryButton" disabled={!binding || testingBinding} onClick={runBindingTest} type="button">
+                <Activity size={16} aria-hidden="true" />
+                {testingBinding ? t("Testing") : t("Test binding")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 4 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Save configuration")}</h3>
+              <HardwareBindingSummary camera={selectedCamera} serialPort={selectedPort} />
+              {saveResult ? (
+                <div className="inlineSuccess">
+                  {t("Device binding saved")}: {saveResult.config_path}
+                </div>
+              ) : null}
+              <div className="buttonPair">
+                <button className="primaryButton" disabled={!binding || savingBinding} onClick={saveBinding} type="button">
+                  <Settings size={16} aria-hidden="true" />
+                  {savingBinding ? t("Saving") : t("Save configuration")}
+                </button>
+                <button className="secondaryButton" onClick={onClose} type="button">
+                  {t("Finish")}
+                </button>
+              </div>
+            </section>
+          ) : null}
+        </div>
+        <footer className="wizardFooter">
+          <button className="secondaryButton" disabled={activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))} type="button">
+            {t("Back")}
+          </button>
+          <button
+            className="secondaryButton"
+            disabled={activeStep >= HARDWARE_SETUP_STEPS.length - 1 || !canAdvance}
+            onClick={() => setActiveStep((step) => Math.min(HARDWARE_SETUP_STEPS.length - 1, step + 1))}
+            type="button"
+          >
+            {t("Next")}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function HardwareCheckList({ checks }: { checks: HardwareSetupEnvironment["checks"] }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  if (!checks.length) return <div className="statusBlock">{t("No checks available")}</div>;
+  return (
+    <div className="hardwareCheckList">
+      {checks.map((check) => (
+        <article className={check.status === "passed" ? "hardwareCheck passed" : "hardwareCheck failed"} key={check.id}>
+          <div>
+            <strong>{t(check.label)}</strong>
+            <span>{t(check.status)}</span>
+          </div>
+          <p>{localizeDisplayString(check.message, language)}</p>
+          {check.suggestion ? <small>{localizeDisplayString(check.suggestion, language)}</small> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function HardwareBindingSummary({
+  camera,
+  serialPort
+}: {
+  camera: HardwareCameraDevice | null;
+  serialPort: string;
+}) {
+  const t = useUiText();
+  return (
+    <dl className="metricGrid compact">
+      <Metric label="Camera" value={camera ? `${camera.model || "Unknown camera"} / ${camera.serial_number || "No serial"}` : "None"} />
+      <Metric label="ip" value={camera?.ip || "None"} />
+      <Metric label="Temperature serial port" value={serialPort || "None"} />
+      <Metric label="Source" value={t("Real camera + real temperature controller")} />
+    </dl>
+  );
+}
+
+function HardwareTestResult({ result }: { result: HardwareBindingTestResponse }) {
+  const t = useUiText();
+  return (
+    <div className={result.overall_status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+      <strong>{t(result.overall_status === "passed" ? "Binding test passed" : "Binding test failed")}</strong>
+      <span>{t("Camera")}: {result.camera.message}</span>
+      <span>{t("Temperature")}: {result.temperature.message}</span>
+    </div>
+  );
+}
+
+function hardwareCameraKey(camera: HardwareCameraDevice | null | undefined): string {
+  if (!camera) return "";
+  return [camera.backend, camera.transport, camera.model, camera.serial_number, camera.ip].join("|");
+}
+
+function selectDefaultHardwareCamera(cameras: HardwareCameraDevice[]): HardwareCameraDevice | null {
+  return cameras.find((camera) => camera.is_selected) ?? cameras.find((camera) => camera.is_supported_model) ?? cameras[0] ?? null;
+}
+
 function RealHardwareUnavailableCard({
   loading,
   sourceStatus,
-  statusError
+  statusError,
+  onOpenDeviceSetup
 }: {
   loading: boolean;
   sourceStatus: OperatorSourceStatus | null;
   statusError: string;
+  onOpenDeviceSetup?: () => void;
 }) {
   const t = useUiText();
   return (
     <section className="operatorHardwareErrorCard" aria-live="polite">
       <h3>{t("Real hardware unavailable")}</h3>
-      <p>{loading ? t("Checking real hardware") : t("Real hardware unavailable guidance")}</p>
+      <p>{loading ? t("Checking real hardware") : t("Device binding incomplete guidance")}</p>
       {statusError ? <div className="inlineError">{statusError}</div> : null}
       {sourceStatus?.errors.length ? (
         <ul className="operatorWarningList compactList">
@@ -2434,6 +2794,12 @@ function RealHardwareUnavailableCard({
             <li key={item}>{item}</li>
           ))}
         </ul>
+      ) : null}
+      {onOpenDeviceSetup ? (
+        <button className="secondaryButton" onClick={onOpenDeviceSetup} type="button">
+          <Settings size={16} aria-hidden="true" />
+          {t("Open device setup")}
+        </button>
       ) : null}
     </section>
   );

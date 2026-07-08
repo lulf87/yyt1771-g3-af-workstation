@@ -132,11 +132,17 @@ class HardwareConfig:
 
 
 def load_hardware_config(path: str | Path | None = None) -> HardwareConfig:
-    config_path = Path(path).expanduser() if path is not None else _default_config_path()
+    config_path = hardware_config_path(path)
     if not config_path.exists():
         return HardwareConfig()
     payload = _load_yaml_mapping(config_path)
     return hardware_config_from_mapping(payload)
+
+
+def hardware_config_path(path: str | Path | None = None) -> Path:
+    if path is not None:
+        return Path(path).expanduser()
+    return _default_config_path()
 
 
 def hardware_config_from_mapping(payload: dict[str, Any]) -> HardwareConfig:

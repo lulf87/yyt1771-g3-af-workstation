@@ -100,10 +100,94 @@
 | P-0082 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real run curves | 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run→Stop 浏览器复测通过，stream 阶段事件和 temporal mask 默认关闭已验证 |
 | P-0083 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / live run trend | 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run 中正式点从 24 增至 53，停止后保存 78 点；浏览器复测通过 |
 | P-0084 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / export / live trend | 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑 | 2026-07-08 | 2026-07-08 | Codex | Operator 简化、温控不可用守卫和工程模式保留已浏览器复测；导出弹窗完整 run 流程待真机/可完成 run 环境复测 |
+| P-0085 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-09 | Codex | 待真实浏览器复测设备设置入口、环境检查、相机扫描、温控串口选择、测试与保存流程 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0085 — 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/hardware_setup_service.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`, hardware setup UI
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+当前每台新电脑、新 Hikrobot 相机和 LU92XX 温控串口都需要手动修改 `configs/local/realcamera_temp.local.yaml`，生产部署时容易选错相机、串口或 SDK 路径，也不适合操作者独立完成首次安装。
+
+#### Expected
+
+```text
+实际使用模式提供“设备设置 / 首次安装向导 / 相机与温控绑定”入口。
+真实硬件不可用时提示“未完成设备绑定，请打开设备设置选择相机和温控串口。”
+向导包含环境检查、扫描相机、选择温控串口、测试绑定、保存配置五步。
+后端提供环境检查、Hik 相机扫描、绑定测试和保存绑定 API。
+保存配置只 patch 当前硬件 YAML 的设备绑定字段，不改检测算法或 AFAS 数学逻辑。
+```
+
+#### Resolution log
+
+- 2026-07-09: 新增 `hardware_setup_service`，提供后端运行、Hik MVS SDK import、MVS 动态库路径、OS/Python 位数和温控串口读取检查。
+- 2026-07-09: 新增 `/api/hardware/setup/environment`、`/api/hardware/cameras`、`/api/hardware/binding/test`、`/api/hardware/binding`；相机扫描复用 Hik MVS lazy import，保存绑定 patch 当前 `YYT1771_G3_HARDWARE_CONFIG` 指向的 YAML。
+- 2026-07-09: 前端新增顶部“设备设置”入口和真实硬件不可用卡片中的“打开设备设置”；向导分 5 步完成环境检查、相机选择、温控串口选择、测试和保存。
+- 2026-07-09: 新增前后端自动化测试覆盖硬件环境检查、相机扫描响应、绑定测试、YAML patch 保存、前端 API client 和向导入口。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py -q
+Result: PASS, 4 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py backend/tests/integration/test_camera_api.py backend/tests/integration/test_real_camera_run_service.py backend/tests/unit/test_hardware_config.py backend/tests/unit/test_camera_lazy_import.py backend/tests/unit/test_lu92xx_modbus.py backend/tests/unit/test_simulated_temperature.py -q
+Result: PASS, 59 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+cd frontend
+npm test
+Result: PASS, 107 passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-09
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real-real hardware profile (`hik_gige_mvs` + `lu92xx_modbus_rtu`, configured port `/dev/cu.usbserial-1210`)
+- Page: Operator `实时测试`, `设备设置` wizard
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real --restart --no-open`，确认 backend `http://127.0.0.1:8022` 和 frontend `http://127.0.0.1:5176/` 可访问。
+  2. 打开 `http://127.0.0.1:5176/?mode=operator`。
+  3. 确认真实硬件不可用时显示“未完成设备绑定，请打开设备设置选择相机和温控串口。”，且“检测当前帧”和“开始实时测试”禁用。
+  4. 点击顶部“设备设置”入口，打开“设备设置 / 相机与温控绑定”弹窗。
+  5. 检查 5 步向导：环境检查、扫描相机、选择温控器、测试绑定、保存配置。
+  6. 等待环境检查返回，确认后端、OS、Python 位数、`MvCameraControl_class`、MVS 动态库路径和温控串口列表显示检查结果。
+  7. 进入“扫描相机”，确认无可发现相机时显示“未发现相机”，且下一步禁用。
+  8. 直接进入“选择温控器”，确认串口列表可读，并包含 `/dev/cu.usbserial-1210 · configured` 占位项。
+- Expected:
+  - Operator 硬件不可用提示提供“打开设备设置”。
+  - 设备设置弹窗可打开，显示 5 步向导。
+  - 环境检查和串口列表通过真实后端 API 返回。
+  - 没有可发现相机时不能继续测试/保存绑定。
+- Actual:
+  - Operator 显示设备绑定未完成提示，并禁用检测和开始实时测试。
+  - 设备设置弹窗正常打开，5 步导航完整。
+  - 环境检查中 backend、OS、Python 64-bit、Hik MVS Python binding、MVS 动态库路径和温控串口列表均显示“通过”。
+  - 相机扫描未发现相机；温控串口列表可读，显示 `/dev/cu.usbserial-1210 · configured`。未执行绑定测试或保存，避免在无可发现相机情况下写入本机硬件 YAML。
+- Result: PASS for browser entry / environment check / unavailable guard / serial-port selection; full camera binding test and save remain BLOCKED by no discoverable Hik camera in current retest session.
+- Evidence: `output/playwright/p0085_device_setup_wizard_20260709.png`
+- Fresh PR retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, confirmed the Operator unavailable guard, five-step wizard, environment checks, no-camera disabled next button, and serial-port list including `/dev/cu.usbserial-1210 · configured`. Evidence: `output/playwright/p0085_device_setup_wizard_fresh_20260709.png`. Full camera binding test/save remains blocked by no discoverable Hik camera.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
 
 ### P-0084 — 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑
 
