@@ -102,6 +102,7 @@ test("operator current-frame probe result drives image overlay without engineeri
   assert.match(operatorPage, /\(canShowCurrentSourceData \? liveRun\?\.detectionResult : null\) \?\?\s+setupProbeDetection/s);
   assert.match(operatorPage, /probe\?\.image_data_url \?\? \(isOfflineSource \? activeFrameUrl : cameraPreviewUrl\)/);
   assert.match(operatorPage, /abPoints=\{latestDetection\?\.ab_points \?\? null\}/);
+  assert.match(operatorPage, /measurementSegment=\{latestDetection\?\.measurement_segment \?\? null\}/);
   assert.match(operatorPage, /debugArtifacts=\{latestDetection\?\.debug_artifacts \?\? null\}/);
   assert.match(operatorPage, /operatorProbeSummary\(setupProbeDetection, language\)/);
   assert.doesNotMatch(operatorPage, /<SourceProvenanceBadge provenance=\{sourceProvenance\}/);

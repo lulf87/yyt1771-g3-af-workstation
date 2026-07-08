@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from yyt1771_g3.core.coordinates import roi_local_to_measurement_point
@@ -102,6 +102,28 @@ def detect_frame_with_state(
             collect_temporal_artifacts=collect_temporal_artifacts,
         )
     if detector == DetectorType.BUNDLE_ENVELOPE:
+        return _detect_contrast_widest_span(
+            frame,
+            measurement.roi,
+            measurement.detector_config,
+            frame_index=frame_index,
+            detector_name=str(DetectorType.CONTRAST_WIDEST_SPAN.value),
+            stability_state=state,
+            generate_diagnostics=generate_diagnostics,
+            collect_temporal_artifacts=collect_temporal_artifacts,
+        )
+    if detector == DetectorType.CONTRAST_WIDEST_SPAN:
+        return _detect_contrast_widest_span(
+            frame,
+            measurement.roi,
+            measurement.detector_config,
+            frame_index=frame_index,
+            detector_name=str(detector.value),
+            stability_state=state,
+            generate_diagnostics=generate_diagnostics,
+            collect_temporal_artifacts=collect_temporal_artifacts,
+        )
+    if detector == DetectorType.LEGACY_BUNDLE_ENVELOPE:
         return _detect_wire_bundle_max_width(
             frame,
             measurement.roi,
@@ -307,6 +329,121 @@ def _detect_mesh_envelope_max_width(
         generate_diagnostics=diagnostic_images_enabled,
         collect_temporal_artifacts=collect_temporal_artifacts,
     )
+    total_runtime_ms = _elapsed_ms(detector_start)
+    result.debug_artifacts["detector_runtime_ms"] = total_runtime_ms
+    result.debug_artifacts["total_detector_runtime_ms"] = total_runtime_ms
+    return result, next_state
+
+
+def _detect_contrast_widest_span(
+    frame: np.ndarray,
+    roi: RotatedROI,
+    config: DetectorConfig,
+    *,
+    frame_index: int,
+    detector_name: str,
+    stability_state: CandidateSelectionState,
+    generate_diagnostics: bool,
+    collect_temporal_artifacts: bool,
+) -> tuple[DetectionResult, CandidateSelectionState]:
+    detector_start = time.perf_counter()
+    execution_mode = _detector_execution_mode(config)
+    diagnostic_images_enabled = _generates_diagnostic_images(config, generate_diagnostics)
+    if frame.size == 0:
+        return _invalid(frame_index, "EMPTY_FRAME"), stability_state
+
+    preprocessing_start = time.perf_counter()
+    local = _warp_rotated_roi(frame, roi)
+    if local.size == 0:
+        return _invalid(frame_index, "EMPTY_ROI"), stability_state
+    gray = _to_gray(local)
+    preprocessing_runtime_ms = _elapsed_ms(preprocessing_start)
+
+    mask_start = time.perf_counter()
+    raw_mask, background_median, threshold_value = _contrast_dark_object_mask(gray, config)
+    target, rejected_noise_count, component_count = _filter_contrast_noise_components(raw_mask, config)
+    mask_runtime_ms = _elapsed_ms(mask_start)
+    mask_pixel_count = int(np.count_nonzero(target))
+    base_debug = {
+        "selected_detector": detector_name,
+        "detection_mode": "contrast_widest_span",
+        "contour_measurement_mode": "contrast_widest_span",
+        "contrast_threshold": float(config.contrast_threshold),
+        "object_polarity": "dark",
+        "roi_background_median": float(background_median),
+        "contrast_cutoff_gray": float(threshold_value),
+        "raw_mask_pixel_count": int(np.count_nonzero(raw_mask)),
+        "mask_pixel_count": mask_pixel_count,
+        "contrast_component_count": int(component_count),
+        "rejected_noise_component_count": int(rejected_noise_count),
+        "detector_execution_mode": execution_mode,
+        "preprocessing_runtime_ms": preprocessing_runtime_ms,
+        "resize_runtime_ms": 0.0,
+        "mask_runtime_ms": mask_runtime_ms,
+        "bubble_runtime_ms": 0.0,
+        "ridge_runtime_ms": 0.0,
+        "spur_prune_runtime_ms": 0.0,
+        "full_res_refine_used": False,
+        "full_res_refine_runtime_ms": 0.0,
+        "endpoint_refine_runtime_ms": 0.0,
+        "diagnostics_coordinate_space": "roi_local_full_res",
+        "processing_scale_enabled": False,
+        "processing_scale_effective": 1.0,
+        "coordinates_rescaled_to_full_res": False,
+        "processed_roi_shape": [int(gray.shape[0]), int(gray.shape[1])],
+        "full_res_roi_shape": [int(gray.shape[0]), int(gray.shape[1])],
+    }
+    min_pixels = max(2, int(config.min_window_pixels))
+    if mask_pixel_count < min_pixels:
+        return _invalid(
+            frame_index,
+            "no_contrast_object_found",
+            quality=DetectionQuality(roi_coverage=float(mask_pixel_count) / max(1.0, float(target.size))),
+            debug_artifacts={
+                **base_debug,
+                "selected_scan_v": None,
+                "selected_left_u": None,
+                "selected_right_u": None,
+                "selected_width_px": 0.0,
+                "valid_scanline_count": 0,
+            },
+        ), stability_state
+
+    envelope_start = time.perf_counter()
+    candidate, scan_debug = _contrast_widest_span_candidate(target, roi, config)
+    envelope_runtime_ms = _elapsed_ms(envelope_start)
+    if candidate is None:
+        return _invalid(
+            frame_index,
+            "no_contrast_object_found",
+            quality=DetectionQuality(roi_coverage=float(mask_pixel_count) / max(1.0, float(target.size))),
+            debug_artifacts={**base_debug, **scan_debug},
+        ), stability_state
+
+    result, next_state = _finish_candidate_detection(
+        frame_index=frame_index,
+        roi=roi,
+        config=config,
+        detector_name=detector_name,
+        stability_state=stability_state,
+        target=target,
+        diagnostic_target=target,
+        candidates=[candidate],
+        measurement_mode="contrast_widest_span",
+        extra_debug={
+            **base_debug,
+            **scan_debug,
+            "envelope_runtime_ms": envelope_runtime_ms,
+        },
+        generate_diagnostics=diagnostic_images_enabled,
+        collect_temporal_artifacts=collect_temporal_artifacts,
+    )
+    if diagnostic_images_enabled:
+        images = dict(result.debug_artifacts.get("diagnostic_images", {}))
+        images.update(_contrast_diagnostic_images(gray, target, candidate))
+        result.debug_artifacts["diagnostic_images"] = images
+        result.debug_artifacts["diagnostics_image_count"] = len(images)
+
     total_runtime_ms = _elapsed_ms(detector_start)
     result.debug_artifacts["detector_runtime_ms"] = total_runtime_ms
     result.debug_artifacts["total_detector_runtime_ms"] = total_runtime_ms
@@ -1971,6 +2108,203 @@ def _contour_full_box(
     return [point.model_dump(mode="json") for point in points], diagnostics
 
 
+def _contrast_dark_object_mask(gray: np.ndarray, config: DetectorConfig) -> tuple[np.ndarray, float, float]:
+    background_median = float(np.median(gray.astype(float))) if gray.size else 0.0
+    contrast_threshold = max(0.0, min(255.0, float(config.contrast_threshold)))
+    cutoff = max(0.0, background_median - contrast_threshold)
+    mask = gray.astype(float) <= cutoff
+    return np.asarray(mask, dtype=bool), background_median, cutoff
+
+
+def _filter_contrast_noise_components(mask: np.ndarray, config: DetectorConfig) -> tuple[np.ndarray, int, int]:
+    labels, labels_count = ndimage.label(mask, structure=np.ones((3, 3), dtype=bool))
+    kept = np.zeros_like(mask, dtype=bool)
+    rejected = 0
+    min_area = max(3, int(config.wire_min_component_area_px))
+    min_length = max(3.0, float(config.wire_min_length_px) * 0.5)
+    min_elongation = max(1.2, float(config.wire_min_elongation) * 0.65)
+    height, width = mask.shape
+    for label in range(1, labels_count + 1):
+        component = labels == label
+        area, major_length, elongation = _component_geometry(component)
+        ys, xs = np.nonzero(component)
+        if area <= 0 or len(xs) == 0:
+            continue
+        touches_edge = bool(xs.min() <= 0 or ys.min() <= 0 or xs.max() >= width - 1 or ys.max() >= height - 1)
+        keep = area >= min_area or (major_length >= min_length and elongation >= min_elongation)
+        if touches_edge and area < max(min_area * 2, 24):
+            keep = False
+        if keep:
+            kept[component] = True
+        else:
+            rejected += 1
+    return kept, rejected, labels_count
+
+
+def _contrast_widest_span_candidate(
+    mask: np.ndarray,
+    roi: RotatedROI,
+    config: DetectorConfig,
+) -> tuple[DetectionCandidate | None, dict[str, Any]]:
+    height, width = mask.shape
+    band_half = 1
+    min_pixels = max(2, int(config.min_window_pixels))
+    rows: list[dict[str, float]] = []
+    for center_v in range(height):
+        start_v = max(0, center_v - band_half)
+        end_v = min(height - 1, center_v + band_half)
+        _ys, xs = np.nonzero(mask[start_v : end_v + 1, :])
+        pixel_count = int(len(xs))
+        if pixel_count < min_pixels:
+            continue
+        left = float(np.min(xs.astype(float)))
+        right = float(np.max(xs.astype(float)))
+        row_width = right - left
+        if row_width <= 0.0:
+            continue
+        rows.append(
+            {
+                "v": float(center_v),
+                "left": left,
+                "right": right,
+                "width": row_width,
+                "pixel_count": float(pixel_count),
+                "window_start_v": float(start_v),
+                "window_end_v": float(end_v),
+            }
+        )
+
+    if not rows:
+        return None, {
+            "selected_scan_v": None,
+            "selected_left_u": None,
+            "selected_right_u": None,
+            "selected_width_px": 0.0,
+            "valid_scanline_count": 0,
+        }
+
+    selected_row = max(rows, key=lambda row: (row["width"], row["pixel_count"]))
+    left = float(selected_row["left"])
+    right = float(selected_row["right"])
+    center_v = float(selected_row["v"])
+    width_px = right - left
+    a = roi_local_to_measurement_point(roi, left, center_v)
+    b = roi_local_to_measurement_point(roi, right, center_v)
+    band_box = _contrast_scanline_band_box(mask, roi, selected_row)
+    ys, xs = np.nonzero(mask)
+    contour_box = _contrast_target_box(mask, roi) if len(xs) else band_box
+    confidence = min(1.0, 0.25 + width_px / max(1.0, float(roi.width)) * 0.65 + selected_row["pixel_count"] / max(1.0, float(mask.size)) * 8.0)
+    debug = {
+        "selected_scan_v": center_v,
+        "selected_left_u": left,
+        "selected_right_u": right,
+        "selected_width_px": width_px,
+        "valid_scanline_count": len(rows),
+        "selected_row": dict(selected_row),
+        "contour_full_box": contour_box,
+        "contour_measurement_band_box": band_box,
+        "show_measurement_band_box": True,
+    }
+    return DetectionCandidate(
+        candidate_id=f"contrast-widest-span-v-{int(round(center_v))}",
+        axis_position_px=center_v,
+        width_px=float(math.dist((a.x, a.y), (b.x, b.y))),
+        a=a,
+        b=b,
+        confidence=confidence,
+        metadata={
+            "debug_artifacts": debug,
+            "local_min_along_px": left,
+            "local_max_along_px": right,
+            "local_min_perpendicular_px": float(ys.min()) if len(ys) else center_v,
+            "local_max_perpendicular_px": float(ys.max()) if len(ys) else center_v,
+            "theta_deg": float(roi.angle_deg),
+            "contour_projection_box": contour_box,
+            "contour_full_box": contour_box,
+            "contour_measurement_band_box": band_box,
+            "contour_direction_arrow": [point.model_dump(mode="json") for point in [a, b]],
+        },
+    ), debug
+
+
+def _contrast_scanline_band_box(mask: np.ndarray, roi: RotatedROI, row: dict[str, float]) -> list[dict[str, float]]:
+    top = max(0.0, float(row["window_start_v"]))
+    bottom = min(float(mask.shape[0] - 1), float(row["window_end_v"]))
+    left = float(row["left"])
+    right = float(row["right"])
+    points = [
+        roi_local_to_measurement_point(roi, left, top),
+        roi_local_to_measurement_point(roi, right, top),
+        roi_local_to_measurement_point(roi, right, bottom),
+        roi_local_to_measurement_point(roi, left, bottom),
+    ]
+    return [point.model_dump(mode="json") for point in points]
+
+
+def _contrast_target_box(mask: np.ndarray, roi: RotatedROI) -> list[dict[str, float]]:
+    ys, xs = np.nonzero(mask)
+    left = float(xs.min())
+    right = float(xs.max())
+    top = float(ys.min())
+    bottom = float(ys.max())
+    points = [
+        roi_local_to_measurement_point(roi, left, top),
+        roi_local_to_measurement_point(roi, right, top),
+        roi_local_to_measurement_point(roi, right, bottom),
+        roi_local_to_measurement_point(roi, left, bottom),
+    ]
+    return [point.model_dump(mode="json") for point in points]
+
+
+def _contrast_diagnostic_images(
+    gray: np.ndarray,
+    mask: np.ndarray,
+    candidate: DetectionCandidate,
+) -> dict[str, dict[str, Any]]:
+    height, width = gray.shape
+    return {
+        "contrast_mask": {
+            "label": "Contrast mask",
+            "coordinates": "roi_local_full_res",
+            "width": int(width),
+            "height": int(height),
+            "data_url": _binary_mask_png_data_url(mask),
+        },
+        "selected_scanline_overlay": {
+            "label": "Selected scanline overlay",
+            "coordinates": "roi_local_full_res",
+            "width": int(width),
+            "height": int(height),
+            "data_url": _contrast_overlay_data_url(gray, candidate, draw_roi=False),
+        },
+        "final_overlay": {
+            "label": "Final overlay",
+            "coordinates": "roi_local_full_res",
+            "width": int(width),
+            "height": int(height),
+            "data_url": _contrast_overlay_data_url(gray, candidate, draw_roi=True),
+        },
+    }
+
+
+def _contrast_overlay_data_url(gray: np.ndarray, candidate: DetectionCandidate, *, draw_roi: bool) -> str:
+    image = Image.fromarray(np.asarray(gray, dtype=np.uint8)).convert("RGB")
+    draw = ImageDraw.Draw(image)
+    height, width = gray.shape
+    left = float(candidate.metadata.get("local_min_along_px", 0.0))
+    right = float(candidate.metadata.get("local_max_along_px", 0.0))
+    v = float(candidate.axis_position_px)
+    if draw_roi:
+        draw.rectangle([0, 0, max(0, width - 1), max(0, height - 1)], outline=(0, 190, 110), width=2)
+    draw.line([(left, v), (right, v)], fill=(255, 150, 20), width=3)
+    for label, x, y in [("A", left, v), ("B", right, v)]:
+        draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill=(255, 150, 20))
+        draw.text((x + 6, y - 12), label, fill=(255, 150, 20))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 def _wire_bundle_mask(gray: np.ndarray, config: DetectorConfig) -> np.ndarray:
     response = _enhance_dark_lines(gray, config.dark_enhance_bg_kernel_px)
     response = ndimage.gaussian_filter(response.astype(float), sigma=1.0)
@@ -2354,15 +2688,17 @@ def _invalid(
     selected_candidate: DetectionCandidate | None = None,
     rejected_candidates: list[DetectionCandidate] | None = None,
     quality: DetectionQuality | None = None,
+    debug_artifacts: dict[str, Any] | None = None,
 ) -> DetectionResult:
     return DetectionResult(
         frame_index=frame_index,
         detection_status=DetectionStatus.INVALID_NO_TARGET
-        if reason in {"NO_TARGET", "EMPTY_FRAME", "EMPTY_ROI"}
+        if reason in {"NO_TARGET", "EMPTY_FRAME", "EMPTY_ROI", "no_contrast_object_found"}
         else DetectionStatus.INVALID_BAD_ENVELOPE,
         raw_best_candidate=raw_best_candidate,
         selected_candidate=selected_candidate,
         rejected_candidates=rejected_candidates or [],
         quality=quality or DetectionQuality(),
         rejected_reason=reason,
+        debug_artifacts=debug_artifacts or {},
     )

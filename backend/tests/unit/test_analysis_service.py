@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from yyt1771_g3.core.enums import (
+    CurvePointStatus,
     DetectionStatus,
     DetectorType,
     ObjectClass,
@@ -95,6 +96,46 @@ def test_curve_points_for_detection_excludes_stale_temperature_from_formal_curve
     assert stale_points["distance_time"] is not None
     assert stale_points["temperature_time"] is not None
     assert stale_points["temperature_distance"] is None
+
+
+def test_analysis_excludes_distance_jump_outliers_from_formal_curve_and_afas() -> None:
+    accepted_1 = _valid_detection(1, 500.0, TemperatureSyncStatus.TEMP_SYNC_OK, 20.0)
+    accepted_2 = _valid_detection(2, 503.0, TemperatureSyncStatus.TEMP_SYNC_OK, 21.0)
+    outlier = _valid_detection(3, 550.0, TemperatureSyncStatus.TEMP_SYNC_OK, 22.0).model_copy(
+        update={
+            "curve_point_status": CurvePointStatus.DISTANCE_JUMP_OUTLIER,
+            "curve_exclusion_reason": "distance_jump_outlier",
+            "distance_outlier_filtered": True,
+            "raw_detected_distance_px": 550.0,
+            "distance_outlier_baseline_px": 501.5,
+            "distance_outlier_deviation_px": 48.5,
+        }
+    )
+    accepted_3 = _valid_detection(4, 506.0, TemperatureSyncStatus.TEMP_SYNC_OK, 23.0)
+    manifest = RunManifest(
+        run_id="run-distance-outlier-analysis",
+        dataset_id="golden_c_20260529_dev_lab",
+        measurement_definition=MeasurementDefinition(
+            measurement_id="m-distance-outlier",
+            object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+            detector=DetectorType.BUNDLE_ENVELOPE,
+            width_mode=WidthMode.MAX_WIDTH,
+            roi=RotatedROI(center_x=10.0, center_y=10.0, width=12.0, height=8.0),
+        ),
+        detection_results=[accepted_1, accepted_2, outlier, accepted_3],
+    )
+
+    analysis = build_analysis_result(manifest, analysis_id="analysis-distance-outlier")
+
+    assert [point.frame_index for point in analysis.distance_time] == [1, 2, 4]
+    assert [point.frame_index for point in analysis.temperature_distance] == [1, 2, 4]
+    assert [point.frame_index for point in analysis.raw_distance_time] == [1, 2, 4]
+    assert [point.frame_index for point in analysis.raw_temperature_distance] == [1, 2, 4]
+    assert curve_points_for_detection(outlier, distance_source="raw")["distance_time"] is None
+    assert curve_points_for_detection(outlier, distance_source="stabilized")["distance_time"] is None
+    assert 3 not in analysis.afas_preprocessing["raw"]["frame_indexes"]
+    assert analysis.all_frames[2].detection_status == DetectionStatus.VALID
+    assert analysis.all_frames[2].curve_point_status == CurvePointStatus.DISTANCE_JUMP_OUTLIER
 
 
 def test_analysis_result_keeps_raw_and_stabilized_distance_curves() -> None:

@@ -222,6 +222,11 @@ const DEFAULT_CONFIG = {
   switch_after_n_frames: 3,
   jump_limit_px: 35,
   min_confidence: 0.15,
+  contrast_threshold: 30,
+  distance_outlier_filter_enabled: true,
+  distance_outlier_reference_count: 5,
+  distance_outlier_max_jump_px: 20,
+  distance_outlier_baseline: "median" as const,
   dark_enhance_bg_kernel_px: 41,
   hysteresis_low_ratio: 0.45,
   min_component_area_px: 80,
@@ -326,13 +331,15 @@ const REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS = 500;
 
 const OBJECT_CLASS_OPTIONS = [
   { value: "A_BALLOON_ENVELOPE", label: "A balloon envelope", detector: "BalloonEnvelopeDetector", widthMode: "max_width" as const },
-  { value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "BundleEnvelopeDetector", widthMode: "max_width" as const },
+  { value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "ContrastWidestSpanDetector", widthMode: "max_width" as const },
   { value: "D_RESERVED_OBJECT", label: "D reserved object", detector: "ReservedObjectDetector", widthMode: "max_width" as const }
 ];
 
 const DETECTOR_OPTIONS = [
   { value: "BalloonEnvelopeDetector", label: "BalloonEnvelopeDetector" },
+  { value: "ContrastWidestSpanDetector", label: "ContrastWidestSpanDetector" },
   { value: "BundleEnvelopeDetector", label: "BundleEnvelopeDetector" },
+  { value: "LegacyBundleEnvelopeDetector", label: "LegacyBundleEnvelopeDetector" },
   { value: "ReservedObjectDetector", label: "ReservedObjectDetector" }
 ];
 
@@ -398,6 +405,7 @@ type DetectorParameterGroup =
   | "Spur pruning"
   | "Contour diagnostics"
   | "Temporal stability"
+  | "Distance outlier filter"
   | "Run performance"
   | "Run";
 
@@ -440,6 +448,7 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
   { key: "mask_open_kernel_px", label: "Mask open kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", title: "Larger values remove more isolated dark pixels." },
   { key: "mask_close_kernel_px", label: "Mask close kernel", type: "int", min: 1, max: 51, step: 2, group: "Mask", title: "Larger values bridge short gaps in the mesh mask." },
   { key: "mask_dilate_kernel_px", label: "Mask dilate kernel", type: "int", min: 1, max: 31, step: 2, group: "Mask", advanced: true, title: "Expands the detected mask after closing." },
+  { key: "contrast_threshold", label: "Contrast threshold", type: "float", min: 0, max: 255, step: 1, group: "Threshold", title: "Dark-object contrast below the ROI median background." },
   { key: "hysteresis_low_ratio", label: "Hysteresis low ratio", type: "float", min: 0.1, max: 0.9, step: 0.05, group: "Threshold", title: "Lower values retain weaker dark-line responses connected to strong responses." },
   { key: "dark_enhance_bg_kernel_px", label: "Dark enhance kernel", type: "int", min: 3, max: 101, step: 2, group: "Threshold", advanced: true, title: "Background estimation size for dark-line enhancement." },
   { key: "envelope_quantile", label: "Envelope quantile", type: "float", min: 0, max: 0.15, step: 0.005, group: "Envelope", title: "Ignores this fraction of extreme pixels on each side of a row window." },
@@ -492,6 +501,14 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
     { value: "hold_previous", label: "Hold previous" },
     { value: "mark_invalid", label: "Mark invalid" }
   ], title: "How Run handles unconfirmed distance jumps." },
+  { key: "distance_outlier_filter_enabled", label: "Distance outlier filter", type: "bool", group: "Distance outlier filter", title: "Drops sudden distance jumps before live curves and AFAS analysis." },
+  { key: "distance_outlier_max_jump_px", label: "Maximum allowed jump (px)", type: "float", min: 1, max: 200, step: 1, group: "Distance outlier filter", title: "Maximum accepted distance change from the recent valid baseline." },
+  { key: "distance_outlier_reference_count", label: "Reference valid point count", type: "int", min: 1, max: 20, step: 1, group: "Distance outlier filter", advanced: true, title: "Number of recent accepted distances used to compute the baseline." },
+  { key: "distance_outlier_baseline", label: "Distance outlier baseline", type: "select", group: "Distance outlier filter", advanced: true, options: [
+    { value: "last", label: "Last valid" },
+    { value: "mean", label: "Mean" },
+    { value: "median", label: "Median" }
+  ], title: "Baseline statistic used for distance jump filtering." },
   { key: "endpoint_jump_limit_px", label: "Endpoint jump limit px", type: "float", min: 0, max: 100, step: 1, group: "Temporal stability", advanced: true, title: "Suspicious-frame threshold for selected endpoint/axis jumps." },
   { key: "endpoint_jump_warmup_frames", label: "Endpoint jump warm-up", type: "int", min: 0, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Run frames ignored before endpoint-jump rerun decisions." },
   { key: "endpoint_jump_confirm_frames", label: "Endpoint jump confirm", type: "int", min: 1, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Consecutive endpoint-jump frames required before enhanced rerun." },
@@ -1990,6 +2007,7 @@ function PageContent({
             sourceShape={activeSourceShape}
             roi={measurement.roi}
             abPoints={displayedProbe?.detection_result.ab_points ?? null}
+            measurementSegment={displayedProbe?.detection_result.measurement_segment ?? null}
             debugArtifacts={displayedProbe?.detection_result.debug_artifacts ?? null}
             onRoiChange={updateRoi}
             onRoiCommit={isRealCameraSetup ? commitRoi : undefined}
@@ -2209,14 +2227,15 @@ function OperatorRunPage({
               ))}
             </select>
           </label>
-          <details className="advancedDetectorParameters">
-            <summary>{t("Advanced detection parameters")} · {t("Usually no change needed")}</summary>
-            <DetectorSetupControls
-              measurement={measurement}
-              onMeasurement={onMeasurement}
-              onPreviewAffectingChange={onPreviewAffectingChange}
-            />
-          </details>
+          <ContrastThresholdControl
+            measurement={measurement}
+            onMeasurement={onMeasurement}
+            onPreviewAffectingChange={onPreviewAffectingChange}
+          />
+          <DistanceOutlierFilterControl
+            measurement={measurement}
+            onMeasurement={onMeasurement}
+          />
         </div>
         <div className="controlStack operatorCameraStatus">
           <h3>{isOfflineSource ? t("Offline material") : t("Camera")}</h3>
@@ -2315,6 +2334,7 @@ function OperatorRunPage({
             sourceShape={latestFrameShape}
             roi={measurement.roi}
             abPoints={latestDetection?.ab_points ?? null}
+            measurementSegment={latestDetection?.measurement_segment ?? null}
             debugArtifacts={latestDetection?.debug_artifacts ?? null}
             onRoiChange={operatorRunActive ? undefined : onRoiChange}
             onRoiCommit={operatorRunActive ? undefined : onRoiCommit}
@@ -3164,6 +3184,89 @@ function DetectorSetupControls({
   );
 }
 
+function ContrastThresholdControl({
+  measurement,
+  onMeasurement,
+  onPreviewAffectingChange
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
+}) {
+  function patchContrastThreshold(value: number) {
+    const nextValue = Math.max(0, Math.min(255, Number.isFinite(value) ? value : DEFAULT_CONFIG.contrast_threshold));
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        contrast_threshold: nextValue
+      }
+    });
+  }
+
+  return (
+    <NumberField
+      label="Contrast threshold"
+      min={0}
+      max={255}
+      step={1}
+      value={measurement.detector_config.contrast_threshold ?? DEFAULT_CONFIG.contrast_threshold}
+      onChange={patchContrastThreshold}
+      onCommit={(value) => {
+        patchContrastThreshold(value);
+        onPreviewAffectingChange?.({ kind: "detector_config", key: "contrast_threshold" });
+      }}
+    />
+  );
+}
+
+function DistanceOutlierFilterControl({
+  measurement,
+  onMeasurement
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+}) {
+  const t = useUiText();
+  function patchDetectorConfig(patch: Partial<DetectorConfig>) {
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        ...patch
+      }
+    });
+  }
+
+  function patchMaximumAllowedJump(value: number) {
+    const fallback = DEFAULT_CONFIG.distance_outlier_max_jump_px;
+    const nextValue = Math.max(1, Math.min(200, Number.isFinite(value) ? value : fallback));
+    patchDetectorConfig({ distance_outlier_max_jump_px: nextValue });
+  }
+
+  return (
+    <div className="twoColumnControls">
+      <label className="field checkboxField">
+        <span>{t("Distance outlier filter")}</span>
+        <input
+          checked={measurement.detector_config.distance_outlier_filter_enabled ?? DEFAULT_CONFIG.distance_outlier_filter_enabled}
+          onChange={(event) => patchDetectorConfig({ distance_outlier_filter_enabled: event.target.checked })}
+          type="checkbox"
+        />
+      </label>
+      <NumberField
+        label="Maximum allowed jump (px)"
+        min={1}
+        max={200}
+        step={1}
+        value={measurement.detector_config.distance_outlier_max_jump_px ?? DEFAULT_CONFIG.distance_outlier_max_jump_px}
+        onChange={patchMaximumAllowedJump}
+        onCommit={patchMaximumAllowedJump}
+      />
+    </div>
+  );
+}
+
 function DetectorParameterGroups({
   definitions,
   detectorConfig,
@@ -3677,6 +3780,7 @@ function FrameCanvas({
   sourceShape,
   roi,
   abPoints,
+  measurementSegment,
   debugArtifacts,
   onRoiChange,
   onRoiCommit,
@@ -3687,6 +3791,7 @@ function FrameCanvas({
   sourceShape: number[];
   roi: RotatedROI;
   abPoints: { a: ABPoint; b: ABPoint } | null;
+  measurementSegment?: ABPoint[] | null;
   debugArtifacts?: Record<string, unknown> | null;
   onRoiChange?: (roi: RotatedROI) => void;
   onRoiCommit?: (roi: RotatedROI) => void;
@@ -3830,7 +3935,7 @@ function FrameCanvas({
             </>
           ) : null}
           {debugArtifacts ? <ContourProjectionOverlay debugArtifacts={debugArtifacts} transform={transform} /> : null}
-          {abPoints ? <ABOverlay abPoints={abPoints} transform={transform} /> : null}
+          {abPoints ? <ABOverlay abPoints={abPoints} measurementSegment={measurementSegment} transform={transform} /> : null}
         </svg>
       </div>
     </figure>
@@ -4010,16 +4115,23 @@ function arrowHeadPath(start: ABPoint, end: ABPoint, size: number, spread: numbe
 
 function ABOverlay({
   abPoints,
+  measurementSegment,
   transform
 }: {
   abPoints: { a: ABPoint; b: ABPoint };
+  measurementSegment?: ABPoint[] | null;
   transform: FrameDisplayTransform;
 }) {
+  const segment = measurementSegment ?? [abPoints.a, abPoints.b];
+  const segmentStart = segment[0] ?? abPoints.a;
+  const segmentEnd = segment[1] ?? abPoints.b;
   const a = measurementPointToDisplay(abPoints.a, transform);
   const b = measurementPointToDisplay(abPoints.b, transform);
+  const lineStart = measurementPointToDisplay(segmentStart, transform);
+  const lineEnd = measurementPointToDisplay(segmentEnd, transform);
   return (
     <g className="abOverlay">
-      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
+      <line x1={lineStart.x} y1={lineStart.y} x2={lineEnd.x} y2={lineEnd.y} />
       <circle cx={a.x} cy={a.y} r={5} />
       <circle cx={b.x} cy={b.y} r={5} />
       <text x={a.x + 8} y={a.y - 8}>
@@ -4255,6 +4367,7 @@ function RunPage({
               sourceShape={latestSourceShape}
               roi={measurement.roi}
               abPoints={abPointsForResultSource(latestDetection, resultSource)}
+              measurementSegment={latestDetection.measurement_segment ?? null}
               debugArtifacts={latestDetection.debug_artifacts}
               readOnly
             />
@@ -5771,7 +5884,13 @@ function localizeDisplayString(value: string, language: UiLanguage): string {
   if (value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
     return uiObjectClass(language, value);
   }
-  if (value === "BalloonEnvelopeDetector" || value === "BundleEnvelopeDetector" || value === "ReservedObjectDetector") {
+  if (
+    value === "BalloonEnvelopeDetector" ||
+    value === "BundleEnvelopeDetector" ||
+    value === "ContrastWidestSpanDetector" ||
+    value === "LegacyBundleEnvelopeDetector" ||
+    value === "ReservedObjectDetector"
+  ) {
     return uiDetector(language, value);
   }
   if (value === "max_width" || value === "min_width") return uiWidthMode(language, value);
@@ -5847,11 +5966,12 @@ function createDefaultMeasurement(
   dataset: OfflineDatasetListItem,
   shape: number[]
 ): MeasurementDefinition {
+  const detector = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "ContrastWidestSpanDetector" : dataset.default_detector;
   return {
     measurement_id: `${dataset.id}-default`,
     source: "offline_dataset",
     object_class: dataset.object_class,
-    detector: dataset.default_detector,
+    detector,
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: createDefaultRoiForShape(shape),
@@ -6208,9 +6328,13 @@ function distanceForResultSource(result: DetectionResult | null, source: Detecti
   return result.stabilized_distance_px ?? result.distance_px;
 }
 
+function isFormalCurveDetection(detection: DetectionResult): boolean {
+  return detection.detection_status === "VALID" && (detection.curve_point_status ?? "valid") === "valid";
+}
+
 function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
   const distance = detection.raw_distance_px;
-  if (detection.detection_status !== "VALID" || distance == null) return null;
+  if (!isFormalCurveDetection(detection) || distance == null) return null;
   return {
     x: detection.frame_timestamp_ms ?? detection.frame_index,
     y: distance,
@@ -6221,7 +6345,7 @@ function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
 
 function liveStabilizedDistancePoint(detection: DetectionResult): CurvePoint | null {
   const distance = detection.stabilized_distance_px;
-  if (detection.detection_status !== "VALID" || distance == null) return null;
+  if (!isFormalCurveDetection(detection) || distance == null) return null;
   return {
     x: detection.frame_timestamp_ms ?? detection.frame_index,
     y: distance,
@@ -6239,7 +6363,7 @@ function liveStabilizedTemperatureDistancePoint(detection: DetectionResult): Cur
 }
 
 function liveTemperatureDistancePoint(detection: DetectionResult, distance: number | null): CurvePoint | null {
-  if (detection.detection_status !== "VALID" || distance == null || detection.temperature_celsius == null) return null;
+  if (!isFormalCurveDetection(detection) || distance == null || detection.temperature_celsius == null) return null;
   if (!["TEMP_SYNC_OK", "TEMP_SYNC_INTERPOLATED"].includes(detection.temperature_sync_status)) return null;
   return {
     x: detection.temperature_celsius,

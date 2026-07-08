@@ -23,6 +23,7 @@ from yyt1771_g3.core.models import (
 )
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
+from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter
 from yyt1771_g3.services.run_detector_policy import (
     RunDetectorPolicyState,
     analyze_detection_suspicion,
@@ -81,6 +82,7 @@ def run_real_camera(
         measurement,
         artifact_dir=run_dir / "temporal_masks",
     )
+    distance_outlier_filter = CausalDistanceOutlierFilter(measurement.detector_config)
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -108,6 +110,7 @@ def run_real_camera(
                 preview_max_width=preview_max_width,
             )
             detection = temporal_stabilizer.apply(detection)
+            detection = distance_outlier_filter.apply(detection)
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
             detection_results.append(detection)
@@ -170,6 +173,7 @@ def iter_real_camera_run_events(
         measurement,
         artifact_dir=run_dir / "temporal_masks",
     )
+    distance_outlier_filter = CausalDistanceOutlierFilter(measurement.detector_config)
 
     frame_records: list[FrameRecord] = []
     temperature_records: list[TemperatureRecord] = []
@@ -200,6 +204,7 @@ def iter_real_camera_run_events(
                 preview_max_width=preview_max_width,
             )
             detection = temporal_stabilizer.apply(detection)
+            detection = distance_outlier_filter.apply(detection)
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
             detection_results.append(detection)
@@ -338,6 +343,10 @@ def _save_real_camera_run_result(
             "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
             "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
             "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
+            "distance_outlier_filter_enabled": measurement.detector_config.distance_outlier_filter_enabled,
+            "distance_outlier_reference_count": measurement.detector_config.distance_outlier_reference_count,
+            "distance_outlier_max_jump_px": measurement.detector_config.distance_outlier_max_jump_px,
+            "distance_outlier_baseline": measurement.detector_config.distance_outlier_baseline,
         },
         software={"package": "yyt1771_g3", "phase": "G3-M8"},
     )

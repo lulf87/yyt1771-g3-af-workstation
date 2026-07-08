@@ -77,13 +77,13 @@ def _write_registry(config_path: Path, dataset_root: Path) -> None:
     )
 
 
-def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object] | None = None) -> DetectionResult:
+def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object] | None = None, distance: float = 50.0) -> DetectionResult:
     candidate = DetectionCandidate(
         candidate_id=f"row-{frame_index}",
         axis_position_px=20.0,
-        width_px=50.0,
+        width_px=distance,
         a=ABPoint(x=35.0, y=20.0),
-        b=ABPoint(x=85.0, y=20.0),
+        b=ABPoint(x=35.0 + distance, y=20.0),
         confidence=0.9,
         metadata={"local_min_along_px": 10.0, "local_max_along_px": 60.0},
     )
@@ -103,6 +103,103 @@ def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object]
             **(debug or {}),
         },
     )
+
+
+def test_live_offline_run_filters_distance_jump_outliers_before_analysis(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=5)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    distances = {1: 500.0, 2: 503.0, 3: 506.0, 4: 550.0, 5: 520.0}
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        return _fake_policy_detection(frame_index, "fast", distance=distances[frame_index]), stability_state
+
+    monkeypatch.setattr(live_service, "_detect_frame_for_run", fake_detect)
+    measurement = MeasurementDefinition(
+        measurement_id="run-distance-outlier-measurement",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(
+            distance_outlier_filter_enabled=True,
+            distance_outlier_reference_count=5,
+            distance_outlier_max_jump_px=20.0,
+            distance_outlier_baseline="median",
+        ),
+    )
+
+    result = run_live_offline_dataset(
+        registry,
+        run_store,
+        dataset_id="golden_run",
+        measurement=measurement,
+        start_frame=1,
+        max_frames=5,
+        target_fps=8.0,
+    )
+
+    detections = result.manifest.detection_results
+    assert [item.curve_point_status for item in detections] == [
+        "valid",
+        "valid",
+        "valid",
+        "distance_jump_outlier",
+        "valid",
+    ]
+    assert detections[3].detection_status == DetectionStatus.VALID
+    assert detections[3].distance_px == 550.0
+    assert detections[3].distance_outlier_filtered is True
+    assert [point.frame_index for point in result.analysis.temperature_distance] == [1, 2, 3, 5]
+    assert result.manifest.config_snapshot["distance_outlier_filter_enabled"] is True
+    assert result.manifest.config_snapshot["distance_outlier_max_jump_px"] == 20.0
+
+
+def test_streamed_live_offline_run_omits_filtered_outlier_from_frame_curve_event(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=4)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    distances = {1: 500.0, 2: 503.0, 3: 506.0, 4: 550.0}
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        return _fake_policy_detection(frame_index, "fast", distance=distances[frame_index]), stability_state
+
+    monkeypatch.setattr(live_service, "_detect_frame_for_run", fake_detect)
+    measurement = MeasurementDefinition(
+        measurement_id="stream-distance-outlier-measurement",
+        object_class=ObjectClass.A_BALLOON_ENVELOPE,
+        detector=DetectorType.BALLOON_ENVELOPE,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(distance_outlier_max_jump_px=20.0),
+    )
+
+    events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=measurement,
+            start_frame=1,
+            max_frames=4,
+            target_fps=8.0,
+        )
+    )
+
+    frame_events = [event for event in events if event["event"] == "frame"]
+    assert frame_events[-1]["detection_result"]["curve_point_status"] == "distance_jump_outlier"
+    assert frame_events[-1]["curve_points"]["distance_time"] is None
+    assert frame_events[-1]["curve_points"]["temperature_distance"] is None
+    assert frame_events[-1]["curve_points"]["raw_distance_time"] is None
+    assert frame_events[-1]["curve_points"]["raw_temperature_distance"] is None
 
 
 def test_live_offline_run_saves_manifest_and_analysis(tmp_path: Path) -> None:

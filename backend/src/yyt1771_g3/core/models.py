@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yyt1771_g3.core.enums import (
+    CurvePointStatus,
     DetectionStatus,
     DetectorType,
     MeasurementCoordinateKind,
@@ -50,6 +51,7 @@ class DetectorConfig(G3Model):
     switch_after_n_frames: int = 3
     jump_limit_px: float = 35.0
     min_confidence: float = 0.15
+    contrast_threshold: float = 30.0
     dark_enhance_bg_kernel_px: int = 41
     hysteresis_low_ratio: float = 0.45
     mask_open_kernel_px: int = 3
@@ -142,6 +144,10 @@ class DetectorConfig(G3Model):
     target_temperature_celsius: float | None = None
     temperature_power_percent: float = 100.0
     temperature_serial_port: str = ""
+    distance_outlier_filter_enabled: bool = True
+    distance_outlier_reference_count: int = 5
+    distance_outlier_max_jump_px: float = 20.0
+    distance_outlier_baseline: Literal["last", "mean", "median"] = "median"
 
     @field_validator(
         "switch_after_n_frames",
@@ -198,6 +204,21 @@ class DetectorConfig(G3Model):
     @classmethod
     def _clamp_setup_preview_fps(cls, value: float) -> float:
         return max(0.0, float(value))
+
+    @field_validator("contrast_threshold")
+    @classmethod
+    def _clamp_contrast_threshold(cls, value: float) -> float:
+        return max(0.0, min(255.0, float(value)))
+
+    @field_validator("distance_outlier_reference_count")
+    @classmethod
+    def _clamp_distance_outlier_reference_count(cls, value: int) -> int:
+        return max(1, min(20, int(value)))
+
+    @field_validator("distance_outlier_max_jump_px")
+    @classmethod
+    def _clamp_distance_outlier_max_jump_px(cls, value: float) -> float:
+        return max(1.0, min(200.0, float(value)))
 
     @field_validator("temperature_serial_port")
     @classmethod
@@ -278,6 +299,7 @@ class DetectionResult(G3Model):
     frame_index: int
     detection_status: DetectionStatus
     ab_points: ABPoints | None = None
+    measurement_segment: list[ABPoint] | None = None
     distance_px: float | None = None
     raw_ab_points: ABPoints | None = None
     raw_distance_px: float | None = None
@@ -290,6 +312,15 @@ class DetectionResult(G3Model):
     rejected_candidates: list[DetectionCandidate] = Field(default_factory=list)
     quality: DetectionQuality = Field(default_factory=DetectionQuality)
     rejected_reason: str = ""
+    curve_point_status: CurvePointStatus = CurvePointStatus.VALID
+    curve_exclusion_reason: str = ""
+    raw_detected_distance_px: float | None = None
+    distance_outlier_filtered: bool = False
+    distance_outlier_baseline_px: float | None = None
+    distance_outlier_deviation_px: float | None = None
+    distance_outlier_max_jump_px: float | None = None
+    distance_outlier_reference_count: int | None = None
+    distance_outlier_reference_values: list[float] = Field(default_factory=list)
     debug_artifacts: dict[str, Any] = Field(default_factory=dict)
     temperature_sync_status: TemperatureSyncStatus = TemperatureSyncStatus.TEMP_SYNC_MISSING
     frame_timestamp_ms: int | None = None
@@ -304,12 +335,22 @@ class DetectionResult(G3Model):
         if self.detection_status == DetectionStatus.VALID:
             if self.ab_points is None or self.distance_px is None or self.selected_candidate is None:
                 raise ValueError("VALID detection requires ab_points, distance_px, and selected_candidate")
+            if self.measurement_segment is None:
+                self.measurement_segment = [self.ab_points.a, self.ab_points.b]
             if self.raw_ab_points is None:
                 self.raw_ab_points = self.ab_points
             if self.raw_distance_px is None:
                 self.raw_distance_px = self.distance_px
-        elif self.ab_points is not None or self.distance_px is not None:
+            if self.raw_detected_distance_px is None:
+                self.raw_detected_distance_px = self.distance_px
+            if self.curve_point_status == CurvePointStatus.INVALID_DETECTION:
+                self.curve_point_status = CurvePointStatus.VALID
+        elif self.ab_points is not None or self.measurement_segment is not None or self.distance_px is not None:
             raise ValueError("INVALID detection must not carry formal ab_points or distance_px")
+        elif self.curve_point_status == CurvePointStatus.VALID:
+            self.curve_point_status = CurvePointStatus.INVALID_DETECTION
+            if not self.curve_exclusion_reason:
+                self.curve_exclusion_reason = self.rejected_reason or self.detection_status.value
         return self
 
 

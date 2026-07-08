@@ -17,6 +17,7 @@ from yyt1771_g3.core.models import (
 )
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
+from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter, filter_detection_sequence
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, OfflineDatasetRegistry
 from yyt1771_g3.services.run_detector_policy import (
     RunDetectorPolicyState,
@@ -99,6 +100,7 @@ def run_live_offline_dataset(
         filter_mode="centered",
         artifact_dir=run_store.run_dir(run_id) / "temporal_masks",
     )
+    detection_results = filter_detection_sequence(detection_results, measurement.detector_config)
 
     return _save_run_result(
         run_store,
@@ -145,6 +147,7 @@ def iter_live_offline_run_events(
         measurement,
         artifact_dir=run_store.run_dir(run_id) / "temporal_masks",
     )
+    distance_outlier_filter = CausalDistanceOutlierFilter(measurement.detector_config)
 
     try:
         for processed, frame_index in enumerate(range(window.start_frame, window.end_frame + 1), start=1):
@@ -159,6 +162,7 @@ def iter_live_offline_run_events(
                 policy_state,
             )
             detection = temporal_stabilizer.apply(detection)
+            detection = distance_outlier_filter.apply(detection)
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
             detection_results.append(detection)
@@ -261,6 +265,10 @@ def _save_run_result(
             "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
             "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
             "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
+            "distance_outlier_filter_enabled": measurement.detector_config.distance_outlier_filter_enabled,
+            "distance_outlier_reference_count": measurement.detector_config.distance_outlier_reference_count,
+            "distance_outlier_max_jump_px": measurement.detector_config.distance_outlier_max_jump_px,
+            "distance_outlier_baseline": measurement.detector_config.distance_outlier_baseline,
         },
         software={"package": "yyt1771_g3", "phase": "G3-M7"},
     )

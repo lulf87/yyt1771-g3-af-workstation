@@ -17,6 +17,8 @@ class ObjectClass(StrEnum):
 class DetectorType(StrEnum):
     BALLOON_ENVELOPE = "BalloonEnvelopeDetector"
     BUNDLE_ENVELOPE = "BundleEnvelopeDetector"
+    CONTRAST_WIDEST_SPAN = "ContrastWidestSpanDetector"
+    LEGACY_BUNDLE_ENVELOPE = "LegacyBundleEnvelopeDetector"
     RESERVED_OBJECT = "ReservedObjectDetector"
 
 
@@ -44,6 +46,12 @@ class DetectionStatus(StrEnum):
     INVALID_EXTERNAL_SPECK = "INVALID_EXTERNAL_SPECK"
     INVALID_INTERNAL_EDGE_SELECTED = "INVALID_INTERNAL_EDGE_SELECTED"
     INVALID_OUT_OF_ROI = "INVALID_OUT_OF_ROI"
+
+
+class CurvePointStatus(StrEnum):
+    VALID = "valid"
+    INVALID_DETECTION = "invalid_detection"
+    DISTANCE_JUMP_OUTLIER = "distance_jump_outlier"
 
 
 class TemperatureSyncStatus(StrEnum):

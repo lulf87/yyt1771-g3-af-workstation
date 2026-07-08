@@ -16,6 +16,7 @@ from yyt1771_g3.core.models import (
     MeasurementDefinition,
     RotatedROI,
 )
+from yyt1771_g3.services import real_camera_run_service as real_service
 from yyt1771_g3.services.real_camera_run_service import _attach_temperature, iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureReading
@@ -319,6 +320,46 @@ def test_real_camera_run_default_sync_tolerance_accepts_serial_temperature_windo
         TemperatureSyncStatus.TEMP_SYNC_OK
     }
     assert len(result.analysis.temperature_distance) == 2
+
+
+def test_real_camera_run_filters_distance_outliers_before_analysis(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    run_store = RunStore(tmp_path / "runs")
+    distances = {1: 500.0, 2: 503.0, 3: 506.0, 4: 550.0, 5: 520.0}
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        return _valid_detection(frame_index=frame_index, distance=distances[frame_index]), stability_state
+
+    monkeypatch.setattr(real_service, "_detect_frame_for_run", fake_detect)
+    measurement = _real_camera_measurement(max_frames=5).model_copy(
+        update={
+            "detector_config": DetectorConfig(
+                max_frames_per_run=5,
+                distance_outlier_max_jump_px=20.0,
+                distance_outlier_reference_count=5,
+                distance_outlier_baseline="median",
+            )
+        }
+    )
+
+    result = run_real_camera(
+        run_store,
+        camera_source=FakeCameraSource(),
+        temperature_controller=FakeTemperatureController(),
+        measurement=measurement,
+        max_frames=5,
+        target_fps=10.0,
+    )
+
+    assert [item.curve_point_status for item in result.manifest.detection_results] == [
+        "valid",
+        "valid",
+        "valid",
+        "distance_jump_outlier",
+        "valid",
+    ]
+    assert result.manifest.detection_results[3].detection_status == DetectionStatus.VALID
+    assert result.manifest.detection_results[3].distance_px == 550.0
+    assert [point.frame_index for point in result.analysis.temperature_distance] == [1, 2, 3, 5]
 
 
 def test_real_camera_stream_without_frame_limit_saves_partial_run_on_close(tmp_path: Path) -> None:

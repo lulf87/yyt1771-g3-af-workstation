@@ -6,12 +6,13 @@ from zipfile import ZipFile
 
 from PIL import Image
 
-from yyt1771_g3.core.enums import DetectionStatus, DetectorType, ObjectClass, TemperatureSyncStatus, WidthMode
+from yyt1771_g3.core.enums import CurvePointStatus, DetectionStatus, DetectorType, ObjectClass, TemperatureSyncStatus, WidthMode
 from yyt1771_g3.core.models import (
     ABPoint,
     ABPoints,
     DetectionCandidate,
     DetectionResult,
+    DetectorConfig,
     MeasurementDefinition,
     RotatedROI,
     RunManifest,
@@ -28,6 +29,7 @@ def _manifest() -> RunManifest:
         detector=DetectorType.BALLOON_ENVELOPE,
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(contrast_threshold=42),
     )
     candidate = DetectionCandidate(
         candidate_id="c1",
@@ -57,10 +59,25 @@ def _manifest() -> RunManifest:
             ),
             DetectionResult(
                 frame_index=2,
-                detection_status=DetectionStatus.INVALID_NO_TARGET,
-                rejected_reason="NO_TARGET",
+                detection_status=DetectionStatus.VALID,
+                ab_points=ABPoints(a=candidate.a, b=candidate.b),
+                distance_px=55.0,
+                raw_best_candidate=candidate,
+                selected_candidate=candidate,
+                curve_point_status=CurvePointStatus.DISTANCE_JUMP_OUTLIER,
+                curve_exclusion_reason="distance_jump_outlier",
+                distance_outlier_filtered=True,
+                raw_detected_distance_px=55.0,
+                distance_outlier_baseline_px=20.0,
+                distance_outlier_deviation_px=35.0,
+                distance_outlier_max_jump_px=20.0,
+                distance_outlier_reference_count=5,
+                distance_outlier_reference_values=[20.0],
                 frame_timestamp_ms=1100,
-                temperature_sync_status=TemperatureSyncStatus.TEMP_SYNC_MISSING,
+                temperature_timestamp_ms=1100,
+                temperature_celsius=13.0,
+                temperature_delta_ms=0.0,
+                temperature_sync_status=TemperatureSyncStatus.TEMP_SYNC_OK,
             ),
         ],
         config_snapshot={"mode": "test-export"},
@@ -79,16 +96,18 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
 
     run_dir = run_store.run_dir(manifest.run_id)
     csv_text = (run_dir / "exports" / "frame_results.csv").read_text(encoding="utf-8")
-    assert "frame_index,detection_status,distance_px,raw_distance_px,stabilized_distance_px,result_display_source" in csv_text
+    assert "raw_detected_distance_px,distance_px_after_filter,distance_outlier_filtered,distance_outlier_baseline_px" in csv_text
+    assert "distance_jump_outlier" in csv_text
     assert len(csv_text.strip().splitlines()) == 3
 
     payload = json.loads((run_dir / "exports" / "run_export.json").read_text(encoding="utf-8"))
     assert "operator_data_source" in payload
     assert "provenance" in payload
     assert payload["run_manifest"]["config_snapshot"]["mode"] == "test-export"
-    assert payload["analysis_result"]["temperature_distance"][0]["frame_index"] == 1
+    assert [point["frame_index"] for point in payload["analysis_result"]["temperature_distance"]] == [1]
     parameters = json.loads((run_dir / "exports" / "parameters.json").read_text(encoding="utf-8"))
     assert parameters["measurement_definition"]["measurement_id"] == "export-m"
+    assert parameters["measurement_definition"]["detector_config"]["contrast_threshold"] == 42.0
     assert "operator_data_source" in parameters
     assert "provenance" in parameters
 
