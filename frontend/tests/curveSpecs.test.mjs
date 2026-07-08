@@ -1102,6 +1102,60 @@ test("run page exposes clear stop progress and AFAS preview semantics", () => {
   assert.match(source, /batch-updated trend reference/);
 });
 
+test("live display smoothing creates a non-mutating smoothed trend series", async () => {
+  const { buildRunTrendModel, smoothLiveDisplaySeries } = await loadCurveModule();
+  const livePoints = [
+    { x: 20, y: 100, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+    { x: 21, y: 130, frame_index: 2, sync_status: "TEMP_SYNC_OK" },
+    { x: 22, y: 160, frame_index: 3, sync_status: "TEMP_SYNC_OK" },
+    { x: 23, y: 190, frame_index: 4, sync_status: "TEMP_SYNC_OK" },
+    { x: 24, y: 220, frame_index: 5, sync_status: "TEMP_SYNC_OK" }
+  ];
+  const originalSnapshot = JSON.stringify(livePoints);
+
+  const smoothed = smoothLiveDisplaySeries(livePoints, { windowSize: 3 });
+
+  assert.deepEqual(
+    smoothed.map((point) => [point.x, point.y, point.frame_index]),
+    [
+      [20, 115, 1],
+      [21, 130, 2],
+      [22, 160, 3],
+      [23, 190, 4],
+      [24, 205, 5]
+    ]
+  );
+  assert.equal(JSON.stringify(livePoints), originalSnapshot);
+
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      temperature_distance: livePoints,
+      afas_preprocessing: {
+        smoothed: {
+          temperature_celsius: [20, 24],
+          values: [80, 260],
+          applied: true
+        }
+      },
+      afas_analysis: {}
+    },
+    {
+      mode: "full",
+      width: 900,
+      height: 420,
+      displaySmoothing: { enabled: true, windowSize: 3 }
+    }
+  );
+
+  assert.equal(model.source, "live_smoothed");
+  assert.equal(model.sourceLabel, "Live smoothed trend");
+  assert.equal(model.formalPoints.length, livePoints.length);
+  assert.equal(model.referencePoints.length, livePoints.length);
+  assert.equal(model.previewSource, "smoothed");
+  assert.equal(JSON.stringify(livePoints), originalSnapshot);
+});
+
 test("industrial curve frame model exposes shared Run and Analysis variants with readable text", async () => {
   const { buildIndustrialCurveFrameModel } = await loadCurveModule();
   const baseFrame = {

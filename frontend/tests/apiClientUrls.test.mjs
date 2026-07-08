@@ -160,6 +160,35 @@ test("export bundle download parses Content-Disposition and triggers a blob down
   }
 });
 
+test("export bundle can be fetched as a blob without triggering a browser download", async () => {
+  const { fetchRunExportBundle } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(new Blob(["zip-bytes"], { type: "application/zip" }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": "attachment; filename=\"picked-folder.zip\""
+      }
+    });
+  };
+
+  try {
+    const result = await fetchRunExportBundle("run-picker");
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/api\/runs\/run-picker\/exports\/download$/);
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(result.filename, "picked-folder.zip");
+    assert.equal(result.size, 9);
+    assert.equal(result.blob.size, 9);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("export bundle download surfaces structured backend errors", async () => {
   const { downloadRunExportBundle } = await loadApiClientModule();
   const originalFetch = globalThis.fetch;
