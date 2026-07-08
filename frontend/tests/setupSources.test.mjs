@@ -297,12 +297,14 @@ test("real camera setup refreshes live frames only for preview-affecting changes
     { kind: "detector_config", key: "envelope_step_px" },
     { kind: "detector_config", key: "mask_open_kernel_px" },
     { kind: "detector_config", key: "mask_close_kernel_px" },
-    { kind: "detector_config", key: "mask_dilate_kernel_px" }
+    { kind: "detector_config", key: "mask_dilate_kernel_px" },
+    { kind: "detector_config", key: "contrast_threshold" }
   ]) {
     assert.equal(shouldRefreshRealCameraFrameAfterSetupChange("setup", "real_camera", liveState, change), true);
   }
 
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("min_component_area_px"), true);
+  assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("contrast_threshold"), true);
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("target_temperature_celsius"), false);
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("temperature_power_percent"), false);
 

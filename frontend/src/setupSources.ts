@@ -135,6 +135,7 @@ const DEFAULT_REAL_CAMERA_CONFIG = {
   switch_after_n_frames: 3,
   jump_limit_px: 35,
   min_confidence: 0.15,
+  contrast_threshold: 30,
   min_component_area_px: 80,
   envelope_window_px: 9,
   envelope_step_px: 2,
@@ -207,6 +208,7 @@ const REAL_CAMERA_PREVIEW_AFFECTING_DETECTOR_CONFIG_KEYS = new Set([
   "min_component_area_px",
   "envelope_window_px",
   "envelope_step_px",
+  "contrast_threshold",
   "mask_open_kernel_px",
   "mask_close_kernel_px",
   "mask_dilate_kernel_px"

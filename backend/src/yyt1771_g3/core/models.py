@@ -50,6 +50,7 @@ class DetectorConfig(G3Model):
     switch_after_n_frames: int = 3
     jump_limit_px: float = 35.0
     min_confidence: float = 0.15
+    contrast_threshold: float = 30.0
     dark_enhance_bg_kernel_px: int = 41
     hysteresis_low_ratio: float = 0.45
     mask_open_kernel_px: int = 3
@@ -199,6 +200,11 @@ class DetectorConfig(G3Model):
     def _clamp_setup_preview_fps(cls, value: float) -> float:
         return max(0.0, float(value))
 
+    @field_validator("contrast_threshold")
+    @classmethod
+    def _clamp_contrast_threshold(cls, value: float) -> float:
+        return max(0.0, min(255.0, float(value)))
+
     @field_validator("temperature_serial_port")
     @classmethod
     def _strip_temperature_serial_port(cls, value: str) -> str:
@@ -278,6 +284,7 @@ class DetectionResult(G3Model):
     frame_index: int
     detection_status: DetectionStatus
     ab_points: ABPoints | None = None
+    measurement_segment: list[ABPoint] | None = None
     distance_px: float | None = None
     raw_ab_points: ABPoints | None = None
     raw_distance_px: float | None = None
@@ -304,11 +311,13 @@ class DetectionResult(G3Model):
         if self.detection_status == DetectionStatus.VALID:
             if self.ab_points is None or self.distance_px is None or self.selected_candidate is None:
                 raise ValueError("VALID detection requires ab_points, distance_px, and selected_candidate")
+            if self.measurement_segment is None:
+                self.measurement_segment = [self.ab_points.a, self.ab_points.b]
             if self.raw_ab_points is None:
                 self.raw_ab_points = self.ab_points
             if self.raw_distance_px is None:
                 self.raw_distance_px = self.distance_px
-        elif self.ab_points is not None or self.distance_px is not None:
+        elif self.ab_points is not None or self.measurement_segment is not None or self.distance_px is not None:
             raise ValueError("INVALID detection must not carry formal ab_points or distance_px")
         return self
 

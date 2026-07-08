@@ -48,6 +48,34 @@ test("basic detector controls only expose contour and temporal core parameters",
   }
 });
 
+test("operator mode exposes contrast threshold without advanced detector internals", () => {
+  const match = mainSource.match(/function OperatorRunPage\(\{[\s\S]*?function OperatorSourceControls\(\{/);
+  assert.ok(match, "OperatorRunPage block should exist");
+  const block = match[0];
+
+  assert.match(block, /<ContrastThresholdControl/);
+  assert.match(block, /Object class/);
+  assert.doesNotMatch(block, /<DetectorSetupControls/);
+  assert.doesNotMatch(block, /Advanced detection parameters/);
+  assert.doesNotMatch(block, /advancedDetectorParameters/);
+});
+
+test("C object class defaults to the contrast widest-span detector", () => {
+  const objectOptions = mainSource.match(/const OBJECT_CLASS_OPTIONS = \[[\s\S]*?\];/);
+  assert.ok(objectOptions, "OBJECT_CLASS_OPTIONS should exist");
+
+  assert.match(
+    objectOptions[0],
+    /value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "ContrastWidestSpanDetector"/
+  );
+});
+
+test("overlay prefers backend measurement_segment for A/B line drawing", () => {
+  assert.match(mainSource, /measurementSegment=\{latestDetection\?\.measurement_segment \?\? null\}/);
+  assert.match(mainSource, /function ABOverlay\(\{\s+abPoints,\s+measurementSegment,\s+transform/s);
+  assert.match(mainSource, /const segment = measurementSegment \?\? \[abPoints\.a, abPoints\.b\];/);
+});
+
 test("detector presets map to run performance defaults", () => {
   const fast = presetBlock("fast_afas_run");
   assert.match(fast, /processing_scale:\s*0\.5/);

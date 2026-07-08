@@ -65,7 +65,7 @@
 | P-0044 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis 曲线不应把重复温度 raw frame 点按帧顺序连成正式折线 | 2026-06-07 | 2026-06-07 | Codex | golden A Run + Analysis 浏览器复测已通过 |
 | P-0045 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Setup source / camera preview | Setup 页面需要统一 Source 入口并自动显示真实相机 preview | 2026-06-07 | 2026-06-08 | Codex | 真实 Hik 相机 Setup Live/Freeze/ROI/参数刷新/温控 no-refresh/formal Run measurement_definition 浏览器复测通过；LU92XX 闭环已由 P-0020 于 2026-07-06 验证 |
 | P-0046 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run trend y-axis | Run Live Trend Y 轴按 latest window 局部 min/max 自动缩放，放大 1 px 检测抖动 | 2026-06-07 | 2026-06-08 | Codex | golden A Run 页 sticky y-axis 浏览器复测已通过 |
-| P-0047 | OPEN | P1 | frontend / live offline run stop | Playwright 复测中点击 Stop 后 Run 页面仍显示 Running | 2026-06-08 | 2026-06-08 | Codex | 待单独复现并修复后做 Stop partial run 浏览器复测 |
+| P-0047 | OPEN | P1 | frontend / live offline run stop | Playwright 复测中点击 Stop 后 Run 页面仍显示 Running | 2026-06-08 | 2026-07-08 | Codex | 2026-07-08 P-0079 复测中再次观察到 Stop 后 Operator 状态未恢复；待单独修复后做 Stop partial run 浏览器复测 |
 | P-0048 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / API client / probe | Offline Probe 请求把前端 setup source 字段发给 backend，导致 422 extra_forbidden | 2026-06-08 | 2026-06-08 | Codex | golden A Setup Probe current frame 浏览器复测已通过 |
 | P-0049 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis curves | Run/Analysis temperature-distance X 轴不应使用 Latest window 或局部温度窗口 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis 浏览器复测已通过 |
 | P-0050 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / Run and Analysis y-axis | Run/Analysis temperature-distance Y 轴需兼顾完整范围、最小细节跨度和 outlier 抑制 | 2026-06-08 | 2026-06-08 | Codex | golden A Run + Analysis Y 轴浏览器复测已通过 |
@@ -94,6 +94,7 @@
 | P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
 | P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
 | P-0078 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator mode / source guard | Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端 | 2026-07-07 | 2026-07-07 | Codex | sim-sim 下已验证 Operator 真机源显示真实硬件不可用且禁用 probe/run；离线源可 probe；工程模式真实相机调试未受影响 |
+| P-0079 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector | C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数 | 2026-07-08 | 2026-07-08 | Codex | golden_c_20260529_dev_lab Operator 单帧检测 + live offline run + export parameters 浏览器复测已通过 |
 
 ---
 
@@ -5941,6 +5942,8 @@ Stop 后不应继续显示 Running。
 
 2026-06-08 P-0049 浏览器复测中再次观察到同类现象：`golden_a_20260522_dev_lab` full run 运行到约 frame `842` 后点击 `Stop`，等待 5 秒后页面仍继续增长到约 frame `919` 并显示 `Running / Stop`。本次未在 P-0049 中修复 Stop，后续仍需单独处理。
 
+2026-07-08 P-0079 浏览器复测中再次观察到同类现象：Operator 离线数据集源使用 `golden_c_20260529_dev_lab`，点击 `Stop` 后后端已保存 partial run `run-golden_c_20260529_dev_lab-20260708T112021008992Z`（12 条 detection_results、11 个 temperature-distance 点），但 Operator 页面仍显示“测量中 / 停止测试”。本次未在 P-0079 中修复 Stop 状态同步，后续仍需单独处理。
+
 #### Suspected cause
 
 待调查。可能相关路径包括：
@@ -8143,6 +8146,120 @@ Operator 的 `operatorDataSource` 与后端实际 provenance 混在一起使用�
   - `output/playwright/p0078_operator_real_hardware_unavailable_20260707.png`
   - `output/playwright/p0078_operator_offline_probe_20260707.png`
   - `output/playwright/p0078_engineering_mode_preserved_20260707.png`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0079 — C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `backend/src/yyt1771_g3/core/models.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`
+- Found date: 2026-07-08
+- Last update: 2026-07-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户要求 C 类多细支/多线束整体外包络在实际使用模式中不再依赖模板、归档线束投影、轮廓修补、支撑列、稳定投影等复杂参数，而是在当前绿色 rotated ROI 内用一个可调“对比度阈值”完成单帧检测：
+
+```text
+ROI local u 轴为测量线方向；v 轴为扫描方向。
+用 ROI 灰度中位数和 contrast_threshold 生成暗物体 mask。
+逐行或小 v band 查找目标 mask 最左/最右像素。
+选择横向跨度最大的扫描线，输出 A/B、measurement_segment 和 distance_px。
+```
+
+#### Expected
+
+```text
+C 类默认 detector 路径使用 contrast_widest_span。
+A 类 BalloonEnvelopeDetector 不受影响。
+实际使用模式只显示“待测物类型”和“对比度阈值”两个主要检测参数。
+后端 DetectionResult/debug_artifacts 记录 contrast_threshold、selected_scan_v、selected_left_u、selected_right_u、mask_pixel_count、rejected_noise_component_count 等诊断字段。
+前端 overlay 使用后端 measurement_segment 绘制 A/B 测量线，线段方向沿 ROI u 轴。
+实时曲线、结果分析和导出继续使用既有 distance_px / temperature_celsius / AFAS 逻辑。
+```
+
+#### Actual
+
+修复前 C 类默认走 `BundleEnvelopeDetector` 的归档线束投影/支撑列方案，实际使用模式还能看到模板/轮廓/稳定性/支撑列等工程参数，不符合用户要求的极简阈值操作路径。
+
+#### Fix summary
+
+- 新增 `ContrastWidestSpanDetector` / `contrast_widest_span` 路径，并让 `DetectorType.BUNDLE_ENVELOPE` 兼容入口默认路由到新算法。
+- 保留旧 C 类线束投影算法为 `LegacyBundleEnvelopeDetector`，用于工程模式回归与必要时回退。
+- `DetectorConfig` 新增 `contrast_threshold`，`DetectionResult` 新增 `measurement_segment`。
+- 新算法在 ROI local coordinates 内用暗物体对比度阈值生成 mask，过滤小噪声组件，扫描 v-band 选择最宽 u-span，并输出 A/B、distance、debug_artifacts 和诊断图。
+- 前端 C 类默认 detector 改为 `ContrastWidestSpanDetector`，实际使用模式只显示对象类型和 `ContrastThresholdControl`，工程模式保留完整检测器/参数面板。
+- 前端 overlay 优先用 `measurement_segment` 绘制橙色测量线，导出/运行沿用已有 measurement_definition 和 result 链路。
+- C 类检测审计和可选时序稳定候选重算同步接受/使用 `contrast_widest_span`，旧 C 类路径保留为 `LegacyBundleEnvelopeDetector`。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_envelope_detectors.py backend/tests/unit/test_core_models.py -q
+Result: PASS, 30 passed.
+
+cd frontend && npm test -- detectorControls.test.mjs setupSources.test.mjs operatorProbeUi.test.mjs apiClientUrls.test.mjs
+Result: PASS, 79 passed.
+
+cd frontend && ./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_golden_detector_smoke.py -q
+Result: PASS, 12 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_probe_api.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_export_service.py backend/tests/integration/test_golden_detector_smoke.py -q
+Result: PASS, 29 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_detector_audit.py backend/tests/unit/test_temporal_stabilization.py -q
+Result: PASS, 6 passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-08
+- Browser: Playwright Chromium
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab`
+- Page: Operator / 实际使用 `实时测试`
+- Steps:
+  1. 使用 `scripts/g3_fast_start.sh sim-sim --restart --no-open` 启动当前工作区前后端。
+  2. 打开 Operator 模式，切换数据来源为“离线数据集”。
+  3. 选择 `golden_c_20260529_dev_lab`，确认对象类型自动为 C 类。
+  4. 确认实际使用模式检测参数区只显示“待测物类型”和“对比度阈值”，未显示模板、轮廓修补、支撑列、投影分位数等高级参数。
+  5. 将“对比度阈值”改为 `35`，点击“检测当前帧”。
+  6. 检查 `/api/probe` 请求 measurement_definition 使用 `detector="ContrastWidestSpanDetector"` 且 `detector_config.contrast_threshold=35`。
+  7. 检查 probe 响应为 `VALID`，包含 `measurement_segment`，`debug_artifacts.detection_mode="contrast_widest_span"`，并显示 A/B overlay、正式测宽带和距离。
+  8. 点击“确认本次测试设置”，启动短 live offline run，观察实时帧、A/B overlay、当前距离和温度-距离曲线更新。
+  9. 导出刚才保存的 run bundle，检查 ZIP 内 `parameters.json` 保存 `ContrastWidestSpanDetector` 与 `contrast_threshold=35.0`。
+- Expected:
+  - C 类默认使用对比度最宽跨度检测。
+  - 单帧检测和实时测试均使用当前 `contrast_threshold`。
+  - A/B 线来自后端 `measurement_segment`，页面显示绿色 ROI、橙色 A/B 线、A/B 点和距离。
+  - temperature-distance 曲线继续使用 `distance_px` 和温度同步结果。
+  - 导出参数包含 `contrast_threshold`。
+- Actual:
+  - Operator C 类实际使用面板只显示“待测物类型”和“对比度阈值”。
+  - `/api/probe` 请求体包含 `detector="ContrastWidestSpanDetector"` 和 `contrast_threshold=35`。
+  - Probe 响应 `VALID`，`distance_px=724.0`，`measurement_segment` 长度为 2，`detection_mode="contrast_widest_span"`，`selected_left_u=545.0`，`selected_right_u=1269.0`，`rejected_noise_component_count=1619`。
+  - Live offline run 页面显示第 9/11 帧 A/B overlay、当前距离约 `724-725 px`、同步状态 `TEMP_SYNC_INTERPOLATED`、温度-距离点数 `10/11`。
+  - Run artifact `run-golden_c_20260529_dev_lab-20260708T112021008992Z` 保存 12 条 detection_results；首个有效结果保留 `measurement_segment` 与 `contrast_threshold=35.0`。
+  - 导出 ZIP `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T112021008992Z.zip` 的 `parameters.json` 中保存 `detector="ContrastWidestSpanDetector"` 和 `contrast_threshold=35.0`。
+  - 点击 Stop 后 Operator 页面仍显示“测量中 / 停止测试”，但后端已保存 partial run；该状态同步问题已登记在既有 P-0047，未纳入本次 detector PR 修复。
+- Result: PASS for P-0079 detector/UI/export criteria; Stop state remains tracked by P-0047
+- Evidence:
+  - `output/playwright/p0079_contrast_widest_span_operator_golden_c_20260708.png`
+  - `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/run_manifest.json`
+  - `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/analysis_result.json`
+  - `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T112021008992Z.zip`
 
 #### Current status
 

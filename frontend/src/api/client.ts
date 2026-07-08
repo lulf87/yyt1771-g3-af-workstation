@@ -51,6 +51,7 @@ export type DetectorConfig = {
   switch_after_n_frames?: number;
   jump_limit_px?: number;
   min_confidence?: number;
+  contrast_threshold?: number;
   dark_enhance_bg_kernel_px?: number;
   hysteresis_low_ratio?: number;
   min_component_area_px?: number;
@@ -195,6 +196,7 @@ export type DetectionResult = {
   frame_index: number;
   detection_status: string;
   ab_points: { a: ABPoint; b: ABPoint } | null;
+  measurement_segment: ABPoint[] | null;
   distance_px: number | null;
   raw_ab_points: { a: ABPoint; b: ABPoint } | null;
   raw_distance_px: number | null;

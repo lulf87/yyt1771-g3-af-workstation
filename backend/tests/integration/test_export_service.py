@@ -12,6 +12,7 @@ from yyt1771_g3.core.models import (
     ABPoints,
     DetectionCandidate,
     DetectionResult,
+    DetectorConfig,
     MeasurementDefinition,
     RotatedROI,
     RunManifest,
@@ -28,6 +29,7 @@ def _manifest() -> RunManifest:
         detector=DetectorType.BALLOON_ENVELOPE,
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
+        detector_config=DetectorConfig(contrast_threshold=42),
     )
     candidate = DetectionCandidate(
         candidate_id="c1",
@@ -89,6 +91,7 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
     assert payload["analysis_result"]["temperature_distance"][0]["frame_index"] == 1
     parameters = json.loads((run_dir / "exports" / "parameters.json").read_text(encoding="utf-8"))
     assert parameters["measurement_definition"]["measurement_id"] == "export-m"
+    assert parameters["measurement_definition"]["detector_config"]["contrast_threshold"] == 42.0
     assert "operator_data_source" in parameters
     assert "provenance" in parameters
 

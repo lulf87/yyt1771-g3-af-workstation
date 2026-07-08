@@ -9,6 +9,54 @@ from yyt1771_g3.vision import detectors
 from yyt1771_g3.vision.detectors import _mesh_envelope_candidate, detect_frame, detect_frame_with_state
 
 
+def _paint_local_pixels(frame: np.ndarray, roi: RotatedROI, pixels: list[tuple[int, int]], value: int = 30) -> None:
+    theta = np.deg2rad(roi.angle_deg)
+    cos_t = float(np.cos(theta))
+    sin_t = float(np.sin(theta))
+    for u, v in pixels:
+        du = float(u) - roi.width / 2.0
+        dv = float(v) - roi.height / 2.0
+        x = int(round(roi.center_x + du * cos_t - dv * sin_t))
+        y = int(round(roi.center_y + du * sin_t + dv * cos_t))
+        if 1 <= y < frame.shape[0] - 1 and 1 <= x < frame.shape[1] - 1:
+            frame[y - 1 : y + 2, x - 1 : x + 2] = value
+
+
+def _paint_local_vertical_strand(
+    frame: np.ndarray,
+    roi: RotatedROI,
+    *,
+    u: int,
+    v_start: int,
+    v_end: int,
+    value: int = 30,
+) -> None:
+    _paint_local_pixels(frame, roi, [(u, v) for v in range(v_start, v_end + 1)], value=value)
+
+
+def _contrast_measurement(
+    roi: RotatedROI,
+    *,
+    threshold: float = 30.0,
+    detector: DetectorType = DetectorType.CONTRAST_WIDEST_SPAN,
+) -> MeasurementDefinition:
+    return MeasurementDefinition(
+        measurement_id="contrast-synthetic",
+        object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+        detector=detector,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=roi,
+        detector_config=DetectorConfig(
+            contrast_threshold=threshold,
+            min_confidence=0.01,
+            min_window_pixels=2,
+            envelope_window_px=3,
+            envelope_step_px=1,
+            processing_scale_enabled=False,
+        ),
+    )
+
+
 def _measurement(
     *,
     object_class: ObjectClass = ObjectClass.A_BALLOON_ENVELOPE,
@@ -55,6 +103,140 @@ def test_balloon_detector_uses_archived_mesh_row_envelope_across_internal_holes(
     assert result.debug_artifacts["mesh_envelope_row_count"] > 0
     assert result.debug_artifacts["mesh_left_px"] == pytest.approx(25.0, abs=3.0)
     assert result.debug_artifacts["mesh_right_px"] == pytest.approx(95.0, abs=3.0)
+
+
+def test_contrast_widest_span_detector_finds_horizontal_roi_widest_scanline() -> None:
+    roi = RotatedROI(center_x=70.0, center_y=50.0, width=100.0, height=60.0, angle_deg=0.0)
+    frame = np.full((100, 140), 230, dtype=np.uint8)
+    for u in [20, 50, 84]:
+        _paint_local_vertical_strand(frame, roi, u=u, v_start=16, v_end=44)
+
+    result = detect_frame(frame, _contrast_measurement(roi), frame_index=1)
+
+    assert result.detection_status == DetectionStatus.VALID
+    assert result.distance_px == pytest.approx(66.0, abs=1.5)
+    assert result.raw_distance_px == pytest.approx(result.distance_px)
+    assert result.stabilized_distance_px is None
+    assert result.ab_points is not None
+    assert result.measurement_segment is not None
+    assert result.measurement_segment[0] == result.ab_points.a
+    assert result.measurement_segment[1] == result.ab_points.b
+    assert result.debug_artifacts["detection_mode"] == "contrast_widest_span"
+    assert result.debug_artifacts["contrast_threshold"] == pytest.approx(30.0)
+    assert result.debug_artifacts["object_polarity"] == "dark"
+    assert result.debug_artifacts["selected_left_u"] == pytest.approx(19.0, abs=1.5)
+    assert result.debug_artifacts["selected_right_u"] == pytest.approx(85.0, abs=1.5)
+    assert result.debug_artifacts["selected_width_px"] == pytest.approx(result.distance_px)
+    assert result.debug_artifacts["valid_scanline_count"] > 0
+
+
+def test_contrast_widest_span_detector_keeps_measurement_line_parallel_to_rotated_roi_u_axis() -> None:
+    roi = RotatedROI(center_x=80.0, center_y=70.0, width=100.0, height=60.0, angle_deg=15.0)
+    frame = np.full((150, 170), 230, dtype=np.uint8)
+    for u in [22, 46, 82]:
+        _paint_local_vertical_strand(frame, roi, u=u, v_start=18, v_end=42)
+
+    result = detect_frame(frame, _contrast_measurement(roi), frame_index=1)
+
+    assert result.detection_status == DetectionStatus.VALID
+    assert result.distance_px == pytest.approx(64.0, abs=2.0)
+    assert result.ab_points is not None
+    angle = np.rad2deg(
+        np.arctan2(
+            result.ab_points.b.y - result.ab_points.a.y,
+            result.ab_points.b.x - result.ab_points.a.x,
+        )
+    )
+    assert angle == pytest.approx(roi.angle_deg, abs=1.0)
+    assert result.debug_artifacts["selected_left_u"] == pytest.approx(20.0, abs=2.0)
+    assert result.debug_artifacts["selected_right_u"] == pytest.approx(84.0, abs=2.0)
+
+
+def test_contrast_threshold_controls_dark_object_segmentation() -> None:
+    roi = RotatedROI(center_x=70.0, center_y=50.0, width=100.0, height=60.0, angle_deg=0.0)
+    frame = np.full((100, 140), 230, dtype=np.uint8)
+    for u in [30, 80]:
+        _paint_local_vertical_strand(frame, roi, u=u, v_start=18, v_end=42, value=190)
+    _paint_local_vertical_strand(frame, roi, u=96, v_start=18, v_end=42, value=210)
+
+    low = detect_frame(frame, _contrast_measurement(roi, threshold=10), frame_index=1)
+    reasonable = detect_frame(frame, _contrast_measurement(roi, threshold=25), frame_index=1)
+    high = detect_frame(frame, _contrast_measurement(roi, threshold=50), frame_index=1)
+
+    assert low.detection_status == DetectionStatus.VALID
+    assert reasonable.detection_status == DetectionStatus.VALID
+    assert low.distance_px is not None and reasonable.distance_px is not None
+    assert low.distance_px > reasonable.distance_px
+    assert reasonable.distance_px == pytest.approx(52.0, abs=1.5)
+    assert high.detection_status == DetectionStatus.INVALID_NO_TARGET
+    assert high.rejected_reason == "no_contrast_object_found"
+    assert reasonable.debug_artifacts["contrast_threshold"] == pytest.approx(25.0)
+
+
+def test_contrast_widest_span_rejects_isolated_noise_before_span_selection() -> None:
+    roi = RotatedROI(center_x=70.0, center_y=50.0, width=100.0, height=60.0, angle_deg=0.0)
+    frame = np.full((100, 140), 230, dtype=np.uint8)
+    for u in [30, 80]:
+        _paint_local_vertical_strand(frame, roi, u=u, v_start=18, v_end=42)
+    _paint_local_pixels(frame, roi, [(97, 30)], value=20)
+
+    result = detect_frame(frame, _contrast_measurement(roi), frame_index=1)
+
+    assert result.detection_status == DetectionStatus.VALID
+    assert result.distance_px == pytest.approx(52.0, abs=1.5)
+    assert result.debug_artifacts["rejected_noise_component_count"] > 0
+    assert result.debug_artifacts["selected_right_u"] < 90.0
+
+
+def test_contrast_widest_span_defaults_to_dark_object_polarity() -> None:
+    roi = RotatedROI(center_x=50.0, center_y=40.0, width=80.0, height=50.0, angle_deg=0.0)
+    frame = np.full((80, 100), 245, dtype=np.uint8)
+    for u in [18, 58]:
+        _paint_local_vertical_strand(frame, roi, u=u, v_start=12, v_end=34, value=80)
+
+    result = detect_frame(frame, _contrast_measurement(roi, threshold=30), frame_index=1)
+
+    assert result.detection_status == DetectionStatus.VALID
+    assert result.debug_artifacts["object_polarity"] == "dark"
+    assert result.debug_artifacts["roi_background_median"] == pytest.approx(245.0, abs=1.0)
+
+
+def test_contrast_widest_span_returns_invalid_when_no_contrast_object_is_found() -> None:
+    roi = RotatedROI(center_x=50.0, center_y=40.0, width=80.0, height=50.0, angle_deg=0.0)
+    frame = np.full((80, 100), 245, dtype=np.uint8)
+
+    result = detect_frame(frame, _contrast_measurement(roi, threshold=30), frame_index=1)
+
+    assert result.detection_status == DetectionStatus.INVALID_NO_TARGET
+    assert result.ab_points is None
+    assert result.distance_px is None
+    assert result.rejected_reason == "no_contrast_object_found"
+    assert result.debug_artifacts["detection_mode"] == "contrast_widest_span"
+    assert result.debug_artifacts["mask_pixel_count"] == 0
+
+
+def test_c_bundle_default_detector_path_uses_contrast_widest_span_without_changing_a_class() -> None:
+    c_roi = RotatedROI(center_x=70.0, center_y=50.0, width=100.0, height=60.0, angle_deg=0.0)
+    c_frame = np.full((100, 140), 230, dtype=np.uint8)
+    for u in [26, 86]:
+        _paint_local_vertical_strand(c_frame, c_roi, u=u, v_start=18, v_end=42)
+
+    c_result = detect_frame(
+        c_frame,
+        _contrast_measurement(c_roi, detector=DetectorType.BUNDLE_ENVELOPE),
+        frame_index=1,
+    )
+
+    assert c_result.detection_status == DetectionStatus.VALID
+    assert c_result.debug_artifacts["detection_mode"] == "contrast_widest_span"
+    assert c_result.debug_artifacts["contour_measurement_mode"] == "contrast_widest_span"
+
+    a_frame = np.full((80, 120), 245, dtype=np.uint8)
+    a_frame[20:61, 25:96] = 35
+    a_result = detect_frame(a_frame, _measurement(), frame_index=1)
+
+    assert a_result.detection_status == DetectionStatus.VALID
+    assert a_result.debug_artifacts["contour_measurement_mode"] == "archived_mesh_envelope_rows"
 
 
 def test_detector_config_processing_scale_defaults_and_clamp() -> None:
@@ -346,7 +528,7 @@ def test_bundle_detector_measures_multi_strand_group_not_single_strand_width() -
 
     result = detect_frame(
         frame,
-        _measurement(object_class=ObjectClass.C_BUNDLE_ENVELOPE, detector=DetectorType.BUNDLE_ENVELOPE),
+        _measurement(object_class=ObjectClass.C_BUNDLE_ENVELOPE, detector=DetectorType.LEGACY_BUNDLE_ENVELOPE),
         frame_index=1,
     )
 

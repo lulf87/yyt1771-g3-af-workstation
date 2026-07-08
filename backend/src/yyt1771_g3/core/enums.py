@@ -17,6 +17,8 @@ class ObjectClass(StrEnum):
 class DetectorType(StrEnum):
     BALLOON_ENVELOPE = "BalloonEnvelopeDetector"
     BUNDLE_ENVELOPE = "BundleEnvelopeDetector"
+    CONTRAST_WIDEST_SPAN = "ContrastWidestSpanDetector"
+    LEGACY_BUNDLE_ENVELOPE = "LegacyBundleEnvelopeDetector"
     RESERVED_OBJECT = "ReservedObjectDetector"
 
 

@@ -23,7 +23,7 @@ from yyt1771_g3.vision.stability import CandidateSelectionState
             "golden_c_20260529_dev_lab",
             ObjectClass.C_BUNDLE_ENVELOPE,
             DetectorType.BUNDLE_ENVELOPE,
-            "archived_wire_bundle_projection",
+            "contrast_widest_span",
         ),
     ],
 )
@@ -346,7 +346,7 @@ def test_golden_c_user_roi_adjacent_frames_keep_stable_bundle_envelope() -> None
     measurement = MeasurementDefinition(
         measurement_id="p0027-c-adjacent-frame-regression",
         object_class=ObjectClass.C_BUNDLE_ENVELOPE,
-        detector=DetectorType.BUNDLE_ENVELOPE,
+        detector=DetectorType.LEGACY_BUNDLE_ENVELOPE,
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(
             center_x=1062.83,
@@ -380,7 +380,7 @@ def test_golden_c_user_roi_mid_run_support_columns_do_not_oscillate() -> None:
     measurement = MeasurementDefinition(
         measurement_id="p0030-c-mid-run-support-regression",
         object_class=ObjectClass.C_BUNDLE_ENVELOPE,
-        detector=DetectorType.BUNDLE_ENVELOPE,
+        detector=DetectorType.LEGACY_BUNDLE_ENVELOPE,
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(
             center_x=1062.83,
@@ -424,7 +424,7 @@ def test_golden_c_user_roi_continuous_left_branch_is_part_of_bundle_envelope() -
     measurement = MeasurementDefinition(
         measurement_id="p0035-c-continuous-left-branch-regression",
         object_class=ObjectClass.C_BUNDLE_ENVELOPE,
-        detector=DetectorType.BUNDLE_ENVELOPE,
+        detector=DetectorType.LEGACY_BUNDLE_ENVELOPE,
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(
             center_x=957.6,
@@ -470,7 +470,7 @@ def test_golden_c_user_roi_remaining_support_warning_ranges_are_temporally_stabl
     measurement = MeasurementDefinition(
         measurement_id="p0030-c-remaining-support-regression",
         object_class=ObjectClass.C_BUNDLE_ENVELOPE,
-        detector=DetectorType.BUNDLE_ENVELOPE,
+        detector=DetectorType.LEGACY_BUNDLE_ENVELOPE,
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(
             center_x=1062.83,
