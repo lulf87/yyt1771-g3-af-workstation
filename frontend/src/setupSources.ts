@@ -253,6 +253,7 @@ export function createRealCameraMeasurementFromShape(
     source: "real_camera",
     object_class: previous?.object_class ?? "A_BALLOON_ENVELOPE",
     detector: previous?.detector ?? "BalloonEnvelopeDetector",
+    detector_mode: previous?.detector_mode ?? "default",
     width_mode: previous?.width_mode ?? "max_width",
     measurement_coordinates: "source_pixel",
     roi,

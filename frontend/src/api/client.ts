@@ -175,6 +175,7 @@ export type MeasurementDefinition = {
   source: "offline_dataset" | "real_camera";
   object_class: string;
   detector: string;
+  detector_mode?: "default" | "c_envelope_legacy" | "contrast_widest_span";
   width_mode: "max_width" | "min_width";
   measurement_coordinates: "source_pixel";
   roi: RotatedROI;

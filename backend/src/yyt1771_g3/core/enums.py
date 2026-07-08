@@ -22,6 +22,12 @@ class DetectorType(StrEnum):
     RESERVED_OBJECT = "ReservedObjectDetector"
 
 
+class DetectorMode(StrEnum):
+    DEFAULT = "default"
+    C_ENVELOPE_LEGACY = "c_envelope_legacy"
+    CONTRAST_WIDEST_SPAN = "contrast_widest_span"
+
+
 class WidthMode(StrEnum):
     MAX_WIDTH = "max_width"
     MIN_WIDTH = "min_width"

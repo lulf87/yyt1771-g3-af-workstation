@@ -327,6 +327,9 @@ const ZH_TEXT: Record<string, string> = {
   "A balloon envelope": "A 类球囊/网状结构整体外包络",
   "C bundle envelope": "C 类多细支/多线束整体外包络",
   "D reserved object": "D 类预留对象",
+  "Detection method": "检测方式",
+  "Original envelope detection": "原始外包络检测",
+  "Contrast widest-span detection": "对比度最宽跨度检测",
   BalloonEnvelopeDetector: "球囊/网状结构外包络检测器",
   BundleEnvelopeDetector: "多细支/线束整体外包络检测器",
   ContrastWidestSpanDetector: "对比度最宽跨度检测器",
@@ -487,6 +490,12 @@ export function uiObjectClass(language: UiLanguage, value: string): string {
 }
 
 export function uiDetector(language: UiLanguage, value: string): string {
+  return uiValue(language, value);
+}
+
+export function uiDetectorMode(language: UiLanguage, value: string): string {
+  if (value === "default" || value === "c_envelope_legacy") return uiText(language, "Original envelope detection");
+  if (value === "contrast_widest_span") return uiText(language, "Contrast widest-span detection");
   return uiValue(language, value);
 }
 

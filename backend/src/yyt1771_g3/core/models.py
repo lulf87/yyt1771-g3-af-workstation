@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from yyt1771_g3.core.enums import (
     CurvePointStatus,
+    DetectorMode,
     DetectionStatus,
     DetectorType,
     MeasurementCoordinateKind,
@@ -231,6 +232,7 @@ class MeasurementDefinition(G3Model):
     source: MeasurementSource = MeasurementSource.OFFLINE_DATASET
     object_class: ObjectClass
     detector: DetectorType
+    detector_mode: DetectorMode = DetectorMode.DEFAULT
     width_mode: WidthMode = WidthMode.MAX_WIDTH
     measurement_coordinates: MeasurementCoordinateKind = MeasurementCoordinateKind.SOURCE_PIXEL
     roi: RotatedROI

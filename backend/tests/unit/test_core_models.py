@@ -45,9 +45,34 @@ def test_measurement_definition_json_round_trip() -> None:
     payload = measurement.model_dump(mode="json")
 
     assert payload["measurement_coordinates"] == "source_pixel"
+    assert payload["detector_mode"] == "default"
     assert payload["roi"]["type"] == "rotated_rect"
     assert payload["detector_config"]["tie_width_epsilon_px"] == 2.0
     assert MeasurementDefinition.model_validate(payload) == measurement
+
+
+def test_measurement_definition_defaults_missing_detector_mode_for_legacy_payloads() -> None:
+    payload = {
+        "measurement_id": "legacy-c-default",
+        "object_class": "C_BUNDLE_ENVELOPE",
+        "detector": "BundleEnvelopeDetector",
+        "width_mode": "max_width",
+        "measurement_coordinates": "source_pixel",
+        "roi": {
+            "type": "rotated_rect",
+            "center_x": 20.0,
+            "center_y": 20.0,
+            "width": 30.0,
+            "height": 12.0,
+            "angle_deg": 0.0,
+        },
+    }
+
+    measurement = MeasurementDefinition.model_validate(payload)
+
+    assert measurement.detector_mode == "default"
+    assert measurement.object_class == ObjectClass.C_BUNDLE_ENVELOPE
+    assert measurement.detector == DetectorType.BUNDLE_ENVELOPE
 
 
 def test_detector_config_exposes_basic_contour_and_temporal_controls() -> None:

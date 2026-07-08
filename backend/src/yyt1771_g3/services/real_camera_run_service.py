@@ -326,6 +326,8 @@ def _save_real_camera_run_result(
             "mode": "real_camera_run",
             "operator_data_source": "real_camera",
             "provenance": provenance,
+            "detector_mode": measurement.detector_mode,
+            "contrast_threshold": measurement.detector_config.contrast_threshold,
             "max_frames": max_frames,
             "processed_frames": len(frame_records),
             "stop_reason": stop_reason,

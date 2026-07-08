@@ -144,6 +144,7 @@ import {
   readInitialUiLanguage,
   uiDatasetLabel,
   uiDetector,
+  uiDetectorMode,
   uiNone,
   uiNumberSuffix,
   uiObjectClass,
@@ -331,9 +332,15 @@ const REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS = 500;
 
 const OBJECT_CLASS_OPTIONS = [
   { value: "A_BALLOON_ENVELOPE", label: "A balloon envelope", detector: "BalloonEnvelopeDetector", widthMode: "max_width" as const },
-  { value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "ContrastWidestSpanDetector", widthMode: "max_width" as const },
+  { value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "BundleEnvelopeDetector", widthMode: "max_width" as const },
   { value: "D_RESERVED_OBJECT", label: "D reserved object", detector: "ReservedObjectDetector", widthMode: "max_width" as const }
 ];
+
+const C_DETECTOR_MODE_OPTIONS = [
+  { value: "default", label: "Original envelope detection" },
+  { value: "c_envelope_legacy", label: "Original envelope detection" },
+  { value: "contrast_widest_span", label: "Contrast widest-span detection" }
+] as const;
 
 const DETECTOR_OPTIONS = [
   { value: "BalloonEnvelopeDetector", label: "BalloonEnvelopeDetector" },
@@ -2185,6 +2192,7 @@ function OperatorRunPage({
       ...measurement,
       object_class: value,
       detector: option?.detector ?? measurement.detector,
+      detector_mode: "default",
       width_mode: option?.widthMode ?? "max_width"
     });
     onPreviewAffectingChange({ kind: "object_class" });
@@ -2227,11 +2235,21 @@ function OperatorRunPage({
               ))}
             </select>
           </label>
-          <ContrastThresholdControl
-            measurement={measurement}
-            onMeasurement={onMeasurement}
-            onPreviewAffectingChange={onPreviewAffectingChange}
-          />
+          {measurement.object_class === "C_BUNDLE_ENVELOPE" ? (
+            <CDetectorModeControl
+              disabled={operatorRunActive}
+              measurement={measurement}
+              onMeasurement={onMeasurement}
+              onPreviewAffectingChange={onPreviewAffectingChange}
+            />
+          ) : null}
+          {isContrastWidestSpanMode(measurement) ? (
+            <ContrastThresholdControl
+              measurement={measurement}
+              onMeasurement={onMeasurement}
+              onPreviewAffectingChange={onPreviewAffectingChange}
+            />
+          ) : null}
           <DistanceOutlierFilterControl
             measurement={measurement}
             onMeasurement={onMeasurement}
@@ -3112,6 +3130,7 @@ function DetectorSetupControls({
       {
         object_class: value,
         detector: option?.detector ?? measurement.detector,
+        detector_mode: "default",
         width_mode: option?.widthMode ?? "max_width"
       },
       { kind: "object_class" }
@@ -3131,6 +3150,13 @@ function DetectorSetupControls({
           ))}
         </select>
       </label>
+      {measurement.object_class === "C_BUNDLE_ENVELOPE" ? (
+        <CDetectorModeControl
+          measurement={measurement}
+          onMeasurement={onMeasurement}
+          onPreviewAffectingChange={onPreviewAffectingChange}
+        />
+      ) : null}
       <div className="detectorPresetGroup">
         {DETECTOR_PRESETS.map((preset) => (
           <button className="secondaryButton compactButton" key={preset.id} onClick={() => applyDetectorPreset(preset.patch)} type="button">
@@ -3182,6 +3208,52 @@ function DetectorSetupControls({
       </details>
     </div>
   );
+}
+
+function CDetectorModeControl({
+  measurement,
+  onMeasurement,
+  onPreviewAffectingChange,
+  disabled = false
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
+  disabled?: boolean;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+
+  function changeDetectorMode(value: MeasurementDefinition["detector_mode"]) {
+    const normalized = value ?? "default";
+    onMeasurement({
+      ...measurement,
+      detector: normalized === "contrast_widest_span" ? "ContrastWidestSpanDetector" : "BundleEnvelopeDetector",
+      detector_mode: normalized
+    });
+    onPreviewAffectingChange?.({ kind: "detector" });
+  }
+
+  return (
+    <label className="field">
+      <span>{t("Detection method")}</span>
+      <select
+        disabled={disabled}
+        onChange={(event) => changeDetectorMode(event.target.value as MeasurementDefinition["detector_mode"])}
+        value={measurement.detector_mode ?? "default"}
+      >
+        {C_DETECTOR_MODE_OPTIONS.filter((option) => option.value !== "c_envelope_legacy" || measurement.detector_mode === "c_envelope_legacy").map((option) => (
+          <option key={option.value} value={option.value}>
+            {uiDetectorMode(language, option.value)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function isContrastWidestSpanMode(measurement: MeasurementDefinition): boolean {
+  return measurement.object_class === "C_BUNDLE_ENVELOPE" && measurement.detector_mode === "contrast_widest_span";
 }
 
 function ContrastThresholdControl({
@@ -5966,12 +6038,12 @@ function createDefaultMeasurement(
   dataset: OfflineDatasetListItem,
   shape: number[]
 ): MeasurementDefinition {
-  const detector = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "ContrastWidestSpanDetector" : dataset.default_detector;
   return {
     measurement_id: `${dataset.id}-default`,
     source: "offline_dataset",
     object_class: dataset.object_class,
-    detector,
+    detector: dataset.default_detector,
+    detector_mode: "default",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: createDefaultRoiForShape(shape),

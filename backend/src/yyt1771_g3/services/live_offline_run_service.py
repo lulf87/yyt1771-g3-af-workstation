@@ -255,6 +255,8 @@ def _save_run_result(
             "mode": "live_offline_run",
             "operator_data_source": "offline_dataset",
             "provenance": resolved_provenance,
+            "detector_mode": measurement.detector_mode,
+            "contrast_threshold": measurement.detector_config.contrast_threshold,
             "start_frame": start_frame,
             "max_frames": frame_limit,
             "processed_frames": len(frame_records),

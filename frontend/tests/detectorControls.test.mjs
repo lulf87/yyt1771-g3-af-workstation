@@ -48,11 +48,13 @@ test("basic detector controls only expose contour and temporal core parameters",
   }
 });
 
-test("operator mode exposes contrast threshold without advanced detector internals", () => {
+test("operator mode exposes C detector mode control without advanced detector internals", () => {
   const match = mainSource.match(/function OperatorRunPage\(\{[\s\S]*?function OperatorSourceControls\(\{/);
   assert.ok(match, "OperatorRunPage block should exist");
   const block = match[0];
 
+  assert.match(block, /<CDetectorModeControl/);
+  assert.match(block, /isContrastWidestSpanMode\(measurement\) \? \(/);
   assert.match(block, /<ContrastThresholdControl/);
   assert.match(block, /<DistanceOutlierFilterControl/);
   assert.match(block, /Object class/);
@@ -88,14 +90,25 @@ test("live raw and stabilized fallback curve points respect curve point status",
   );
 });
 
-test("C object class defaults to the contrast widest-span detector", () => {
+test("C object class defaults to the legacy bundle envelope detector", () => {
   const objectOptions = mainSource.match(/const OBJECT_CLASS_OPTIONS = \[[\s\S]*?\];/);
   assert.ok(objectOptions, "OBJECT_CLASS_OPTIONS should exist");
 
   assert.match(
     objectOptions[0],
-    /value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "ContrastWidestSpanDetector"/
+    /value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "BundleEnvelopeDetector"/
   );
+});
+
+test("C detector mode options keep contrast widest-span optional", () => {
+  const match = mainSource.match(/const C_DETECTOR_MODE_OPTIONS = \[[\s\S]*?\];/);
+  assert.ok(match, "C_DETECTOR_MODE_OPTIONS should exist");
+  const block = match[0];
+
+  assert.match(block, /value: "default", label: "Original envelope detection"/);
+  assert.match(block, /value: "c_envelope_legacy", label: "Original envelope detection"/);
+  assert.match(block, /value: "contrast_widest_span", label: "Contrast widest-span detection"/);
+  assert.doesNotMatch(block, /selected.*contrast_widest_span/);
 });
 
 test("overlay prefers backend measurement_segment for A/B line drawing", () => {

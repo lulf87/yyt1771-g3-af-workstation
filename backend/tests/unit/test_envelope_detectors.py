@@ -44,6 +44,7 @@ def _contrast_measurement(
         measurement_id="contrast-synthetic",
         object_class=ObjectClass.C_BUNDLE_ENVELOPE,
         detector=detector,
+        detector_mode="contrast_widest_span",
         width_mode=WidthMode.MAX_WIDTH,
         roi=roi,
         detector_config=DetectorConfig(
@@ -215,28 +216,76 @@ def test_contrast_widest_span_returns_invalid_when_no_contrast_object_is_found()
     assert result.debug_artifacts["mask_pixel_count"] == 0
 
 
-def test_c_bundle_default_detector_path_uses_contrast_widest_span_without_changing_a_class() -> None:
-    c_roi = RotatedROI(center_x=70.0, center_y=50.0, width=100.0, height=60.0, angle_deg=0.0)
-    c_frame = np.full((100, 140), 230, dtype=np.uint8)
-    for u in [26, 86]:
-        _paint_local_vertical_strand(c_frame, c_roi, u=u, v_start=18, v_end=42)
+def test_c_bundle_default_detector_mode_routes_to_legacy_wire_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
 
-    c_result = detect_frame(
-        c_frame,
-        _contrast_measurement(c_roi, detector=DetectorType.BUNDLE_ENVELOPE),
-        frame_index=1,
+    def fake_legacy(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls.append("legacy")
+        return (
+            detectors._invalid(
+                kwargs["frame_index"],
+                "legacy_wire_bundle",
+                debug_artifacts={"contour_measurement_mode": "archived_wire_bundle_projection"},
+            ),
+            kwargs["stability_state"],
+        )
+
+    def fake_contrast(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls.append("contrast")
+        return (
+            detectors._invalid(
+                kwargs["frame_index"],
+                "contrast_widest_span",
+                debug_artifacts={"detection_mode": "contrast_widest_span"},
+            ),
+            kwargs["stability_state"],
+        )
+
+    monkeypatch.setattr(detectors, "_detect_wire_bundle_max_width", fake_legacy)
+    monkeypatch.setattr(detectors, "_detect_contrast_widest_span", fake_contrast)
+    frame = np.full((80, 120), 245, dtype=np.uint8)
+    measurement = _measurement(object_class=ObjectClass.C_BUNDLE_ENVELOPE, detector=DetectorType.BUNDLE_ENVELOPE)
+
+    result = detect_frame(frame, measurement, frame_index=1)
+
+    assert calls == ["legacy"]
+    assert result.rejected_reason == "legacy_wire_bundle"
+    assert result.debug_artifacts["contour_measurement_mode"] == "archived_wire_bundle_projection"
+
+
+def test_c_bundle_contrast_detector_mode_routes_to_contrast_widest_span(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_legacy(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls.append("legacy")
+        return (
+            detectors._invalid(kwargs["frame_index"], "legacy_wire_bundle"),
+            kwargs["stability_state"],
+        )
+
+    def fake_contrast(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls.append("contrast")
+        return (
+            detectors._invalid(
+                kwargs["frame_index"],
+                "contrast_widest_span",
+                debug_artifacts={"detection_mode": "contrast_widest_span"},
+            ),
+            kwargs["stability_state"],
+        )
+
+    monkeypatch.setattr(detectors, "_detect_wire_bundle_max_width", fake_legacy)
+    monkeypatch.setattr(detectors, "_detect_contrast_widest_span", fake_contrast)
+    frame = np.full((80, 120), 245, dtype=np.uint8)
+    measurement = _measurement(object_class=ObjectClass.C_BUNDLE_ENVELOPE, detector=DetectorType.BUNDLE_ENVELOPE).model_copy(
+        update={"detector_mode": "contrast_widest_span"}
     )
 
-    assert c_result.detection_status == DetectionStatus.VALID
-    assert c_result.debug_artifacts["detection_mode"] == "contrast_widest_span"
-    assert c_result.debug_artifacts["contour_measurement_mode"] == "contrast_widest_span"
+    result = detect_frame(frame, measurement, frame_index=1)
 
-    a_frame = np.full((80, 120), 245, dtype=np.uint8)
-    a_frame[20:61, 25:96] = 35
-    a_result = detect_frame(a_frame, _measurement(), frame_index=1)
-
-    assert a_result.detection_status == DetectionStatus.VALID
-    assert a_result.debug_artifacts["contour_measurement_mode"] == "archived_mesh_envelope_rows"
+    assert calls == ["contrast"]
+    assert result.rejected_reason == "contrast_widest_span"
+    assert result.debug_artifacts["detection_mode"] == "contrast_widest_span"
 
 
 def test_detector_config_processing_scale_defaults_and_clamp() -> None:

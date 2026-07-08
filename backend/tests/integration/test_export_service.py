@@ -25,8 +25,9 @@ from yyt1771_g3.storage.run_store import RunStore
 def _manifest() -> RunManifest:
     measurement = MeasurementDefinition(
         measurement_id="export-m",
-        object_class=ObjectClass.A_BALLOON_ENVELOPE,
-        detector=DetectorType.BALLOON_ENVELOPE,
+        object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+        detector=DetectorType.BUNDLE_ENVELOPE,
+        detector_mode="contrast_widest_span",
         width_mode=WidthMode.MAX_WIDTH,
         roi=RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0),
         detector_config=DetectorConfig(contrast_threshold=42),
@@ -96,18 +97,38 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
 
     run_dir = run_store.run_dir(manifest.run_id)
     csv_text = (run_dir / "exports" / "frame_results.csv").read_text(encoding="utf-8")
-    assert "raw_detected_distance_px,distance_px_after_filter,distance_outlier_filtered,distance_outlier_baseline_px" in csv_text
+    header = csv_text.splitlines()[0]
+    for column in [
+        "detector_mode",
+        "raw_detected_distance_px",
+        "distance_px_after_filter",
+        "distance_outlier_filtered",
+        "distance_outlier_reason",
+        "distance_outlier_baseline_px",
+        "distance_outlier_deviation_px",
+        "distance_outlier_max_jump_px",
+        "distance_outlier_reference_count",
+        "contrast_threshold",
+    ]:
+        assert column in header
     assert "distance_jump_outlier" in csv_text
+    assert "contrast_widest_span" in csv_text
     assert len(csv_text.strip().splitlines()) == 3
 
     payload = json.loads((run_dir / "exports" / "run_export.json").read_text(encoding="utf-8"))
     assert "operator_data_source" in payload
     assert "provenance" in payload
+    assert payload["run_manifest"]["measurement_definition"]["detector_mode"] == "contrast_widest_span"
     assert payload["run_manifest"]["config_snapshot"]["mode"] == "test-export"
     assert [point["frame_index"] for point in payload["analysis_result"]["temperature_distance"]] == [1]
     parameters = json.loads((run_dir / "exports" / "parameters.json").read_text(encoding="utf-8"))
     assert parameters["measurement_definition"]["measurement_id"] == "export-m"
+    assert parameters["measurement_definition"]["detector_mode"] == "contrast_widest_span"
     assert parameters["measurement_definition"]["detector_config"]["contrast_threshold"] == 42.0
+    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_filter_enabled"] is True
+    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_reference_count"] == 5
+    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_max_jump_px"] == 20.0
+    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_baseline"] == "median"
     assert "operator_data_source" in parameters
     assert "provenance" in parameters
 

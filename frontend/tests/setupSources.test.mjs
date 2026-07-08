@@ -77,6 +77,7 @@ test("real camera measurement is derived from preview shape without changing det
   assert.equal(measurement.measurement_id, "real_camera-preview");
   assert.equal(measurement.object_class, "A_BALLOON_ENVELOPE");
   assert.equal(measurement.detector, "BalloonEnvelopeDetector");
+  assert.equal(measurement.detector_mode, "default");
   assert.equal(measurement.source, "real_camera");
   assert.equal(measurement.width_mode, "max_width");
   assert.equal(measurement.measurement_coordinates, "source_pixel");

@@ -23,7 +23,7 @@ from yyt1771_g3.vision.stability import CandidateSelectionState
             "golden_c_20260529_dev_lab",
             ObjectClass.C_BUNDLE_ENVELOPE,
             DetectorType.BUNDLE_ENVELOPE,
-            "contrast_widest_span",
+            "archived_wire_bundle_projection",
         ),
     ],
 )

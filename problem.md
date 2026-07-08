@@ -94,8 +94,9 @@
 | P-0076 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator source provenance | Operator Mode 需要操作者数据来源选择和后端权威 provenance，避免模拟/导入结果被误认为真实测试 | 2026-07-07 | 2026-07-07 | Codex | sim-sim real-camera 接口模拟后端、offline probe/run、Results Export、History Import、Engineering Mode 浏览器复测已通过 |
 | P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
 | P-0078 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator mode / source guard | Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端 | 2026-07-07 | 2026-07-07 | Codex | sim-sim 下已验证 Operator 真机源显示真实硬件不可用且禁用 probe/run；离线源可 probe；工程模式真实相机调试未受影响 |
-| P-0079 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector | C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数 | 2026-07-08 | 2026-07-08 | Codex | golden_c_20260529_dev_lab Operator 单帧检测 + live offline run + export parameters 浏览器复测已通过 |
+| P-0079 | WONTFIX | P0 | backend / frontend / C detector | C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数 | 2026-07-08 | 2026-07-08 | Codex | 用户更正：C 类默认不能替换原外包络检测；该默认替换方案废弃，见 P-0081 |
 | P-0080 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / run analysis export | 实时测量和分析前需要距离异常跳变过滤，避免检测突变点进入曲线和 AFAS | 2026-07-08 | 2026-07-08 | Codex | CausalDistanceOutlierFilter 已接入 live offline / real camera / analysis / export；golden_c Operator live offline run + Results Export 浏览器复测通过 |
+| P-0081 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector mode | C 类默认必须保留原始外包络检测，对比度最宽跨度检测只能作为可选模式 | 2026-07-08 | 2026-07-08 | Codex | golden_c Operator 默认 legacy probe、可选 contrast probe、live run 和 export 浏览器复测通过 |
 
 ---
 
@@ -7345,7 +7346,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0064 — Setup Real camera 实时显示帧率不应被 5Hz 上限卡住
 
-- Status: FIXED_PENDING_BROWSER_RETEST
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P1
 - Module: `frontend/src/setupSources.ts`, `frontend/src/main.tsx`, `backend/src/yyt1771_g3/core/models.py`
 - Found date: 2026-06-10
@@ -8157,7 +8158,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0079 — C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数
 
-- Status: RESOLVED_BROWSER_VERIFIED
+- Status: WONTFIX
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/vision/detectors.py`, `backend/src/yyt1771_g3/core/models.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`
 - Found date: 2026-07-08
@@ -8264,7 +8265,9 @@ Result: PASS, 6 passed.
 
 #### Current status
 
-RESOLVED_BROWSER_VERIFIED
+WONTFIX
+
+2026-07-08 correction: 用户明确更正该方案，C 类默认不能替换为 `contrast_widest_span`。原 C 类 `BundleEnvelopeDetector` / `archived_wire_bundle_projection` 必须继续作为默认正式检测方案；`contrast_widest_span` 只能作为 C 类可选检测方式。当前修正与复测记录见 P-0081。
 
 
 ---
@@ -8353,6 +8356,110 @@ Evidence:
 - Run manifest: `output/runs/run-golden_c_20260529_dev_lab-20260708T115501893122Z/run_manifest.json`
 - Analysis: `output/runs/run-golden_c_20260529_dev_lab-20260708T115501893122Z/analysis_result.json`
 - Export bundle: `output/runs/run-golden_c_20260529_dev_lab-20260708T115501893122Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T115501893122Z.zip`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0081 — C 类对比度最宽跨度检测必须是可选模式而不是默认替代
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/vision/detectors.py`, `backend/src/yyt1771_g3/vision/temporal_stabilization.py`, `backend/src/yyt1771_g3/core/models.py`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`
+- Found date: 2026-07-08
+- Last update: 2026-07-08
+- Owner/tool: Codex
+
+#### Problem
+
+上一版 P-0079 按用户早先提示将 C 类默认检测路径改为 `contrast_widest_span`，这会替换原始 C 类 `BundleEnvelopeDetector` 的归档线束投影、支撑列和稳定投影逻辑。用户随后明确更正：原 C 类检测器是现有正式方案，不能被替代；新的对比度最宽跨度检测只能作为 C 类可选检测方式。
+
+#### Expected
+
+```text
+A 类默认行为不变。
+C 类 detector_mode 缺失或 default 时，继续使用原始 C 类外包络检测。
+C 类 detector_mode == c_envelope_legacy 时，也使用原始 C 类外包络检测。
+C 类 detector_mode == contrast_widest_span 时，才使用新增对比度最宽跨度检测。
+旧 measurement / manifest / export 缺失 detector_mode 时必须等同 default。
+实际使用模式中，C 类显示“检测方式”，默认选中“原始外包络检测”；只有切换到“对比度最宽跨度检测”时才显示“对比度阈值”。
+距离异常点过滤继续作为所有检测器通用后处理，不绑定新 detector。
+```
+
+#### Actual
+
+修复前本分支继承了 P-0079 的默认替换行为：C 类默认 detector 被改成 `ContrastWidestSpanDetector`，单帧检测入口、部分时序稳定候选重算和前端默认测量配置都倾向新 detector，违背用户更正后的要求。
+
+#### Fix summary
+
+- 新增 `MeasurementDefinition.detector_mode`，默认值为 `default`，旧 payload 缺失该字段时保持兼容。
+- 后端 C 类单帧入口按 `detector_mode` 分流：`default` / `c_envelope_legacy` 走 `_detect_wire_bundle_max_width`；仅 `contrast_widest_span` 走 `_detect_contrast_widest_span`。
+- C 类时序稳定候选重算同步按 `detector_mode` 分流，避免默认 C 路径在稳定化阶段偷偷使用 contrast candidate。
+- golden C smoke 默认预期改回 `archived_wire_bundle_projection`。
+- 前端 C 类默认 detector 恢复为 `BundleEnvelopeDetector`，新增 C 类“检测方式”选择；默认隐藏“对比度阈值”，切换到 `contrast_widest_span` 后才显示。
+- live offline / real camera run config snapshot 和导出 CSV/JSON 增加 `detector_mode`，继续保存 outlier filter 参数。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_core_models.py::test_measurement_definition_defaults_missing_detector_mode_for_legacy_payloads backend/tests/unit/test_envelope_detectors.py::test_c_bundle_default_detector_mode_routes_to_legacy_wire_bundle backend/tests/unit/test_envelope_detectors.py::test_c_bundle_contrast_detector_mode_routes_to_contrast_widest_span backend/tests/integration/test_export_service.py::test_export_run_writes_csv_json_png_overlay_and_parameters backend/tests/unit/test_temporal_stabilization.py backend/tests/integration/test_golden_detector_smoke.py::test_golden_keyframes_return_valid_envelope_smoke -q
+Result: PASS, 9 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_envelope_detectors.py backend/tests/unit/test_core_models.py backend/tests/unit/test_detector_audit.py backend/tests/unit/test_distance_outlier_filter.py backend/tests/unit/test_analysis_service.py backend/tests/unit/test_temporal_stabilization.py backend/tests/unit/test_run_detector_policy.py backend/tests/integration/test_export_service.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_real_camera_run_service.py -q
+Result: PASS, 89 passed.
+
+cd frontend && npm test -- detectorControls.test.mjs setupSources.test.mjs operatorProbeUi.test.mjs apiClientUrls.test.mjs
+Result: PASS, 82 passed.
+
+cd frontend && ./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+git diff --check
+Result: PASS, exit 0.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-08
+- Browser: Playwright Chromium
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab`
+- Page: Operator `实时测试` -> `结果与导出`
+- Steps:
+  1. 启动 `scripts/g3_fast_start.sh sim-sim --restart --no-open`。
+  2. 打开 Operator 页面，切换数据来源到“离线数据集”。
+  3. 选择 `golden_c_20260529_dev_lab`。
+  4. 验证 C 类默认显示“检测方式 = 原始外包络检测”，且未显示“对比度阈值”。
+  5. 点击“检测当前帧”，检查 `/api/probe` 请求与响应。
+  6. 将检测方式切换为“对比度最宽跨度检测”，确认“对比度阈值”出现并设置为 `35`。
+  7. 再次点击“检测当前帧”，检查 `/api/probe` 请求、overlay 和距离显示。
+  8. 点击“确认本次测试设置”，启动短 live offline run，观察实时帧、A/B overlay、当前距离和温度-距离曲线更新。
+  9. 停止测试后进入“结果与导出”，点击“导出结果”，检查导出 ZIP、`parameters.json`、`run_export.json` 和 `frame_results.csv`。
+- Expected:
+  - C 类默认不使用 `contrast_widest_span`，请求体为 `detector="BundleEnvelopeDetector"`、`detector_mode="default"`。
+  - 默认 probe 响应继续为原始 C 类外包络路径，`contour_measurement_mode="archived_wire_bundle_projection"`。
+  - 切换到 contrast 模式后才显示“对比度阈值”，probe/run 请求携带 `detector_mode="contrast_widest_span"` 和 `contrast_threshold=35`。
+  - live run 使用保存后的 detector mode、contrast threshold 和 outlier filter 参数。
+  - 导出文件包含 `detector_mode`、`contrast_threshold` 和 distance outlier 诊断列/参数。
+- Actual:
+  - C 数据集下实际使用模式显示“检测方式”，默认选中“原始外包络检测”，没有显示“对比度阈值”。
+  - 默认 `/api/probe` 请求体包含 `detector="BundleEnvelopeDetector"`、`detector_mode="default"`；响应 `VALID`，`distance_px=151.02`，`candidate_id="archived-wire-bundle-projection"`，`contour_measurement_mode="archived_wire_bundle_projection"`。
+  - 切换到“对比度最宽跨度检测”后出现“对比度阈值”，设置 `35` 后 `/api/probe` 请求体包含 `detector="ContrastWidestSpanDetector"`、`detector_mode="contrast_widest_span"`、`contrast_threshold=35`；页面显示正式测宽带、A/B 和 `724.00` px。
+  - `POST /api/live-offline-runs/stream` 请求体包含 `detector_mode="contrast_widest_span"`、`contrast_threshold=35`、`distance_outlier_filter_enabled=true`、`distance_outlier_reference_count=5`、`distance_outlier_max_jump_px=20`、`distance_outlier_baseline="median"`。
+  - run `run-golden_c_20260529_dev_lab-20260708T122322667675Z` 保存 5 帧，`analysis_result.temperature_distance` 4 点，`filtered_count=0`，首帧 `debug_artifacts.detection_mode="contrast_widest_span"`。
+  - 浏览器“导出结果”下载 `yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T122322667675Z.zip` 成功；导出目录包含 `frame_results.csv`、`parameters.json`、`run_export.json`、`temperature_distance.png`、`roi_ab_overlay.png`。
+  - `parameters.json` / `run_export.json` 保存 `detector_mode="contrast_widest_span"`、`contrast_threshold=35.0` 和 outlier filter 配置；`frame_results.csv` header 包含 `detector_mode`、`raw_detected_distance_px`、`distance_px_after_filter`、`distance_outlier_filtered`、`distance_outlier_reason`、`distance_outlier_baseline_px`、`distance_outlier_deviation_px`、`distance_outlier_max_jump_px`、`distance_outlier_reference_count`、`contrast_threshold`。
+- Result: PASS
+- Evidence:
+  - Screenshot: `output/playwright/p0081_optional_contrast_detector_operator_golden_c_20260708.png`
+  - Run manifest: `output/runs/run-golden_c_20260529_dev_lab-20260708T122322667675Z/run_manifest.json`
+  - Analysis: `output/runs/run-golden_c_20260529_dev_lab-20260708T122322667675Z/analysis_result.json`
+  - Export bundle: `output/runs/run-golden_c_20260529_dev_lab-20260708T122322667675Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T122322667675Z.zip`
 
 #### Current status
 
