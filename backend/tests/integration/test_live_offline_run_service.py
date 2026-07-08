@@ -403,7 +403,7 @@ def test_streamed_live_offline_run_saves_partial_result_when_stopped(tmp_path: P
     assert stopped_result.manifest.config_snapshot["stop_reason"] == "stream_closed"
 
 
-def test_streamed_live_offline_run_frame_events_emit_lightweight_smoothed_afas_preview(tmp_path: Path) -> None:
+def test_streamed_live_offline_run_frame_events_defer_smoothed_afas_preview_for_short_runs(tmp_path: Path) -> None:
     dataset_root = tmp_path / "dataset"
     dataset_root.mkdir()
     _write_run_dataset(dataset_root, frame_count=21)
@@ -456,26 +456,13 @@ def test_streamed_live_offline_run_frame_events_emit_lightweight_smoothed_afas_p
         for event in frame_events
         if event["afas_preprocessing"].get("preview_status") == "updated"
     ]
-    assert updated_previews
-    preview = updated_previews[-1]
-    assert set(preview) == {
-        "preview_status",
-        "point_count",
-        "temperature_distance_point_count",
-        "preview_interval_frames",
-        "schema_version",
-        "parameters",
-        "smoothed",
-        "warnings",
+    assert updated_previews == []
+    assert frame_events[-1]["afas_preprocessing"] == {
+        "preview_status": "deferred_until_complete",
+        "point_count": 21,
+        "temperature_distance_point_count": 21,
+        "preview_interval_frames": 300,
     }
-    assert preview["temperature_distance_point_count"] == 20
-    assert len(preview["smoothed"]["temperature_celsius"]) == 20
-    assert len(preview["smoothed"]["values"]) == 20
-    assert preview["smoothed"]["applied"] is True
-    assert preview["smoothed"]["effective_savgol_window_length"] == 11
-    assert "raw" not in preview
-    assert "grouped" not in preview
-    assert "outlier_repair" not in preview
     assert all(event["afas_analysis"] == {"result_status": "pending"} for event in frame_events)
 
     complete = [event for event in events if event["event"] == "complete"][0]
@@ -793,6 +780,8 @@ def test_streamed_live_offline_run_short_frame_events_defer_afas_preview(tmp_pat
         assert event["afas_preprocessing"] == {
             "preview_status": "deferred_until_complete",
             "point_count": event["processed_frames"],
+            "temperature_distance_point_count": event["processed_frames"],
+            "preview_interval_frames": 300,
         }
         assert event["afas_analysis"] == {"result_status": "pending"}
 

@@ -83,6 +83,7 @@ export type DetectorConfig = {
   distance_outlier_baseline?: "last" | "mean" | "median";
   temporal_stabilization_enabled?: boolean;
   temporal_stabilization_strength?: "weak" | "medium" | "strong";
+  save_temporal_masks?: boolean;
   contour_box_mode?: "component_bbox" | "robust_component_bbox" | "measurement_band";
   contour_box_padding_px?: number;
   contour_box_quantile?: number;
@@ -418,6 +419,17 @@ export type LiveOfflineCompleteEvent = {
   analysis_result: AnalysisResult;
 };
 
+export type LiveOfflineProgressEvent = {
+  event: "stopping" | "saving_manifest" | "building_analysis";
+  run_id: string;
+  dataset_id?: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  processed_frames: number;
+  frame_count: number;
+  total_frames: number;
+  stop_reason?: string;
+};
+
 export type LiveOfflineErrorEvent = {
   event: "error";
   message: string;
@@ -426,6 +438,7 @@ export type LiveOfflineErrorEvent = {
 
 export type LiveOfflineRunStreamEvent =
   | LiveOfflineFrameEvent
+  | LiveOfflineProgressEvent
   | LiveOfflineCompleteEvent
   | LiveOfflineErrorEvent;
 

@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from yyt1771_g3.core.models import (
@@ -37,7 +38,7 @@ from yyt1771_g3.vision.stability import CandidateSelectionState
 from yyt1771_g3.vision.temporal_stabilization import CausalTemporalStabilizer, stabilize_detection_sequence
 
 
-AFAS_PREVIEW_INTERVAL_FRAMES = 10
+AFAS_PREVIEW_INTERVAL_FRAMES = 300
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ def run_live_offline_dataset(
         detection_results,
         measurement,
         filter_mode="centered",
-        artifact_dir=run_store.run_dir(run_id) / "temporal_masks",
+        artifact_dir=_temporal_mask_artifact_dir(measurement, run_store.run_dir(run_id)),
     )
     detection_results = filter_detection_sequence(detection_results, measurement.detector_config)
 
@@ -145,7 +146,7 @@ def iter_live_offline_run_events(
     stop_reason = "complete"
     temporal_stabilizer = CausalTemporalStabilizer(
         measurement,
-        artifact_dir=run_store.run_dir(run_id) / "temporal_masks",
+        artifact_dir=_temporal_mask_artifact_dir(measurement, run_store.run_dir(run_id)),
     )
     distance_outlier_filter = CausalDistanceOutlierFilter(measurement.detector_config)
 
@@ -189,8 +190,16 @@ def iter_live_offline_run_events(
                 stop_reason = "target_temperature_reached"
                 break
 
-        saved_result = _save_run_result(
-            run_store,
+        yield _run_stage_event(
+            run_id=run_id,
+            event="stopping",
+            dataset_id=dataset_id,
+            processed_frames=len(frame_records),
+            frame_count=resolved.frame_count,
+            frame_limit=window.frame_limit,
+            stop_reason=stop_reason,
+        )
+        manifest = _build_run_manifest(
             run_id=run_id,
             dataset_id=dataset_id,
             measurement=measurement,
@@ -203,6 +212,28 @@ def iter_live_offline_run_events(
             stop_reason=stop_reason,
             provenance=provenance,
         )
+        yield _run_stage_event(
+            run_id=run_id,
+            event="saving_manifest",
+            dataset_id=dataset_id,
+            processed_frames=len(frame_records),
+            frame_count=resolved.frame_count,
+            frame_limit=window.frame_limit,
+            stop_reason=stop_reason,
+        )
+        run_store.write_run_manifest(manifest)
+        yield _run_stage_event(
+            run_id=run_id,
+            event="building_analysis",
+            dataset_id=dataset_id,
+            processed_frames=len(frame_records),
+            frame_count=resolved.frame_count,
+            frame_limit=window.frame_limit,
+            stop_reason=stop_reason,
+        )
+        analysis = build_analysis_result(manifest)
+        run_store.write_analysis_result(analysis)
+        saved_result = LiveOfflineRunResult(manifest=manifest, analysis=analysis)
         yield {
             "event": "complete",
             "run_manifest": saved_result.manifest.model_dump(mode="json"),
@@ -241,6 +272,39 @@ def _save_run_result(
     stop_reason: str = "complete",
     provenance: dict[str, Any] | None = None,
 ) -> LiveOfflineRunResult:
+    manifest = _build_run_manifest(
+        run_id=run_id,
+        dataset_id=dataset_id,
+        measurement=measurement,
+        frame_records=frame_records,
+        temperature_records=temperature_records,
+        detection_results=detection_results,
+        start_frame=start_frame,
+        frame_limit=frame_limit,
+        target_fps=target_fps,
+        stop_reason=stop_reason,
+        provenance=provenance,
+    )
+    analysis = build_analysis_result(manifest)
+    run_store.write_run_manifest(manifest)
+    run_store.write_analysis_result(analysis)
+    return LiveOfflineRunResult(manifest=manifest, analysis=analysis)
+
+
+def _build_run_manifest(
+    *,
+    run_id: str,
+    dataset_id: str,
+    measurement: MeasurementDefinition,
+    frame_records: list[FrameRecord],
+    temperature_records: list[TemperatureRecord],
+    detection_results: list[DetectionResult],
+    start_frame: int,
+    frame_limit: int,
+    target_fps: float | None,
+    stop_reason: str = "complete",
+    provenance: dict[str, Any] | None = None,
+) -> RunManifest:
     resolved_provenance = provenance or offline_dataset_provenance(dataset_id)
     manifest = RunManifest(
         run_id=run_id,
@@ -266,6 +330,7 @@ def _save_run_result(
             "target_fps": target_fps or measurement.detector_config.live_offline_fps,
             "temporal_stabilization_enabled": measurement.detector_config.temporal_stabilization_enabled,
             "temporal_stabilization_strength": measurement.detector_config.temporal_stabilization_strength,
+            "save_temporal_masks": measurement.detector_config.save_temporal_masks,
             "temporal_filter_mode": _run_temporal_filter_mode(detection_results),
             "distance_outlier_filter_enabled": measurement.detector_config.distance_outlier_filter_enabled,
             "distance_outlier_reference_count": measurement.detector_config.distance_outlier_reference_count,
@@ -274,10 +339,7 @@ def _save_run_result(
         },
         software={"package": "yyt1771_g3", "phase": "G3-M7"},
     )
-    analysis = build_analysis_result(manifest)
-    run_store.write_run_manifest(manifest)
-    run_store.write_analysis_result(analysis)
-    return LiveOfflineRunResult(manifest=manifest, analysis=analysis)
+    return manifest
 
 
 def read_run(run_store: RunStore, run_id: str) -> LiveOfflineRunResult:
@@ -436,6 +498,8 @@ def _live_afas_preprocessing_preview(
         return {
             "preview_status": "deferred_until_complete",
             "point_count": processed_frames,
+            "temperature_distance_point_count": len(temperature_distance_points),
+            "preview_interval_frames": AFAS_PREVIEW_INTERVAL_FRAMES,
         }
     if processed_frames % AFAS_PREVIEW_INTERVAL_FRAMES != 0 or not temperature_distance_points:
         return {
@@ -485,6 +549,32 @@ def _target_temperature_reached(
     target = measurement.detector_config.target_temperature_celsius
     temperature = detection.temperature_celsius
     return target is not None and temperature is not None and float(temperature) >= float(target)
+
+
+def _temporal_mask_artifact_dir(measurement: MeasurementDefinition, run_dir: Path) -> Path | None:
+    return run_dir / "temporal_masks" if measurement.detector_config.save_temporal_masks else None
+
+
+def _run_stage_event(
+    *,
+    run_id: str,
+    event: str,
+    dataset_id: str,
+    processed_frames: int,
+    frame_count: int,
+    frame_limit: int,
+    stop_reason: str,
+) -> dict[str, Any]:
+    return {
+        "event": event,
+        "run_id": run_id,
+        "dataset_id": dataset_id,
+        "operator_data_source": "offline_dataset",
+        "processed_frames": processed_frames,
+        "frame_count": frame_count,
+        "total_frames": frame_limit,
+        "stop_reason": stop_reason,
+    }
 
 
 def _frame_meta(manifest: dict[str, Any], frame_index: int) -> dict[str, Any]:

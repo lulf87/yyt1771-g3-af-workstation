@@ -86,6 +86,7 @@ class DetectorConfig(G3Model):
     distance_jump_policy: Literal["hold_previous", "mark_invalid"] = "hold_previous"
     temporal_stabilization_enabled: bool = False
     temporal_stabilization_strength: Literal["weak", "medium", "strong"] = "medium"
+    save_temporal_masks: bool = False
     contour_box_mode: Literal["component_bbox", "robust_component_bbox", "measurement_band"] = "component_bbox"
     contour_box_padding_px: float = 8.0
     contour_box_quantile: float = 0.0

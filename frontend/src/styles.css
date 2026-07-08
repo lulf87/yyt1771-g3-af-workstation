@@ -1310,6 +1310,16 @@ input {
   vector-effect: non-scaling-stroke;
 }
 
+.runTrendPreviewLine {
+  fill: none;
+  stroke: rgba(220, 126, 34, 0.58);
+  stroke-width: 2.4;
+  stroke-dasharray: 7 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
 .runTrendFormalPoint {
   fill: #0b6f69;
   stroke: #ffffff;

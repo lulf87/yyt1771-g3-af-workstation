@@ -59,6 +59,7 @@ import {
   type ExportArtifact,
   type ImportedRunView,
   type LiveOfflineFrameEvent,
+  type LiveOfflineProgressEvent,
   type OfflineDatasetListItem,
   type OfflineDatasetSummary,
   type OperatorSourceStatus,
@@ -195,6 +196,7 @@ type LiveRunState = {
   operatorDataSource: OperatorDataSource;
   provenance: SourceProvenance | null;
   status: "running" | "complete" | "stopped";
+  statusMessage: string;
   frameIndex: number;
   frameUrl: string;
   frameCount: number;
@@ -228,6 +230,7 @@ const DEFAULT_CONFIG = {
   distance_outlier_reference_count: 5,
   distance_outlier_max_jump_px: 20,
   distance_outlier_baseline: "median" as const,
+  save_temporal_masks: false,
   dark_enhance_bg_kernel_px: 41,
   hysteresis_low_ratio: 0.45,
   min_component_area_px: 80,
@@ -964,12 +967,17 @@ function App() {
                   status: "complete",
                   operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
+                  statusMessage: "",
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length
                 }
               : current
           );
+        } else if (isLiveProgressEvent(event)) {
+          clearBatchFlushTimer();
+          flushPendingFrameEvents(true);
+          setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
       setRunResult(response);
@@ -977,7 +985,7 @@ function App() {
       clearBatchFlushTimer();
       flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1019,6 +1027,7 @@ function App() {
           ? {
               ...current,
               status: "stopped",
+              statusMessage: "",
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -1386,6 +1395,7 @@ function App() {
                   status: "complete",
                   operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
+                  statusMessage: "",
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length,
@@ -1395,6 +1405,10 @@ function App() {
                 }
               : current
           );
+        } else if (isLiveProgressEvent(event)) {
+          clearBatchFlushTimer();
+          flushPendingFrameEvents(true);
+          setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
       setRunResult(response);
@@ -1402,7 +1416,7 @@ function App() {
       clearBatchFlushTimer();
       flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1430,6 +1444,7 @@ function App() {
           ? {
               ...current,
               status: "stopped",
+              statusMessage: "",
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -4324,9 +4339,15 @@ function RunPage({
       ? t("Until stopped or target temperature")
       : Math.max(0, dataset.frame_count - startFrame + 1);
   const progressValue = displayedLiveRun
-    ? displayedLiveRun.totalFrames > 0
-      ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
-      : displayedLiveRun.processedFrames.toLocaleString()
+    ? displayedLiveRun.statusMessage
+      ? `${t(displayedLiveRun.statusMessage)} · ${
+          displayedLiveRun.totalFrames > 0
+            ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
+            : displayedLiveRun.processedFrames.toLocaleString()
+        }`
+      : displayedLiveRun.totalFrames > 0
+        ? `${displayedLiveRun.processedFrames.toLocaleString()} / ${displayedLiveRun.totalFrames.toLocaleString()}`
+        : displayedLiveRun.processedFrames.toLocaleString()
     : t("Idle");
   const latestDetection =
     displayedLiveRun?.detectionResult ??
@@ -5478,7 +5499,7 @@ function RunTrendChart({
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - bounds.left) / bounds.width) * model.width;
     const y = ((event.clientY - bounds.top) / bounds.height) * model.height;
-    const candidates = [...model.formalPoints, ...model.referencePoints];
+    const candidates = [...model.formalPoints, ...model.referencePoints, ...model.previewPoints];
     let nearest = candidates[0];
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const point of candidates) {
@@ -5499,6 +5520,11 @@ function RunTrendChart({
       <figure className="runTrendFigure">
         <figcaption>
           <span>{t(model.sourceLabel)}</span>
+          {model.previewPoints.length ? (
+            <span title={runTrendPreviewExplanation(language)}>
+              {t(model.previewLabel)} · {runTrendPreviewStatusLabel(model.previewStatus, language)}
+            </span>
+          ) : null}
           <span>{isRunning ? t("Current run so far") : t("Full run")}</span>
         </figcaption>
         <IndustrialCurveView
@@ -5526,6 +5552,15 @@ function RunTrendChart({
               key={`run-reference-${point.frameIndex}-${point.temperature}`}
               r={2.3}
             />
+          ))}
+          {model.previewSegments.map((segment, index) => (
+            segment.length > 1 ? (
+              <polyline
+                className="runTrendPreviewLine"
+                key={`run-preview-segment-${index}`}
+                points={segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}
+              />
+            ) : null
           ))}
           {model.formalSegments.map((segment, index) => (
             segment.length > 1 ? (
@@ -5765,9 +5800,23 @@ function formatRunTrendPointLabel(point: RunTrendPoint, language: UiLanguage = "
 }
 
 function runTrendLineLabel(source: RunTrendPoint["source"], language: UiLanguage = "en"): string {
-  if (source === "smoothed") return uiText(language, "backend smoothed curve");
-  if (source === "grouped") return uiText(language, "backend binned curve");
-  return uiText(language, "raw scatter");
+  if (source === "smoothed") return uiText(language, "AFAS preprocessing preview");
+  if (source === "grouped") return uiText(language, "AFAS preprocessing preview");
+  return uiText(language, "Live temperature-distance points");
+}
+
+function runTrendPreviewStatusLabel(status: string | null, language: UiLanguage = "en"): string {
+  if (status === "updated") return uiText(language, "updated");
+  if (status === "unchanged") return uiText(language, "preview unchanged");
+  if (status === "deferred_until_complete") return uiText(language, "deferred until complete");
+  return uiText(language, "batch-updated trend reference");
+}
+
+function runTrendPreviewExplanation(language: UiLanguage = "en"): string {
+  if (language === "zh") {
+    return "平滑曲线来自 AFAS 预处理，会按温度分组并进行 Savitzky-Golay 平滑。它可能与逐帧原始点不完全一致。实时判断请以原始正式点为准。该曲线按批次更新，仅用于趋势参考，不代表逐帧实时数据。";
+  }
+  return "The smoothed curve is generated by AFAS preprocessing using temperature grouping and Savitzky-Golay smoothing. It may differ from frame-by-frame points. Use formal live points for real-time monitoring. This is a batch-updated trend reference, not frame-by-frame live data.";
 }
 
 function runTrendLineLabelPoint(model: ReturnType<typeof buildRunTrendModel>): { x: number; y: number } {
@@ -6179,6 +6228,7 @@ function createInitialLiveRun(datasetId: string, startFrame: number, frameCount:
     operatorDataSource: "offline_dataset",
     provenance: null,
     status: "running",
+    statusMessage: "",
     frameIndex: startFrame,
     frameUrl: frameIndexImageUrl(datasetId, startFrame, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
     frameCount,
@@ -6198,6 +6248,7 @@ function createInitialRealCameraLiveRun(): LiveRunState {
     operatorDataSource: "real_camera",
     provenance: null,
     status: "running",
+    statusMessage: "",
     frameIndex: 0,
     frameUrl: "",
     frameCount: 0,
@@ -6235,6 +6286,7 @@ function updateLiveRunFromFrame(
     operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
     provenance: event.provenance ?? null,
     status: "running" as const,
+    statusMessage: "",
     frameIndex: event.frame_index,
     frameUrl: apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
     frameCount: event.frame_count,
@@ -6261,6 +6313,7 @@ function updateLiveRunFromFrame(
     operatorDataSource: event.operator_data_source === "real_camera" ? "real_camera" : event.operator_data_source === "offline_dataset" ? "offline_dataset" : previous.operatorDataSource,
     provenance: event.provenance ?? previous.provenance,
     status: "running",
+    statusMessage: "",
     frameIndex: refreshPreview ? event.frame_index : previous.frameIndex,
     frameUrl: refreshPreview ? apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }) : previous.frameUrl,
     frameCount: event.frame_count,
@@ -6270,6 +6323,38 @@ function updateLiveRunFromFrame(
     detectionResult: refreshPreview ? detection : previous.detectionResult,
     analysis
   };
+}
+
+function isLiveProgressEvent(event: { event: string }): event is LiveOfflineProgressEvent {
+  return event.event === "stopping" || event.event === "saving_manifest" || event.event === "building_analysis";
+}
+
+function updateLiveRunFromProgress(
+  current: LiveRunState | null,
+  event: LiveOfflineProgressEvent
+): LiveRunState | null {
+  if (!current) return current;
+  return {
+    ...current,
+    runId: event.run_id || current.runId,
+    datasetId: event.dataset_id ?? current.datasetId,
+    operatorDataSource: event.operator_data_source === "real_camera"
+      ? "real_camera"
+      : event.operator_data_source === "offline_dataset"
+        ? "offline_dataset"
+        : current.operatorDataSource,
+    status: "running",
+    statusMessage: liveRunProgressLabel(event.event),
+    processedFrames: event.processed_frames,
+    frameCount: event.frame_count,
+    totalFrames: event.total_frames,
+  };
+}
+
+function liveRunProgressLabel(event: LiveOfflineProgressEvent["event"]): string {
+  if (event === "stopping") return "Collecting stop request";
+  if (event === "saving_manifest") return "Saving run data";
+  return "Building result analysis";
 }
 
 function emptyAnalysis(runId: string): AnalysisResult {

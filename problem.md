@@ -97,6 +97,7 @@
 | P-0079 | WONTFIX | P0 | backend / frontend / C detector | C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数 | 2026-07-08 | 2026-07-08 | Codex | 用户更正：C 类默认不能替换原外包络检测；该默认替换方案废弃，见 P-0081 |
 | P-0080 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / run analysis export | 实时测量和分析前需要距离异常跳变过滤，避免检测突变点进入曲线和 AFAS | 2026-07-08 | 2026-07-08 | Codex | CausalDistanceOutlierFilter 已接入 live offline / real camera / analysis / export；golden_c Operator live offline run + Results Export 浏览器复测通过 |
 | P-0081 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector mode | C 类默认必须保留原始外包络检测，对比度最宽跨度检测只能作为可选模式 | 2026-07-08 | 2026-07-08 | Codex | golden_c Operator 默认 legacy probe、可选 contrast probe、live run 和 export 浏览器复测通过 |
+| P-0082 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real run curves | 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run→Stop 浏览器复测通过，stream 阶段事件和 temporal mask 默认关闭已验证 |
 
 ---
 
@@ -8460,6 +8461,112 @@ Result: PASS, exit 0.
   - Run manifest: `output/runs/run-golden_c_20260529_dev_lab-20260708T122322667675Z/run_manifest.json`
   - Analysis: `output/runs/run-golden_c_20260529_dev_lab-20260708T122322667675Z/analysis_result.json`
   - Export bundle: `output/runs/run-golden_c_20260529_dev_lab-20260708T122322667675Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T122322667675Z.zip`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0082 — 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `frontend/src/curves.ts`, `frontend/src/main.tsx`
+- Found date: 2026-07-08
+- Last update: 2026-07-08
+- Owner/tool: Codex
+
+#### Problem
+
+真实相机 + 真实温控实时测试中，视频和单帧检测仍在更新，但实时趋势曲线可能长时间看起来不刷新，之后一次性整体更新；同时图例显示“后端平滑温度-距离曲线”，让操作者误以为弯曲的 AFAS 预处理曲线就是逐帧实时采集曲线。点击停止测试后，后端同步保存 manifest、完整 build_analysis_result 和 AFAS 后处理，前端缺少停止/保存/分析阶段反馈，体验上像卡住。
+
+#### Expected
+
+```text
+实时 Run 主曲线使用每帧生成的正式 temperature_distance 点，经过温度同步和 distance outlier filter 后，每来一个正式点就持续更新。
+AFAS smoothed 只能作为可选/弱化预览 overlay，并明确说明它按批次更新，不代表逐帧实时数据。
+停止测试后 stream 先发 stopping / saving_manifest / building_analysis / complete 阶段事件，前端显示对应状态。
+实时期间 AFAS 预览默认降频，完整 AFAS 数学逻辑仍只在停止后完整结果分析中执行。
+temporal_masks 默认不落盘，只有工程诊断配置显式开启时才写 PNG。
+```
+
+#### Actual
+
+修复前 `readRunTrendCurveSource(...)` 优先选择 `afas_preprocessing.smoothed` 作为 Run trend 主线；后端 live preview 每 10 帧对全部正式点运行 `preprocess_temperature_distance(...)`；真实相机和 live offline 的 temporal stabilizer 默认传入 `run_dir / "temporal_masks"`；stream 结束时直接调用 `_save_*_result(...)` 后只发送 `complete`。
+
+#### Fix summary
+
+- 将 live AFAS preview 间隔从 10 帧降到 300 帧，短 run 期间只返回 `deferred_until_complete` 元信息，完整 `build_analysis_result(...)` / AFAS 数学逻辑仍在停止后执行。
+- real camera / live offline stream 结束时拆出 `stopping`、`saving_manifest`、`building_analysis`、`complete` 阶段事件；manifest 写入和 analysis 构建之间可向前端反馈当前阶段。
+- `DetectorConfig` 新增 `save_temporal_masks=false`，real camera / live offline 的 temporal stabilizer 默认传 `artifact_dir=None`；只有显式开启工程诊断时才写 `temporal_masks/*.png`。
+- Run trend 模型改为以 `analysis.temperature_distance` 正式点作为主线，`afas_preprocessing.smoothed/grouped` 只作为 `AFAS preprocessing preview` secondary series；前端图例和 tooltip 明确“批次更新趋势参考，不代表逐帧实时数据”。
+- Run 页面增加停止/保存/生成分析阶段文案：`正在停止采集`、`正在保存数据`、`正在生成结果分析`。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_real_camera_run_service.py::test_real_camera_stream_stop_callback_saves_manual_stop_run backend/tests/integration/test_real_camera_run_service.py::test_real_camera_stream_does_not_write_temporal_masks_by_default backend/tests/integration/test_real_camera_run_service.py::test_real_camera_stream_writes_temporal_masks_when_enabled -q
+Result: PASS, 3 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_frame_events_defer_smoothed_afas_preview_for_short_runs backend/tests/integration/test_live_offline_run_service.py::test_streamed_live_offline_run_short_frame_events_defer_afas_preview -q
+Result: PASS, 2 passed.
+
+npm test -- curveSpecs.test.mjs
+Result: PASS, 84 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_live_offline_run_service.py backend/tests/unit/test_core_models.py backend/tests/unit/test_temporal_stabilization.py backend/tests/unit/test_analysis_service.py -q
+Result: PASS, 51 passed.
+
+cd frontend && ./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_core_models.py backend/tests/unit/test_envelope_detectors.py backend/tests/unit/test_detector_audit.py backend/tests/unit/test_distance_outlier_filter.py backend/tests/unit/test_analysis_service.py backend/tests/unit/test_temporal_stabilization.py backend/tests/unit/test_run_detector_policy.py backend/tests/integration/test_export_service.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py -q
+Result: PASS, 114 passed.
+
+npm test -- apiClientUrls.test.mjs detectorControls.test.mjs setupSources.test.mjs operatorSettings.test.mjs realCameraSetupRunRegression.test.mjs curveSpecs.test.mjs
+Result: PASS, 84 passed.
+
+git diff --check
+Result: PASS, exit 0.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-08
+- Browser: Playwright Chromium
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-1210`
+- Page: Operator `实时测试`
+- Steps:
+  1. 启动 `scripts/g3_fast_start.sh real-real --restart`。
+  2. 打开 Operator 页面，确认真实相机/真实温控均为正常。
+  3. 将温控功率设置为 `0`，点击“确认本次测试设置”。
+  4. 点击“开始实时测试”，观察实时画面、正式 A/B overlay、当前距离、当前温度和温度-距离点数增长。
+  5. 确认 Run trend 图例主线显示“实时温度-距离点”，不是后端平滑曲线。
+  6. 点击“停止测试”，等待保存完成并检查页面恢复为可再次开始。
+  7. 在浏览器上下文中执行 2 帧短 real stream，读取 NDJSON，确认事件序列包含 `stopping`、`saving_manifest`、`building_analysis`。
+  8. 检查保存后的 `run_manifest.json` / `analysis_result.json` 和 `temporal_masks` 目录。
+- Expected:
+  - 实时主曲线使用正式 temperature-distance 点，随帧持续更新。
+  - AFAS 平滑曲线只作为“AFAS 预处理平滑预览 / 批次更新趋势参考”显示。
+  - stream 结束前产生 stopping / saving_manifest / building_analysis / complete 事件。
+  - `save_temporal_masks=false` 时不创建或不写 `temporal_masks/*.png`。
+- Actual:
+  - UI run `run-real_camera-20260708T133852203889Z` 显示真实相机帧、正式测宽带、A/B 点，Run trend 主图例为“实时温度-距离点”；停止后页面恢复“开始实时测试”。
+  - `run-real_camera-20260708T133852203889Z` 保存 37 帧，`analysis_result.temperature_distance` 为 37 点，`stop_reason="manual_stop_requested"`，`save_temporal_masks=false`，未创建 `temporal_masks`。
+  - 浏览器上下文短 stream `run-real_camera-20260708T134047228041Z` 返回事件序列 `["frame","frame","stopping","saving_manifest","building_analysis","complete"]`，保存 2 帧/2 个正式点，`save_temporal_masks=false`，未创建 `temporal_masks`。
+  - 完成态图例显示“实时温度-距离点”与“AFAS 预处理平滑预览 · 批次更新趋势参考”，tooltip 说明平滑曲线来自 AFAS 预处理且不代表逐帧实时数据。
+- Result: PASS
+- Evidence:
+  - Screenshot: `output/playwright/p0082_real_camera_live_curve_stop_20260708.png`
+  - UI run manifest: `output/runs/run-real_camera-20260708T133852203889Z/run_manifest.json`
+  - UI run analysis: `output/runs/run-real_camera-20260708T133852203889Z/analysis_result.json`
+  - Stream event run manifest: `output/runs/run-real_camera-20260708T134047228041Z/run_manifest.json`
+  - Stream event run analysis: `output/runs/run-real_camera-20260708T134047228041Z/analysis_result.json`
 
 #### Current status
 

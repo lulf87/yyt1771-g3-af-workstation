@@ -219,9 +219,15 @@ export type RunTrendModel = {
   windowMode: RunTrendWindowMode;
   source: RunTrendPointSource;
   sourceLabel: string;
+  previewSource: RunTrendPointSource | null;
+  previewLabel: string;
+  previewStatus: string | null;
+  previewNote: string;
   formalPoints: RunTrendPoint[];
   referencePoints: RunTrendPoint[];
+  previewPoints: RunTrendPoint[];
   formalSegments: RunTrendPoint[][];
+  previewSegments: RunTrendPoint[][];
   statusRugs: RunTrendStatusRug[];
   latestPoint: RunTrendPoint | null;
   xTicks: CurveTick[];
@@ -495,15 +501,23 @@ export function buildRunTrendModel(
   const visibleReferenceData = allReferenceData;
   const visibleStatusData = allStatusData;
   const trendSource = readRunTrendCurveSource(analysis);
+  const previewSource = readRunTrendPreviewSource(analysis);
   const allFormalData = trendSource.points
     ? normalizeRunTrendDataPoints(trendSource.points, trendSource.source, frameMap, { preserveMissingFrameIndex: true })
       .filter((point) => isFormalTrendPoint(point))
       .sort((a, b) => a.temperature - b.temperature)
     : [];
   const visibleFormalData = allFormalData;
+  const allPreviewData = previewSource.points
+    ? normalizeRunTrendDataPoints(previewSource.points, previewSource.source, frameMap, { preserveMissingFrameIndex: true })
+      .filter((point) => isFormalTrendPoint(point))
+      .sort((a, b) => a.temperature - b.temperature)
+    : [];
+  const visiblePreviewData = allPreviewData;
   const xValues = [
     ...visibleFormalData.map((point) => point.temperature),
     ...visibleReferenceData.map((point) => point.temperature),
+    ...visiblePreviewData.map((point) => point.temperature),
     ...visibleStatusData.map((rug) => rug.temperature)
   ].filter(Number.isFinite);
   const formalYValues = visibleFormalData.map((point) => point.distance).filter(Number.isFinite);
@@ -514,8 +528,10 @@ export function buildRunTrendModel(
   const yRange = buildRunTrendYAxisRange(yValues, options.yAxis);
   const formalPoints = visibleFormalData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
   const referencePoints = visibleReferenceData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
+  const previewPoints = visiblePreviewData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
   const statusRugs = visibleStatusData.map((rug) => scaleRunTrendStatusRug(rug, xRange, plot));
   const formalSegments = buildRunTrendSegments(formalPoints, statusRugs);
+  const previewSegments = buildRunTrendSegments(previewPoints, []);
   const xTicks = buildTicks(xRange.min, xRange.max, 5).map((value) => ({
     value,
     position: scaleLinear(value, xRange.min, xRange.max, plot.left, plot.right),
@@ -536,9 +552,15 @@ export function buildRunTrendModel(
     windowMode: options.mode,
     source: trendSource.source,
     sourceLabel: trendSource.label,
+    previewSource: previewSource.points ? previewSource.source : null,
+    previewLabel: previewSource.points ? previewSource.label : "",
+    previewStatus: previewSource.status,
+    previewNote: previewSource.note,
     formalPoints,
     referencePoints,
+    previewPoints,
     formalSegments,
+    previewSegments,
     statusRugs,
     latestPoint: referencePoints.length ? referencePoints[referencePoints.length - 1] : null,
     xTicks,
@@ -639,26 +661,48 @@ function readRunTrendCurveSource(analysis: AnalysisCurveSource): {
   label: string;
   points: CurvePointInput[] | null;
 } {
+  return {
+    source: "raw",
+    label: "Live temperature-distance points",
+    points: analysis.temperature_distance
+  };
+}
+
+function readRunTrendPreviewSource(analysis: AnalysisCurveSource): {
+  source: RunTrendPointSource;
+  label: string;
+  points: CurvePointInput[] | null;
+  status: string | null;
+  note: string;
+} {
+  const preprocessing = readRecord(analysis.afas_preprocessing);
+  const status = readString(preprocessing.preview_status);
   const smoothed = readPreprocessedTemperatureDistance(analysis, "smoothed");
   if (smoothed?.length) {
     return {
       source: "smoothed",
-      label: "Backend smoothed temperature-distance",
-      points: smoothed
+      label: "AFAS preprocessing preview",
+      points: smoothed,
+      status,
+      note: "AFAS preprocessing preview is a batch-updated trend reference, not frame-by-frame live data."
     };
   }
   const grouped = readPreprocessedTemperatureDistance(analysis, "grouped");
   if (grouped?.length) {
     return {
       source: "grouped",
-      label: "Backend binned temperature-distance",
-      points: grouped
+      label: "AFAS preprocessing preview",
+      points: grouped,
+      status,
+      note: "AFAS preprocessing preview is a batch-updated trend reference, not frame-by-frame live data."
     };
   }
   return {
     source: "raw",
-    label: "Raw frame scatter; backend smooth pending",
-    points: null
+    label: "",
+    points: null,
+    status,
+    note: ""
   };
 }
 
