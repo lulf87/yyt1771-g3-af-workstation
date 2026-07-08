@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf-8");
+const liveRunAnalysisSource = readFileSync(resolve(rootDir, "src/liveRunAnalysis.ts"), "utf-8");
 
 function basicKeyBlock() {
   const match = mainSource.match(/const BASIC_DETECTOR_PARAMETER_KEYS = new Set<keyof DetectorConfig>\(\[([\s\S]*?)\]\);/);
@@ -75,7 +76,7 @@ test("operator distance outlier filter exposes only enable and max jump controls
 });
 
 test("live raw and stabilized fallback curve points respect curve point status", () => {
-  const match = mainSource.match(/function isFormalCurveDetection\([\s\S]*?function mergeLiveAfasPreprocessing\(/);
+  const match = liveRunAnalysisSource.match(/function isFormalCurveDetection\([\s\S]*?function livePointMissingReason\(/);
   assert.ok(match, "live curve point helper block should exist");
   const block = match[0];
 

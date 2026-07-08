@@ -872,6 +872,78 @@ test("run trend model keeps growing formal points when AFAS preview is unchanged
   assert.equal(model.previewPoints.length, 2);
 });
 
+test("run trend model keeps twenty linear live points primary when AFAS smoothed preview is curved", async () => {
+  const { buildRunTrendModel } = await loadCurveModule();
+  const livePoints = Array.from({ length: 20 }, (_, index) => ({
+    x: 20 + index,
+    y: 500 + index * 2,
+    frame_index: index + 1,
+    sync_status: "TEMP_SYNC_OK"
+  }));
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      temperature_distance: livePoints,
+      afas_preprocessing: {
+        preview_status: "updated",
+        smoothed: {
+          temperature_celsius: [20, 24, 28, 32, 36, 39],
+          values: [500, 520, 510, 535, 525, 538],
+          applied: true
+        }
+      }
+    },
+    { mode: "full", width: 900, height: 420 }
+  );
+
+  assert.equal(model.formalPoints.length, 20);
+  assert.deepEqual(
+    model.formalPoints.map((point) => point.distance),
+    livePoints.map((point) => point.y)
+  );
+  assert.equal(model.previewPoints.length, 6);
+  assert.notDeepEqual(
+    model.previewPoints.map((point) => point.distance),
+    model.formalPoints.slice(0, 6).map((point) => point.distance)
+  );
+});
+
+test("run trend temperature gap breaks line segments without hiding formal points", async () => {
+  const { buildRunTrendModel } = await loadCurveModule();
+  const model = buildRunTrendModel(
+    {
+      ...sampleAnalysis(),
+      all_frames: [
+        {
+          frame_index: 1,
+          detection_status: "VALID",
+          distance_px: 500,
+          temperature_celsius: 20,
+          temperature_sync_status: "TEMP_SYNC_OK"
+        },
+        {
+          frame_index: 2,
+          detection_status: "VALID",
+          distance_px: 505,
+          temperature_celsius: 40,
+          temperature_sync_status: "TEMP_SYNC_OK"
+        }
+      ],
+      temperature_distance: [
+        { x: 20, y: 500, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+        { x: 40, y: 505, frame_index: 2, sync_status: "TEMP_SYNC_OK" }
+      ]
+    },
+    { mode: "full", width: 900, height: 420, maxTemperatureConnectionGapCelsius: 5 }
+  );
+
+  assert.equal(model.formalPoints.length, 2);
+  assert.deepEqual(
+    model.formalSegments.map((segment) => segment.map((point) => point.frameIndex)),
+    [[1], [2]]
+  );
+});
+
 test("run trend y axis reflects formal live points instead of hiding them behind preview", async () => {
   const { buildRunTrendModel } = await loadCurveModule();
 

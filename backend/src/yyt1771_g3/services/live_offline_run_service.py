@@ -19,6 +19,7 @@ from yyt1771_g3.core.models import (
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
 from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter, filter_detection_sequence
+from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, OfflineDatasetRegistry
 from yyt1771_g3.services.run_detector_policy import (
     RunDetectorPolicyState,
@@ -473,6 +474,11 @@ def _frame_event(
         },
         "afas_preprocessing": afas_preprocessing,
         "afas_analysis": {"result_status": "pending"},
+        "live_point_status": build_live_point_status(
+            detection,
+            curve_points,
+            temperature_distance_point_count=int(afas_preprocessing.get("temperature_distance_point_count", 0) or 0),
+        ),
     }
 
 

@@ -98,6 +98,7 @@
 | P-0080 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / run analysis export | 实时测量和分析前需要距离异常跳变过滤，避免检测突变点进入曲线和 AFAS | 2026-07-08 | 2026-07-08 | Codex | CausalDistanceOutlierFilter 已接入 live offline / real camera / analysis / export；golden_c Operator live offline run + Results Export 浏览器复测通过 |
 | P-0081 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector mode | C 类默认必须保留原始外包络检测，对比度最宽跨度检测只能作为可选模式 | 2026-07-08 | 2026-07-08 | Codex | golden_c Operator 默认 legacy probe、可选 contrast probe、live run 和 export 浏览器复测通过 |
 | P-0082 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real run curves | 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run→Stop 浏览器复测通过，stream 阶段事件和 temporal mask 默认关闭已验证 |
+| P-0083 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / live run trend | 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run 中正式点从 24 增至 53，停止后保存 78 点；浏览器复测通过 |
 
 ---
 
@@ -8471,7 +8472,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0082 — 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈
 
-- Status: IN_PROGRESS
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `frontend/src/curves.ts`, `frontend/src/main.tsx`
 - Found date: 2026-07-08
@@ -8567,6 +8568,105 @@ Result: PASS, exit 0.
   - UI run analysis: `output/runs/run-real_camera-20260708T133852203889Z/analysis_result.json`
   - Stream event run manifest: `output/runs/run-real_camera-20260708T134047228041Z/run_manifest.json`
   - Stream event run analysis: `output/runs/run-real_camera-20260708T134047228041Z/analysis_result.json`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0083 — 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/liveRunAnalysis.ts`, `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`
+- Found date: 2026-07-08
+- Last update: 2026-07-08
+- Owner/tool: Codex
+
+#### Problem
+
+用户进一步澄清：真实相机画面、当前距离、当前温度和帧号都在刷新，但实时趋势图会在一段时间内没有新增点，随后批量跳到后面的状态。这说明 P-0082 仅把主线从 AFAS smoothed 改回正式点还不够；前端仍可能把 frame event 的正式点追加和图表刷新合并到批处理 flush 节奏，后端 frame event 也缺少可解释“当前帧为什么没进入正式曲线”的 `live_point_status`。
+
+#### Expected
+
+```text
+每收到一个 frame event，只要 curve_points.temperature_distance 非空，liveRun.analysis.temperature_distance 必须立即追加 1 点。
+buildRunTrendModel(...).formalPoints 必须立即反映 analysis.temperature_distance 的新长度。
+afas_preprocessing.preview_status="unchanged" 只能影响平滑预览，不得影响正式点追加或主曲线刷新。
+temperature gap break 只断线段，不隐藏正式点。
+若当前距离/温度刷新但没有正式点，UI 和后端事件必须能说明原因。
+```
+
+#### Actual
+
+修复前 `startLiveOfflineRun(...)` 和 `startRealCameraRunWithMeasurement(...)` 使用 `pendingFrameEvents`、`run_result_batch_size`、`run_preview_fps` 和 `maxBatchWaitMs` 批量调用 `updateLiveRunFromFrames(...)`，正式点追加与图表 model 刷新都等到 flush。`LiveRunState` 缺少 received/latest/formal-count 诊断字段，frame event 也没有 `live_point_status`。
+
+#### Fix summary
+
+- 前端新增 `liveRunAnalysis.ts`，把 live analysis 追加、AFAS preview merge、正式点诊断和缺失原因文案抽成可测试纯函数。
+- `startLiveOfflineRun(...)` / `startRealCameraRunWithMeasurement(...)` 不再批量缓存 frame events；每个 frame event 都立即调用 `updateLiveRunFromFrame(...)` 追加 `analysis.temperature_distance`，仅图片 URL/shape 刷新继续受 `run_preview_fps` 节流。
+- `LiveRunState` 新增正式曲线诊断字段，Run trend 区域显示正式温度-距离点数、最近正式点帧号/温度/距离；当前帧有距离/温度但没进入正式曲线时显示原因，例如“当前帧未进入正式曲线：温度同步状态不满足正式分析”。
+- 后端 real camera / live offline frame event 新增 `live_point_status`，记录正式 temperature-distance 点是否存在、当前正式点总数、缺失原因、检测状态、曲线点状态、温度同步状态和 outlier filter 状态。
+- `buildRunTrendModel(...)` 增加温度 gap 断线选项，gap 只拆分 `formalSegments`，不减少 `formalPoints`。
+
+#### Tests run
+
+```bash
+npm test -- liveRunAnalysis.test.mjs curveSpecs.test.mjs detectorControls.test.mjs
+Result: PASS, 90 passed.
+
+cd frontend && ./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_analysis_service.py backend/tests/unit/test_distance_outlier_filter.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py -q
+Result: PASS, 66 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_core_models.py backend/tests/unit/test_envelope_detectors.py backend/tests/unit/test_detector_audit.py backend/tests/unit/test_distance_outlier_filter.py backend/tests/unit/test_analysis_service.py backend/tests/unit/test_temporal_stabilization.py backend/tests/unit/test_run_detector_policy.py backend/tests/integration/test_export_service.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_camera_api.py -q
+Result: PASS, 115 passed.
+
+npm test
+Result: PASS, 90 passed.
+
+git diff --check
+Result: PASS, exit 0.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-08
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real Hik camera + LU92XX `/dev/cu.usbserial-1210`
+- Page: Operator `实时测试`
+- Steps:
+  1. 启动/复用 `scripts/g3_fast_start.sh real-real`，确认 backend 为 `hik_gige_mvs` + `lu92xx_modbus_rtu`。
+  2. 打开 Operator 页面，确认真实相机/真实温控均为正常。
+  3. 将温控功率设为 `0`，点击“确认本次测试设置”。
+  4. 点击“开始实时测试”，分别在约 5 秒和 9 秒读取页面。
+  5. 检查当前距离、当前温度、帧号、温度-距离点数、正式温度-距离点数和最近正式点帧号。
+  6. 点击“停止测试”，等待保存和分析完成，检查页面恢复“开始实时测试”。
+  7. 检查保存的 `run_manifest.json` 和 `analysis_result.json`。
+- Expected:
+  - 只要当前帧生成正式 temperature-distance 点，Run trend 主图立即新增正式点。
+  - `afas_preprocessing.preview_status` / smoothed preview 不控制实时主曲线刷新。
+  - 诊断区显示正式点数和最近正式点帧号。
+  - stop 后继续显示保存/分析结果，不表现为卡死。
+- Actual:
+  - 运行中第一次快照显示帧 `24`，`温度-距离点数=24`，`正式温度-距离点数=24`，`最近正式点帧号=24`。
+  - 继续运行约 4 秒后显示帧 `53`，`温度-距离点数=53`，`正式温度-距离点数=53`，`最近正式点帧号=53`，趋势图图例为“实时温度-距离点”。
+  - 停止后页面恢复“开始实时测试”，最终帧 `78`，`温度-距离点数=78`，图例为“实时温度-距离点”，AFAS 预处理平滑预览仅作为“批次更新趋势参考”显示。
+  - 保存产物 `run-real_camera-20260708T135907070219Z` 中 `run_manifest.frame_records=78`、`detection_results=78`、`analysis_result.temperature_distance=78`、`stop_reason="manual_stop_requested"`、`save_temporal_masks=false`。
+  - 浏览器 console 仍有既有 `/api/camera/preview` 409 轮询噪声；本次 run stream、趋势图和保存结果未受影响。
+- Result: PASS
+- Evidence:
+  - Screenshot: `output/playwright/p0083_real_camera_live_trend_per_frame_20260708.png`
+  - Run manifest: `output/runs/run-real_camera-20260708T135907070219Z/run_manifest.json`
+  - Analysis result: `output/runs/run-real_camera-20260708T135907070219Z/analysis_result.json`
+  - Dev logs: `output/dev/g3-fast-start-backend-8022.log`, `output/dev/g3-fast-start-frontend-5176.log`
 
 #### Current status
 

@@ -1193,6 +1193,26 @@ input {
   gap: 8px;
 }
 
+.runLiveDiagnostics {
+  display: grid;
+  gap: 8px;
+}
+
+.runValueStrip--diagnostics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.runPointNotice {
+  margin: 0;
+  border: 1px solid #f6c76b;
+  border-radius: 6px;
+  background: #fff8e6;
+  color: #7c4a03;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 8px 10px;
+}
+
 .runValue {
   min-width: 0;
   border: 1px solid #d8e0e7;

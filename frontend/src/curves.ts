@@ -147,6 +147,7 @@ export type RunTrendModelOptions = {
   width: number;
   height: number;
   yAxis?: RunTrendYAxisOptions;
+  maxTemperatureConnectionGapCelsius?: number;
 };
 
 export type RunTrendYAxisRange = {
@@ -530,7 +531,9 @@ export function buildRunTrendModel(
   const referencePoints = visibleReferenceData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
   const previewPoints = visiblePreviewData.map((point) => scaleRunTrendPoint(point, xRange, yRange, plot));
   const statusRugs = visibleStatusData.map((rug) => scaleRunTrendStatusRug(rug, xRange, plot));
-  const formalSegments = buildRunTrendSegments(formalPoints, statusRugs);
+  const formalSegments = buildRunTrendSegments(formalPoints, statusRugs, {
+    maxTemperatureConnectionGapCelsius: options.maxTemperatureConnectionGapCelsius
+  });
   const previewSegments = buildRunTrendSegments(previewPoints, []);
   const xTicks = buildTicks(xRange.min, xRange.max, 5).map((value) => ({
     value,
@@ -562,7 +565,7 @@ export function buildRunTrendModel(
     formalSegments,
     previewSegments,
     statusRugs,
-    latestPoint: referencePoints.length ? referencePoints[referencePoints.length - 1] : null,
+    latestPoint: referencePoints.length ? referencePoints[referencePoints.length - 1] : formalPoints.length ? formalPoints[formalPoints.length - 1] : null,
     xTicks,
     yTicks,
     xAxisLabel: "Temperature (°C)",
@@ -839,7 +842,8 @@ function scaleRunTrendStatusRug(
 
 function buildRunTrendSegments(
   formalPoints: RunTrendPoint[],
-  statusRugs: RunTrendStatusRug[]
+  statusRugs: RunTrendStatusRug[],
+  options: { maxTemperatureConnectionGapCelsius?: number } = {}
 ): RunTrendPoint[][] {
   if (!formalPoints.length) return [];
   const segments: RunTrendPoint[][] = [];
@@ -850,7 +854,10 @@ function buildRunTrendSegments(
       previous &&
       previous.frameIndex !== null &&
       point.frameIndex !== null &&
-      hasStatusBreakBetween(previous.frameIndex, point.frameIndex, statusRugs)
+      (
+        hasStatusBreakBetween(previous.frameIndex, point.frameIndex, statusRugs) ||
+        hasTemperatureGapBreak(previous, point, options.maxTemperatureConnectionGapCelsius)
+      )
     ) {
       segments.push(current);
       current = [];
@@ -859,6 +866,16 @@ function buildRunTrendSegments(
   }
   if (current.length) segments.push(current);
   return segments;
+}
+
+function hasTemperatureGapBreak(
+  previous: RunTrendPoint,
+  next: RunTrendPoint,
+  maxTemperatureConnectionGapCelsius: number | undefined
+): boolean {
+  if (maxTemperatureConnectionGapCelsius === undefined || maxTemperatureConnectionGapCelsius === null) return false;
+  if (!Number.isFinite(maxTemperatureConnectionGapCelsius) || maxTemperatureConnectionGapCelsius <= 0) return false;
+  return Math.abs(next.temperature - previous.temperature) > maxTemperatureConnectionGapCelsius;
 }
 
 function hasStatusBreakBetween(

@@ -52,7 +52,6 @@ import {
   type AfasPreprocessingParameters,
   type AnalysisResult,
   type CameraPreviewResponse,
-  type CurvePoint,
   type DetectionResult,
   type DiagnosticImages,
   type MeasurementDefinition,
@@ -71,6 +70,15 @@ import {
   type SourceProvenance,
   type TemperatureStatusResponse
 } from "./api/client";
+import {
+  appendLiveAnalysis,
+  buildLiveRunDiagnostics,
+  detectionWithSyncConfig,
+  emptyAnalysis,
+  emptyLiveRunDiagnostics,
+  livePointStatusMessage,
+  type LiveRunDiagnostics
+} from "./liveRunAnalysis";
 import {
   SourceProvenanceBadge,
   provenanceLabel,
@@ -205,6 +213,7 @@ type LiveRunState = {
   frameShape: number[] | null;
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
+  diagnostics: LiveRunDiagnostics;
 };
 
 type OperatorDataSource = "offline_dataset" | "real_camera";
@@ -912,26 +921,13 @@ function App() {
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialLiveRun(selectedId, frameIndex, selectedDataset?.frame_count ?? frameIndex));
     const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
-    const maxBatchWaitMs = 180;
-    let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
     let lastPreviewUpdateMs = 0;
-    let batchFlushTimer: number | null = null;
-
-    const clearBatchFlushTimer = () => {
-      if (batchFlushTimer == null) return;
-      window.clearTimeout(batchFlushTimer);
-      batchFlushTimer = null;
-    };
-    const flushPendingFrameEvents = (forcePreview: boolean) => {
-      if (pendingFrameEvents.length === 0) return;
-      const events = pendingFrameEvents;
-      pendingFrameEvents = [];
+    const applyLiveFrameEvent = (event: LiveOfflineFrameEvent, forcePreview = false) => {
       const now = Date.now();
       const refreshPreview = forcePreview || now - lastPreviewUpdateMs >= previewIntervalMs;
       if (refreshPreview) lastPreviewUpdateMs = now;
-      setLiveRun((current) => updateLiveRunFromFrames(current, events, { refreshPreview }));
+      setLiveRun((current) => updateLiveRunFromFrame(current, event, { refreshPreview }));
     };
 
     try {
@@ -943,21 +939,8 @@ function App() {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
           liveRunProcessedFramesRef.current = event.processed_frames;
-          pendingFrameEvents.push(event);
-          const now = Date.now();
-          const shouldRefreshPreview = now - lastPreviewUpdateMs >= previewIntervalMs;
-          if (pendingFrameEvents.length >= runResultBatchSize || shouldRefreshPreview) {
-            clearBatchFlushTimer();
-            flushPendingFrameEvents(shouldRefreshPreview);
-          } else if (batchFlushTimer == null) {
-            batchFlushTimer = window.setTimeout(() => {
-              batchFlushTimer = null;
-              flushPendingFrameEvents(false);
-            }, maxBatchWaitMs);
-          }
+          applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          clearBatchFlushTimer();
-          flushPendingFrameEvents(true);
           liveRunIdRef.current = event.run_manifest.run_id;
           liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
           setLiveRun((current) =>
@@ -975,15 +958,11 @@ function App() {
               : current
           );
         } else if (isLiveProgressEvent(event)) {
-          clearBatchFlushTimer();
-          flushPendingFrameEvents(true);
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
       setRunResult(response);
     } catch (err) {
-      clearBatchFlushTimer();
-      flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
         const stoppedRunId = liveRunIdRef.current;
@@ -1013,7 +992,6 @@ function App() {
         setRunResult(null);
       }
     } finally {
-      clearBatchFlushTimer();
       if (runAbortRef.current === controller) {
         runAbortRef.current = null;
       }
@@ -1337,26 +1315,13 @@ function App() {
     liveRunProcessedFramesRef.current = 0;
     setLiveRun(createInitialRealCameraLiveRun());
     const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
-    const runResultBatchSize = Math.round(clamp(Number(measurementForRun.detector_config.run_result_batch_size ?? 10), 1, 100));
     const previewIntervalMs = 1000 / runPreviewFps;
-    const maxBatchWaitMs = 180;
-    let pendingFrameEvents: LiveOfflineFrameEvent[] = [];
     let lastPreviewUpdateMs = 0;
-    let batchFlushTimer: number | null = null;
-
-    const clearBatchFlushTimer = () => {
-      if (batchFlushTimer == null) return;
-      window.clearTimeout(batchFlushTimer);
-      batchFlushTimer = null;
-    };
-    const flushPendingFrameEvents = (forcePreview: boolean) => {
-      if (pendingFrameEvents.length === 0) return;
-      const events = pendingFrameEvents;
-      pendingFrameEvents = [];
+    const applyLiveFrameEvent = (event: LiveOfflineFrameEvent, forcePreview = false) => {
       const now = Date.now();
       const refreshPreview = forcePreview || now - lastPreviewUpdateMs >= previewIntervalMs;
       if (refreshPreview) lastPreviewUpdateMs = now;
-      setLiveRun((current) => updateLiveRunFromFrames(current, events, { refreshPreview }));
+      setLiveRun((current) => updateLiveRunFromFrame(current, event, { refreshPreview }));
     };
 
     try {
@@ -1371,21 +1336,8 @@ function App() {
         if (event.event === "frame") {
           liveRunIdRef.current = event.run_id;
           liveRunProcessedFramesRef.current = event.processed_frames;
-          pendingFrameEvents.push(event);
-          const now = Date.now();
-          const shouldRefreshPreview = now - lastPreviewUpdateMs >= previewIntervalMs;
-          if (pendingFrameEvents.length >= runResultBatchSize || shouldRefreshPreview) {
-            clearBatchFlushTimer();
-            flushPendingFrameEvents(shouldRefreshPreview);
-          } else if (batchFlushTimer == null) {
-            batchFlushTimer = window.setTimeout(() => {
-              batchFlushTimer = null;
-              flushPendingFrameEvents(false);
-            }, maxBatchWaitMs);
-          }
+          applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          clearBatchFlushTimer();
-          flushPendingFrameEvents(true);
           liveRunIdRef.current = event.run_manifest.run_id;
           liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
           setLiveRun((current) =>
@@ -1406,15 +1358,11 @@ function App() {
               : current
           );
         } else if (isLiveProgressEvent(event)) {
-          clearBatchFlushTimer();
-          flushPendingFrameEvents(true);
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
       setRunResult(response);
     } catch (err) {
-      clearBatchFlushTimer();
-      flushPendingFrameEvents(true);
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
         const stoppedRunId = liveRunIdRef.current;
@@ -1430,7 +1378,6 @@ function App() {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      clearBatchFlushTimer();
       if (runAbortRef.current === controller) {
         runAbortRef.current = null;
       }
@@ -2395,6 +2342,7 @@ function OperatorRunPage({
               runId={liveRun?.runId ?? runResult?.run_manifest.run_id ?? null}
               isRunning={liveRun?.status === "running"}
               targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
+              diagnostics={liveRun?.diagnostics ?? null}
               compact
             />
           ) : (
@@ -4449,6 +4397,7 @@ function RunPage({
             runId={displayedLiveRun?.runId ?? manifest?.run_id ?? null}
             isRunning={displayedLiveRun?.status === "running"}
             targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
+            diagnostics={displayedLiveRun?.diagnostics ?? null}
           />
         </section>
         ) : null}
@@ -5444,12 +5393,14 @@ function RunTrendChart({
   runId,
   isRunning,
   targetTemperature,
+  diagnostics,
   compact = false
 }: {
   analysis: AnalysisResult;
   runId: string | null;
   isRunning: boolean;
   targetTemperature: number | null;
+  diagnostics?: LiveRunDiagnostics | null;
   compact?: boolean;
 }) {
   const language = useUiLanguage();
@@ -5517,6 +5468,7 @@ function RunTrendChart({
   return (
     <div className="runTrendShell">
       <RunValueStrip valueStrip={model.valueStrip} compact={compact} />
+      {diagnostics ? <RunLiveDiagnostics diagnostics={diagnostics} compact={compact} /> : null}
       <figure className="runTrendFigure">
         <figcaption>
           <span>{t(model.sourceLabel)}</span>
@@ -5703,6 +5655,46 @@ function sameYAxisRange(
     current !== null &&
     Math.abs(current.min - next.min) < 1e-9 &&
     Math.abs(current.max - next.max) < 1e-9
+  );
+}
+
+function RunLiveDiagnostics({
+  diagnostics,
+  compact = false
+}: {
+  diagnostics: LiveRunDiagnostics;
+  compact?: boolean;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const missingMessage = livePointStatusMessage({
+    temperature_distance_present: diagnostics.latestCurvePointPresent,
+    temperature_distance_point_count: diagnostics.formalTemperatureDistancePointCount,
+    reason_if_missing: diagnostics.latestCurvePointMissingReason,
+    detection_status: diagnostics.detectionStatus ?? "",
+    curve_point_status: diagnostics.curvePointStatus ?? "",
+    temperature_sync_status: diagnostics.temperatureSyncStatus ?? "",
+    distance_outlier_filtered: diagnostics.distanceOutlierFiltered
+  });
+  const showMissingMessage =
+    !diagnostics.latestCurvePointPresent &&
+    missingMessage.length > 0 &&
+    diagnostics.latestDetectionDistancePx !== null &&
+    diagnostics.latestDetectionTemperatureC !== null;
+  return (
+    <div className="runLiveDiagnostics">
+      <dl className="runValueStrip runValueStrip--diagnostics">
+        <RunValue label="Formal temp-distance points" value={diagnostics.formalTemperatureDistancePointCount.toLocaleString()} />
+        <RunValue label="Latest formal frame" value={diagnostics.lastFormalPointFrameIndex?.toLocaleString() ?? uiNone(language)} />
+        {compact ? null : (
+          <>
+            <RunValue label="Latest formal temperature" value={formatNullableNumber(diagnostics.lastFormalPointTemperature, " °C", 2, language)} />
+            <RunValue label="Latest formal distance" value={formatNullableNumber(diagnostics.lastFormalPointDistance, uiNumberSuffix(language, " px"), 1, language)} />
+          </>
+        )}
+      </dl>
+      {showMissingMessage ? <p className="runPointNotice">{t(missingMessage)}</p> : null}
+    </div>
   );
 }
 
@@ -6236,7 +6228,8 @@ function createInitialLiveRun(datasetId: string, startFrame: number, frameCount:
     processedFrames: 0,
     frameShape: null,
     detectionResult: null,
-    analysis: emptyAnalysis(runId)
+    analysis: emptyAnalysis(runId),
+    diagnostics: emptyLiveRunDiagnostics()
   };
 }
 
@@ -6256,21 +6249,9 @@ function createInitialRealCameraLiveRun(): LiveRunState {
     processedFrames: 0,
     frameShape: null,
     detectionResult: null,
-    analysis: emptyAnalysis(runId)
+    analysis: emptyAnalysis(runId),
+    diagnostics: emptyLiveRunDiagnostics()
   };
-}
-
-function updateLiveRunFromFrames(
-  current: LiveRunState | null,
-  events: LiveOfflineFrameEvent[],
-  options: { refreshPreview: boolean }
-): LiveRunState | null {
-  if (events.length === 0) return current;
-  return events.reduce<LiveRunState | null>((next, event, index) => (
-    updateLiveRunFromFrame(next, event, {
-      refreshPreview: options.refreshPreview && index === events.length - 1
-    })
-  ), current);
 }
 
 function updateLiveRunFromFrame(
@@ -6294,7 +6275,8 @@ function updateLiveRunFromFrame(
     processedFrames: 0,
     frameShape: event.frame_record.shape,
     detectionResult: null,
-    analysis: emptyAnalysis(runId)
+    analysis: emptyAnalysis(runId),
+    diagnostics: emptyLiveRunDiagnostics()
   };
   const detection = detectionWithSyncConfig(event.detection_result, event.sync_config);
   const analysis = appendLiveAnalysis(
@@ -6306,6 +6288,7 @@ function updateLiveRunFromFrame(
     runId,
     event.sync_config
   );
+  const diagnostics = buildLiveRunDiagnostics(previous.diagnostics, event, analysis, detection);
   return {
     ...previous,
     runId,
@@ -6314,14 +6297,15 @@ function updateLiveRunFromFrame(
     provenance: event.provenance ?? previous.provenance,
     status: "running",
     statusMessage: "",
-    frameIndex: refreshPreview ? event.frame_index : previous.frameIndex,
+    frameIndex: event.frame_index,
     frameUrl: refreshPreview ? apiUrlFromPath(event.frame_url, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }) : previous.frameUrl,
     frameCount: event.frame_count,
     totalFrames: event.total_frames,
     processedFrames: event.processed_frames,
     frameShape: refreshPreview ? event.frame_record.shape : previous.frameShape,
-    detectionResult: refreshPreview ? detection : previous.detectionResult,
-    analysis
+    detectionResult: detection,
+    analysis,
+    diagnostics
   };
 }
 
@@ -6355,69 +6339,6 @@ function liveRunProgressLabel(event: LiveOfflineProgressEvent["event"]): string 
   if (event === "stopping") return "Collecting stop request";
   if (event === "saving_manifest") return "Saving run data";
   return "Building result analysis";
-}
-
-function emptyAnalysis(runId: string): AnalysisResult {
-  return {
-    analysis_id: `${runId}-live-preview`,
-    run_id: runId,
-    all_frames: [],
-    distance_time: [],
-    raw_distance_time: [],
-    stabilized_distance_time: [],
-    temperature_time: [],
-    temperature_distance: [],
-    raw_temperature_distance: [],
-    stabilized_temperature_distance: [],
-    afas_preprocessing: {},
-    afas_analysis: {},
-    export_artifacts: [],
-    created_at: new Date().toISOString()
-  };
-}
-
-function appendLiveAnalysis(
-  analysis: AnalysisResult,
-  detection: DetectionResult,
-  curvePoints: LiveOfflineFrameEvent["curve_points"],
-  afasPreprocessing: LiveOfflineFrameEvent["afas_preprocessing"],
-  afasAnalysis: LiveOfflineFrameEvent["afas_analysis"],
-  runId: string,
-  syncConfig?: LiveOfflineFrameEvent["sync_config"]
-): AnalysisResult {
-  const nextSyncConfig = syncConfig?.temp_sync_target_ms !== undefined
-    ? { ...analysis.sync_config, temp_sync_target_ms: syncConfig.temp_sync_target_ms }
-    : analysis.sync_config;
-  return {
-    ...analysis,
-    run_id: runId,
-    analysis_id: `${runId}-live-preview`,
-    all_frames: [...analysis.all_frames, detection],
-    distance_time: appendCurvePoint(analysis.distance_time, curvePoints.distance_time),
-    raw_distance_time: appendCurvePoint(analysis.raw_distance_time ?? [], curvePoints.raw_distance_time ?? liveRawDistancePoint(detection)),
-    stabilized_distance_time: appendCurvePoint(analysis.stabilized_distance_time ?? [], curvePoints.stabilized_distance_time ?? liveStabilizedDistancePoint(detection)),
-    temperature_time: appendCurvePoint(analysis.temperature_time, curvePoints.temperature_time),
-    temperature_distance: appendCurvePoint(analysis.temperature_distance, curvePoints.temperature_distance),
-    raw_temperature_distance: appendCurvePoint(analysis.raw_temperature_distance ?? [], curvePoints.raw_temperature_distance ?? liveRawTemperatureDistancePoint(detection)),
-    stabilized_temperature_distance: appendCurvePoint(analysis.stabilized_temperature_distance ?? [], curvePoints.stabilized_temperature_distance ?? liveStabilizedTemperatureDistancePoint(detection)),
-    afas_preprocessing: mergeLiveAfasPreprocessing(analysis.afas_preprocessing, afasPreprocessing),
-    afas_analysis: afasAnalysis,
-    sync_config: nextSyncConfig
-  };
-}
-
-function appendCurvePoint(points: CurvePoint[], point: CurvePoint | null): CurvePoint[] {
-  return point ? [...points, point] : points;
-}
-
-function detectionWithSyncConfig(
-  detection: DetectionResult,
-  syncConfig?: LiveOfflineFrameEvent["sync_config"]
-): DetectionResult {
-  const tempSyncTargetMs = numberFromUnknown(syncConfig?.temp_sync_target_ms);
-  return tempSyncTargetMs === null
-    ? detection
-    : { ...detection, temp_sync_target_ms: tempSyncTargetMs };
 }
 
 function analysisWithSyncConfigSnapshot(
@@ -6483,75 +6404,6 @@ function distanceForResultSource(result: DetectionResult | null, source: Detecti
   if (!result) return null;
   if (source === "raw") return result.raw_distance_px ?? result.distance_px;
   return result.stabilized_distance_px ?? result.distance_px;
-}
-
-function isFormalCurveDetection(detection: DetectionResult): boolean {
-  return detection.detection_status === "VALID" && (detection.curve_point_status ?? "valid") === "valid";
-}
-
-function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
-  const distance = detection.raw_distance_px;
-  if (!isFormalCurveDetection(detection) || distance == null) return null;
-  return {
-    x: detection.frame_timestamp_ms ?? detection.frame_index,
-    y: distance,
-    frame_index: detection.frame_index,
-    sync_status: detection.temperature_sync_status
-  };
-}
-
-function liveStabilizedDistancePoint(detection: DetectionResult): CurvePoint | null {
-  const distance = detection.stabilized_distance_px;
-  if (!isFormalCurveDetection(detection) || distance == null) return null;
-  return {
-    x: detection.frame_timestamp_ms ?? detection.frame_index,
-    y: distance,
-    frame_index: detection.frame_index,
-    sync_status: detection.temperature_sync_status
-  };
-}
-
-function liveRawTemperatureDistancePoint(detection: DetectionResult): CurvePoint | null {
-  return liveTemperatureDistancePoint(detection, detection.raw_distance_px);
-}
-
-function liveStabilizedTemperatureDistancePoint(detection: DetectionResult): CurvePoint | null {
-  return liveTemperatureDistancePoint(detection, detection.stabilized_distance_px);
-}
-
-function liveTemperatureDistancePoint(detection: DetectionResult, distance: number | null): CurvePoint | null {
-  if (!isFormalCurveDetection(detection) || distance == null || detection.temperature_celsius == null) return null;
-  if (!["TEMP_SYNC_OK", "TEMP_SYNC_INTERPOLATED"].includes(detection.temperature_sync_status)) return null;
-  return {
-    x: detection.temperature_celsius,
-    y: distance,
-    frame_index: detection.frame_index,
-    sync_status: detection.temperature_sync_status
-  };
-}
-
-function mergeLiveAfasPreprocessing(
-  previous: Record<string, unknown>,
-  incoming: Record<string, unknown>
-): Record<string, unknown> {
-  const incomingRecord = readRecord(incoming);
-  if (Object.keys(readRecord(incomingRecord.smoothed)).length > 0) {
-    return incomingRecord;
-  }
-
-  const previousRecord = readRecord(previous);
-  if (Object.keys(readRecord(previousRecord.smoothed)).length === 0) {
-    return incomingRecord;
-  }
-
-  return {
-    ...previousRecord,
-    preview_status: incomingRecord.preview_status ?? previousRecord.preview_status,
-    point_count: incomingRecord.point_count ?? previousRecord.point_count,
-    temperature_distance_point_count:
-      incomingRecord.temperature_distance_point_count ?? previousRecord.temperature_distance_point_count,
-    preview_interval_frames: incomingRecord.preview_interval_frames ?? previousRecord.preview_interval_frames
-  };
 }
 
 function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized", language: UiLanguage = "en"): string {

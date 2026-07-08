@@ -442,6 +442,15 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
         "save_preview_frames": True,
         "preview_path": "preview_frames/latest.png",
     }
+    assert ok_events[0]["live_point_status"] == {
+        "temperature_distance_present": True,
+        "temperature_distance_point_count": 1,
+        "reason_if_missing": "",
+        "detection_status": "VALID",
+        "curve_point_status": "valid",
+        "temperature_sync_status": "TEMP_SYNC_OK",
+        "distance_outlier_filtered": False,
+    }
     ok_run_dir = run_store.run_dir(ok_events[-1]["run_manifest"]["run_id"])
     assert not (ok_run_dir / "raw_frames" / "frame_000001.npy").exists()
     assert (ok_run_dir / "preview_frames" / "latest.png").is_file()
@@ -452,6 +461,15 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
     assert stale_events[0]["sync_config"]["temp_sync_target_ms"] == 10.0
     assert stale_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
     assert stale_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_STALE"
+    assert stale_events[0]["live_point_status"] == {
+        "temperature_distance_present": False,
+        "temperature_distance_point_count": 0,
+        "reason_if_missing": "temperature_sync_not_formal",
+        "detection_status": "VALID",
+        "curve_point_status": "valid",
+        "temperature_sync_status": "TEMP_SYNC_STALE",
+        "distance_outlier_filtered": False,
+    }
 
 
 def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) -> None:

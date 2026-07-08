@@ -310,6 +310,16 @@ export type CurvePoint = {
   sync_status: string | null;
 };
 
+export type LivePointStatus = {
+  temperature_distance_present: boolean;
+  temperature_distance_point_count: number;
+  reason_if_missing: string;
+  detection_status: string;
+  curve_point_status: string;
+  temperature_sync_status: string;
+  distance_outlier_filtered: boolean;
+};
+
 export type ExportArtifact = {
   artifact_id: string;
   artifact_type: string;
@@ -411,6 +421,7 @@ export type LiveOfflineFrameEvent = {
   };
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;
+  live_point_status?: LivePointStatus;
 };
 
 export type LiveOfflineCompleteEvent = {
