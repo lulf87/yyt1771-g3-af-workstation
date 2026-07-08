@@ -95,6 +95,7 @@
 | P-0077 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator mode / source banner | Operator 实时测试页来源 provenance 提示卡过于醒目且重复，需要按用户要求去除 | 2026-07-07 | 2026-07-07 | Codex | Playwright Chromium 验证实际使用页真实相机来源下左侧和画面上方来源提示卡均已去除 |
 | P-0078 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / operator mode / source guard | Operator 真实相机模式必须严格要求真实相机和真实温控，不能显示或运行模拟后端 | 2026-07-07 | 2026-07-07 | Codex | sim-sim 下已验证 Operator 真机源显示真实硬件不可用且禁用 probe/run；离线源可 probe；工程模式真实相机调试未受影响 |
 | P-0079 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / C detector | C 类实际使用模式需要新增 ROI 对比度最宽跨度检测器并隐藏复杂参数 | 2026-07-08 | 2026-07-08 | Codex | golden_c_20260529_dev_lab Operator 单帧检测 + live offline run + export parameters 浏览器复测已通过 |
+| P-0080 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / run analysis export | 实时测量和分析前需要距离异常跳变过滤，避免检测突变点进入曲线和 AFAS | 2026-07-08 | 2026-07-08 | Codex | CausalDistanceOutlierFilter 已接入 live offline / real camera / analysis / export；golden_c Operator live offline run + Results Export 浏览器复测通过 |
 
 ---
 
@@ -8260,6 +8261,98 @@ Result: PASS, 6 passed.
   - `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/run_manifest.json`
   - `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/analysis_result.json`
   - `output/runs/run-golden_c_20260529_dev_lab-20260708T112021008992Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T112021008992Z.zip`
+
+#### Current status
+
+RESOLVED_BROWSER_VERIFIED
+
+
+---
+
+### P-0080 — 实时测量和分析前需要距离异常跳变过滤
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `backend/src/yyt1771_g3/services/export_service.py`, `frontend/src/main.tsx`
+- Found date: 2026-07-08
+- Last update: 2026-07-08
+- Owner/tool: Codex
+
+#### Problem
+
+检测器偶尔可能输出突变距离点，例如最近有效距离为 `500/503/506 px` 时下一帧突变为 `550 px`。如果这类点进入实时曲线、temperature-distance 曲线和 AFAS，会污染后续分析。
+
+#### Expected
+
+```text
+新增可调距离异常点过滤参数：
+distance_outlier_filter_enabled = true
+distance_outlier_reference_count = 5
+distance_outlier_max_jump_px = 20.0
+distance_outlier_baseline = median
+
+过滤器只使用最近已接受的有效距离作为基准。
+超过最大允许跳变的点标记为 distance_jump_outlier，不进入正式实时曲线、temperature-distance 和 AFAS。
+异常点不更新 recent_valid_distances，后续帧仍与最近有效点比较；恢复到阈值内时可重新接受。
+detection_status 继续表示单帧图像检测状态；过滤状态通过曲线/测量有效性字段和 debug_artifacts 表达。
+frame_results.csv、run_export.json、parameters.json 保存过滤参数和过滤诊断字段。
+实际使用模式显示“距离异常点过滤”和“最大允许跳变（像素）”。
+```
+
+#### Implementation summary
+
+- 新增 `CausalDistanceOutlierFilter`，使用最近已接受的有效距离计算 `last/mean/median` 基准，默认启用、最近 5 点、最大允许跳变 20 px、median baseline。
+- 过滤后单帧 `detection_status` 保持原图像检测结果；曲线有效性通过 `curve_point_status` / `curve_exclusion_reason` 标记，异常跳变为 `distance_jump_outlier`。
+- 异常帧不加入 recent valid history，不进入 live curve、formal temperature-distance 或 AFAS；原始检测距离保留到 all_frames、debug_artifacts 和 CSV 诊断字段。
+- `live_offline_run_service.py` 与 `real_camera_run_service.py` 的批量/流式路径均已接入过滤器，`analysis_service.py` 对所有距离源统一按 `curve_point_status` 生成曲线点。
+- `export_service.py` 在 `frame_results.csv` 增加 raw/after-filter/outlier baseline/deviation/max jump/reference count 字段，并在 parameters/config snapshot 中保存过滤参数。
+- 实际使用模式参数区显示“距离异常点过滤”和“最大允许跳变（像素）”；reference count 与 baseline 保留为工程模式高级参数。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_distance_outlier_filter.py backend/tests/unit/test_core_models.py backend/tests/unit/test_analysis_service.py backend/tests/unit/test_detector_audit.py backend/tests/unit/test_temporal_stabilization.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_real_camera_run_service.py backend/tests/integration/test_export_service.py -q
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_probe_api.py backend/tests/integration/test_live_offline_run_service.py backend/tests/integration/test_export_service.py backend/tests/integration/test_golden_detector_smoke.py -q
+cd frontend && npm test -- detectorControls.test.mjs setupSources.test.mjs operatorProbeUi.test.mjs apiClientUrls.test.mjs
+cd frontend && ./node_modules/.bin/tsc --noEmit
+git diff --check
+```
+
+Result: PASS (`58 passed`; `31 passed`; frontend command ran repository `.mjs` suite with `81 passed`; TypeScript passed; whitespace check clean).
+
+#### Browser retest
+
+Retest date: 2026-07-08
+Browser: Playwright Chromium
+OS: macOS 26.1
+Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+Backend URL: `http://127.0.0.1:8022`
+Dataset: `golden_c_20260529_dev_lab`
+Page: Operator `实时测试` -> `结果与导出`
+Steps:
+1. 启动 `scripts/g3_fast_start.sh sim-sim --restart --no-open`。
+2. 打开 Operator 页面，切换数据来源到“离线数据集”。
+3. 选择 `golden_c_20260529_dev_lab`，待测物类型选择 C 类多细支/多线束整体外包络。
+4. 验证实际使用模式检测参数区仅显示待测物类型、对比度阈值、距离异常点过滤、最大允许跳变；未显示模板/轮廓修补/支撑列/投影分位数等复杂参数。
+5. 设置 `contrast_threshold=35`、`distance_outlier_max_jump_px=20`，确认本次测试设置。
+6. 点击“开始模拟测试”，观察 overlay 显示绿色 ROI、A/B 点和橙色测量线，实时趋势使用正式点。
+7. 点击“停止测试”生成 partial run，进入“结果与导出”，点击“导出结果”下载 ZIP。
+Expected:
+- run 请求使用 `ContrastWidestSpanDetector`，携带 `contrast_threshold=35` 和 outlier filter 参数。
+- `analysis_result.temperature_distance` 只包含通过过滤的正式点。
+- `parameters.json` / `run_export.json` 保存 outlier filter 参数。
+- `frame_results.csv` 包含 raw distance、after-filter distance、outlier baseline/deviation/max jump/reference count 等诊断列。
+Actual:
+- `POST /api/live-offline-runs/stream` 请求体包含 `detector="ContrastWidestSpanDetector"`、`contrast_threshold=35`、`distance_outlier_filter_enabled=true`、`distance_outlier_reference_count=5`、`distance_outlier_max_jump_px=20`、`distance_outlier_baseline="median"`。
+- partial run `run-golden_c_20260529_dev_lab-20260708T115501893122Z` 已保存：`run_manifest.json` 42 帧，`analysis_result.json` 41 个正式 temperature-distance 点。该 golden C 片段未自然触发跳变过滤，`filtered_count=0`，默认阈值未误杀正常点。
+- 导出 ZIP 下载成功，`parameters.json` 与 `run_export.json` 均包含 outlier 参数；`frame_results.csv` 包含新增诊断列。
+- 点击停止后左侧按钮仍显示“测量中/停止测试”状态，但 run 已保存并可导出；该现象属于既有 P-0047 停止状态问题，本次未扩大处理范围。
+Result: PASS
+Evidence:
+- Screenshot: `output/playwright/p0080_distance_outlier_operator_golden_c_20260708.png`
+- Run manifest: `output/runs/run-golden_c_20260529_dev_lab-20260708T115501893122Z/run_manifest.json`
+- Analysis: `output/runs/run-golden_c_20260529_dev_lab-20260708T115501893122Z/analysis_result.json`
+- Export bundle: `output/runs/run-golden_c_20260529_dev_lab-20260708T115501893122Z/exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260708T115501893122Z.zip`
 
 #### Current status
 

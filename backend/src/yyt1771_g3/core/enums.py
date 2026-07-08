@@ -48,6 +48,12 @@ class DetectionStatus(StrEnum):
     INVALID_OUT_OF_ROI = "INVALID_OUT_OF_ROI"
 
 
+class CurvePointStatus(StrEnum):
+    VALID = "valid"
+    INVALID_DETECTION = "invalid_detection"
+    DISTANCE_JUMP_OUTLIER = "distance_jump_outlier"
+
+
 class TemperatureSyncStatus(StrEnum):
     TEMP_SYNC_OK = "TEMP_SYNC_OK"
     TEMP_SYNC_INTERPOLATED = "TEMP_SYNC_INTERPOLATED"

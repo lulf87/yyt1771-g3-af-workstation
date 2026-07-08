@@ -305,6 +305,7 @@ test("real camera setup refreshes live frames only for preview-affecting changes
 
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("min_component_area_px"), true);
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("contrast_threshold"), true);
+  assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("distance_outlier_max_jump_px"), false);
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("target_temperature_celsius"), false);
   assert.equal(isRealCameraPreviewAffectingDetectorConfigKey("temperature_power_percent"), false);
 

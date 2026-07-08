@@ -77,6 +77,10 @@ export type DetectorConfig = {
   distance_jump_limit_px?: number;
   distance_jump_hold_frames?: number;
   distance_jump_policy?: "hold_previous" | "mark_invalid";
+  distance_outlier_filter_enabled?: boolean;
+  distance_outlier_reference_count?: number;
+  distance_outlier_max_jump_px?: number;
+  distance_outlier_baseline?: "last" | "mean" | "median";
   temporal_stabilization_enabled?: boolean;
   temporal_stabilization_strength?: "weak" | "medium" | "strong";
   contour_box_mode?: "component_bbox" | "robust_component_bbox" | "measurement_band";
@@ -215,6 +219,15 @@ export type DetectionResult = {
     jump_from_previous_px: number | null;
   };
   rejected_reason: string;
+  curve_point_status: string;
+  curve_exclusion_reason: string;
+  raw_detected_distance_px: number | null;
+  distance_outlier_filtered: boolean;
+  distance_outlier_baseline_px: number | null;
+  distance_outlier_deviation_px: number | null;
+  distance_outlier_max_jump_px: number | null;
+  distance_outlier_reference_count: number | null;
+  distance_outlier_reference_values: number[];
   debug_artifacts: Record<string, unknown>;
   temperature_sync_status: string;
   frame_timestamp_ms: number | null;

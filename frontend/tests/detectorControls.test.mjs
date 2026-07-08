@@ -54,10 +54,38 @@ test("operator mode exposes contrast threshold without advanced detector interna
   const block = match[0];
 
   assert.match(block, /<ContrastThresholdControl/);
+  assert.match(block, /<DistanceOutlierFilterControl/);
   assert.match(block, /Object class/);
   assert.doesNotMatch(block, /<DetectorSetupControls/);
   assert.doesNotMatch(block, /Advanced detection parameters/);
   assert.doesNotMatch(block, /advancedDetectorParameters/);
+});
+
+test("operator distance outlier filter exposes only enable and max jump controls", () => {
+  const match = mainSource.match(/function DistanceOutlierFilterControl\([\s\S]*?function DetectorParameterGroups\(/);
+  assert.ok(match, "DistanceOutlierFilterControl block should exist");
+  const block = match[0];
+
+  assert.match(block, /distance_outlier_filter_enabled/);
+  assert.match(block, /distance_outlier_max_jump_px/);
+  assert.doesNotMatch(block, /distance_outlier_reference_count/);
+  assert.doesNotMatch(block, /distance_outlier_baseline/);
+});
+
+test("live raw and stabilized fallback curve points respect curve point status", () => {
+  const match = mainSource.match(/function isFormalCurveDetection\([\s\S]*?function mergeLiveAfasPreprocessing\(/);
+  assert.ok(match, "live curve point helper block should exist");
+  const block = match[0];
+
+  assert.match(block, /detection\.curve_point_status \?\? "valid"/);
+  assert.match(block, /function liveRawDistancePoint/);
+  assert.match(block, /function liveStabilizedDistancePoint/);
+  assert.match(block, /function liveTemperatureDistancePoint/);
+  assert.match(block, /if \(!isFormalCurveDetection\(detection\) \|\| distance == null\) return null;/);
+  assert.match(
+    block,
+    /if \(!isFormalCurveDetection\(detection\) \|\| distance == null \|\| detection\.temperature_celsius == null\) return null;/
+  );
 });
 
 test("C object class defaults to the contrast widest-span detector", () => {

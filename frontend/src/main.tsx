@@ -223,6 +223,10 @@ const DEFAULT_CONFIG = {
   jump_limit_px: 35,
   min_confidence: 0.15,
   contrast_threshold: 30,
+  distance_outlier_filter_enabled: true,
+  distance_outlier_reference_count: 5,
+  distance_outlier_max_jump_px: 20,
+  distance_outlier_baseline: "median" as const,
   dark_enhance_bg_kernel_px: 41,
   hysteresis_low_ratio: 0.45,
   min_component_area_px: 80,
@@ -401,6 +405,7 @@ type DetectorParameterGroup =
   | "Spur pruning"
   | "Contour diagnostics"
   | "Temporal stability"
+  | "Distance outlier filter"
   | "Run performance"
   | "Run";
 
@@ -496,6 +501,14 @@ const DETECTOR_PARAMETER_DEFS: DetectorParameterDef[] = [
     { value: "hold_previous", label: "Hold previous" },
     { value: "mark_invalid", label: "Mark invalid" }
   ], title: "How Run handles unconfirmed distance jumps." },
+  { key: "distance_outlier_filter_enabled", label: "Distance outlier filter", type: "bool", group: "Distance outlier filter", title: "Drops sudden distance jumps before live curves and AFAS analysis." },
+  { key: "distance_outlier_max_jump_px", label: "Maximum allowed jump (px)", type: "float", min: 1, max: 200, step: 1, group: "Distance outlier filter", title: "Maximum accepted distance change from the recent valid baseline." },
+  { key: "distance_outlier_reference_count", label: "Reference valid point count", type: "int", min: 1, max: 20, step: 1, group: "Distance outlier filter", advanced: true, title: "Number of recent accepted distances used to compute the baseline." },
+  { key: "distance_outlier_baseline", label: "Distance outlier baseline", type: "select", group: "Distance outlier filter", advanced: true, options: [
+    { value: "last", label: "Last valid" },
+    { value: "mean", label: "Mean" },
+    { value: "median", label: "Median" }
+  ], title: "Baseline statistic used for distance jump filtering." },
   { key: "endpoint_jump_limit_px", label: "Endpoint jump limit px", type: "float", min: 0, max: 100, step: 1, group: "Temporal stability", advanced: true, title: "Suspicious-frame threshold for selected endpoint/axis jumps." },
   { key: "endpoint_jump_warmup_frames", label: "Endpoint jump warm-up", type: "int", min: 0, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Run frames ignored before endpoint-jump rerun decisions." },
   { key: "endpoint_jump_confirm_frames", label: "Endpoint jump confirm", type: "int", min: 1, max: 20, step: 1, group: "Temporal stability", advanced: true, title: "Consecutive endpoint-jump frames required before enhanced rerun." },
@@ -2219,6 +2232,10 @@ function OperatorRunPage({
             onMeasurement={onMeasurement}
             onPreviewAffectingChange={onPreviewAffectingChange}
           />
+          <DistanceOutlierFilterControl
+            measurement={measurement}
+            onMeasurement={onMeasurement}
+          />
         </div>
         <div className="controlStack operatorCameraStatus">
           <h3>{isOfflineSource ? t("Offline material") : t("Camera")}</h3>
@@ -3200,6 +3217,53 @@ function ContrastThresholdControl({
         onPreviewAffectingChange?.({ kind: "detector_config", key: "contrast_threshold" });
       }}
     />
+  );
+}
+
+function DistanceOutlierFilterControl({
+  measurement,
+  onMeasurement
+}: {
+  measurement: MeasurementDefinition;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+}) {
+  const t = useUiText();
+  function patchDetectorConfig(patch: Partial<DetectorConfig>) {
+    onMeasurement({
+      ...measurement,
+      detector_config: {
+        ...measurement.detector_config,
+        ...patch
+      }
+    });
+  }
+
+  function patchMaximumAllowedJump(value: number) {
+    const fallback = DEFAULT_CONFIG.distance_outlier_max_jump_px;
+    const nextValue = Math.max(1, Math.min(200, Number.isFinite(value) ? value : fallback));
+    patchDetectorConfig({ distance_outlier_max_jump_px: nextValue });
+  }
+
+  return (
+    <div className="twoColumnControls">
+      <label className="field checkboxField">
+        <span>{t("Distance outlier filter")}</span>
+        <input
+          checked={measurement.detector_config.distance_outlier_filter_enabled ?? DEFAULT_CONFIG.distance_outlier_filter_enabled}
+          onChange={(event) => patchDetectorConfig({ distance_outlier_filter_enabled: event.target.checked })}
+          type="checkbox"
+        />
+      </label>
+      <NumberField
+        label="Maximum allowed jump (px)"
+        min={1}
+        max={200}
+        step={1}
+        value={measurement.detector_config.distance_outlier_max_jump_px ?? DEFAULT_CONFIG.distance_outlier_max_jump_px}
+        onChange={patchMaximumAllowedJump}
+        onCommit={patchMaximumAllowedJump}
+      />
+    </div>
   );
 }
 
@@ -6264,9 +6328,13 @@ function distanceForResultSource(result: DetectionResult | null, source: Detecti
   return result.stabilized_distance_px ?? result.distance_px;
 }
 
+function isFormalCurveDetection(detection: DetectionResult): boolean {
+  return detection.detection_status === "VALID" && (detection.curve_point_status ?? "valid") === "valid";
+}
+
 function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
   const distance = detection.raw_distance_px;
-  if (detection.detection_status !== "VALID" || distance == null) return null;
+  if (!isFormalCurveDetection(detection) || distance == null) return null;
   return {
     x: detection.frame_timestamp_ms ?? detection.frame_index,
     y: distance,
@@ -6277,7 +6345,7 @@ function liveRawDistancePoint(detection: DetectionResult): CurvePoint | null {
 
 function liveStabilizedDistancePoint(detection: DetectionResult): CurvePoint | null {
   const distance = detection.stabilized_distance_px;
-  if (detection.detection_status !== "VALID" || distance == null) return null;
+  if (!isFormalCurveDetection(detection) || distance == null) return null;
   return {
     x: detection.frame_timestamp_ms ?? detection.frame_index,
     y: distance,
@@ -6295,7 +6363,7 @@ function liveStabilizedTemperatureDistancePoint(detection: DetectionResult): Cur
 }
 
 function liveTemperatureDistancePoint(detection: DetectionResult, distance: number | null): CurvePoint | null {
-  if (detection.detection_status !== "VALID" || distance == null || detection.temperature_celsius == null) return null;
+  if (!isFormalCurveDetection(detection) || distance == null || detection.temperature_celsius == null) return null;
   if (!["TEMP_SYNC_OK", "TEMP_SYNC_INTERPOLATED"].includes(detection.temperature_sync_status)) return null;
   return {
     x: detection.temperature_celsius,

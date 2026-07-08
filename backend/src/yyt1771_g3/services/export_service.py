@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
 from yyt1771_g3.core.coordinates import roi_local_to_measurement_point
-from yyt1771_g3.core.enums import DetectionStatus
+from yyt1771_g3.core.enums import CurvePointStatus, DetectionStatus
 from yyt1771_g3.core.models import AnalysisResult, ExportArtifact, RunManifest
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.storage.run_store import RunStore
@@ -64,6 +64,15 @@ def _write_csv(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
         "raw_distance_px",
         "stabilized_distance_px",
         "result_display_source",
+        "curve_point_status",
+        "curve_exclusion_reason",
+        "raw_detected_distance_px",
+        "distance_px_after_filter",
+        "distance_outlier_filtered",
+        "distance_outlier_baseline_px",
+        "distance_outlier_deviation_px",
+        "distance_outlier_max_jump_px",
+        "distance_outlier_reference_count",
         "temperature_celsius",
         "temperature_sync_status",
         "frame_timestamp_ms",
@@ -75,6 +84,7 @@ def _write_csv(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for result in manifest.detection_results:
+            distance_after_filter = result.distance_px if result.curve_point_status == CurvePointStatus.VALID else None
             writer.writerow(
                 {
                     "frame_index": result.frame_index,
@@ -83,6 +93,15 @@ def _write_csv(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
                     "raw_distance_px": result.raw_distance_px,
                     "stabilized_distance_px": result.stabilized_distance_px,
                     "result_display_source": result.result_display_source,
+                    "curve_point_status": result.curve_point_status.value,
+                    "curve_exclusion_reason": result.curve_exclusion_reason,
+                    "raw_detected_distance_px": result.raw_detected_distance_px,
+                    "distance_px_after_filter": distance_after_filter,
+                    "distance_outlier_filtered": result.distance_outlier_filtered,
+                    "distance_outlier_baseline_px": result.distance_outlier_baseline_px,
+                    "distance_outlier_deviation_px": result.distance_outlier_deviation_px,
+                    "distance_outlier_max_jump_px": result.distance_outlier_max_jump_px,
+                    "distance_outlier_reference_count": result.distance_outlier_reference_count,
                     "temperature_celsius": result.temperature_celsius,
                     "temperature_sync_status": result.temperature_sync_status.value,
                     "frame_timestamp_ms": result.frame_timestamp_ms,
