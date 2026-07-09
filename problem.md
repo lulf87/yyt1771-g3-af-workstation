@@ -103,10 +103,60 @@
 | P-0085 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-09 | Codex | 待真实浏览器复测设备设置入口、环境检查、相机扫描、温控串口选择、测试与保存流程 |
 | P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
 | P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
+| P-0088 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / export csv | 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败 | 2026-07-09 | 2026-07-09 | Codex | 后端导出 API、backend integration/unit、frontend test/build 已通过；导出下载浏览器复测待补 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0088 — 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/export_service.py`, export CSV
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+`frame_results.csv` 为新增 `detector_mode` 和距离异常过滤诊断字段后，把 `detector_mode` 插入在 `detection_status` 与 `distance_px` 之间，导致旧兼容断言 `frame_index,detection_status,distance_px` 失败。新增诊断列需要保留，但旧核心 CSV 字段顺序应尽量保持稳定。
+
+#### Expected
+
+```text
+CSV 表头前置旧核心字段：
+frame_index,detection_status,distance_px,raw_distance_px,stabilized_distance_px,result_display_source,curve_point_status,exclusion_reason,rejected_reason,temperature_celsius,temperature_sync_status,temperature_delta_ms
+
+detector_mode、contrast_threshold、raw_detected_distance_px、distance_outlier_filtered 等新增诊断字段追加在核心字段之后。
+导出导入逻辑按字段名读取，不依赖新增字段插在核心字段中间。
+```
+
+#### Resolution log
+
+- 2026-07-09: `export_service._write_csv()` 调整 fieldnames，恢复旧核心列前置顺序，将 `detector_mode`、`contrast_threshold`、`raw_detected_distance_px`、`distance_outlier_*` 等新增诊断列追加到核心列后。
+- 2026-07-09: 新增前置核心别名 `exclusion_reason`，同时保留现有 `curve_exclusion_reason` 诊断列，避免破坏近期导出导入字段。
+- 2026-07-09: `test_export_api_creates_artifacts_and_downloads_csv` 增加核心列顺序断言，并用 `csv.DictReader` 按字段名读取 `detector_mode` 和 `distance_outlier_filtered`。
+
+#### Tests run
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/integration/test_export_api.py::test_export_api_creates_artifacts_and_downloads_csv -q
+Result: PASS, 1 passed.
+
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/integration -q
+Result: PASS, 96 passed.
+
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit -q
+Result: PASS, 103 passed.
+
+cd frontend
+npm test && npm run build
+Result: PASS, 114 frontend tests passed and Vite build completed.
+```
+
+#### Browser retest log
+
+Pending. Need browser export-download smoke retest before marking this issue `RESOLVED_BROWSER_VERIFIED`.
 
 ### P-0087 — 真实温控可用且空闲时需要恢复 gated 500ms 自动读温
 
