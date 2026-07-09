@@ -5,6 +5,8 @@ export type OperatorTemperaturePollingState = {
   page: string;
   operatorDataSource: string;
   realHardwareAvailable: boolean;
+  realTemperatureAvailable: boolean;
+  hasTemperatureError: boolean;
   runningCamera: boolean;
   runningOffline: boolean;
 };
@@ -15,6 +17,8 @@ export function shouldAutoPollOperatorTemperature(state: OperatorTemperaturePoll
     state.page === "operatorRun" &&
     state.operatorDataSource === "real_camera" &&
     state.realHardwareAvailable &&
+    state.realTemperatureAvailable &&
+    !state.hasTemperatureError &&
     !state.runningCamera &&
     !state.runningOffline
   );

@@ -425,6 +425,15 @@ input {
   line-height: 1.45;
 }
 
+.operatorHardwareMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #75560f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .compactList {
   margin-top: 0;
 }

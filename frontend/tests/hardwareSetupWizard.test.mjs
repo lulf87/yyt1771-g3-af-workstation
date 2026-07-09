@@ -30,9 +30,15 @@ test("hardware unavailable card prompts operators to open device setup", () => {
   );
 
   assert.match(card, /onOpenDeviceSetup\?: \(\) => void;/);
+  assert.match(card, /onRecheck\?: \(\) => void;/);
   assert.match(card, /Device binding incomplete guidance/);
+  assert.match(card, /Real camera is unavailable\. Check the device connection or open device setup\./);
+  assert.match(card, /Last checked/);
+  assert.match(card, /Rechecking/);
   assert.match(card, /Open device setup/);
+  assert.match(card, /onClick=\{onRecheck\}/);
   assert.match(card, /onClick=\{onOpenDeviceSetup\}/);
+  assert.doesNotMatch(card, /loading \? t\("Checking real hardware"\)/);
 });
 
 test("device setup wizard has five production setup steps and uses hardware APIs", () => {
@@ -80,6 +86,23 @@ test("device setup wizard supports separate camera and temperature tests", () =>
   assert.match(temperatureResult, /result\.temperature_celsius/);
 });
 
+test("device setup wizard refresh buttons only scan the active hardware scope", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(wizard, /async function refreshEnvironmentChecks\(\)/);
+  assert.match(wizard, /async function scanHardwareCameras\(\)/);
+  assert.match(wizard, /async function refreshTemperaturePorts\(\)/);
+  assert.match(wizard, /onClick=\{refreshEnvironmentChecks\}/);
+  assert.match(wizard, /onClick=\{scanHardwareCameras\}/);
+  assert.match(wizard, /onClick=\{refreshTemperaturePorts\}/);
+  assert.doesNotMatch(wizard, /Refresh checks[\s\S]{0,220}onClick=\{refreshWizardData\}/);
+  assert.doesNotMatch(wizard, /Scan camera[\s\S]{0,220}onClick=\{refreshWizardData\}/);
+  assert.doesNotMatch(wizard, /Refresh ports[\s\S]{0,220}onClick=\{refreshWizardData\}/);
+});
+
 test("device setup environment checks render SDK path details for field repair", () => {
   const checks = sourceSlice(
     "function HardwareCheckList({",
@@ -108,7 +131,7 @@ test("device setup wizard does not silently select the first camera when multipl
 test("device setup save refreshes hardware profile and source status and warns when unavailable", () => {
   assert.match(mainSource, /async function handleDeviceSetupSaved\(\)/);
   assert.match(mainSource, /await refreshHardwareProfile\(\)/);
-  assert.match(mainSource, /await refreshOperatorSourceStatus\(\)/);
+  assert.match(mainSource, /await refreshOperatorSourceStatus\(\{ reason: "saved" \}\)/);
 
   const wizard = sourceSlice(
     "function DeviceSetupWizard({",

@@ -101,10 +101,99 @@
 | P-0083 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / live run trend | 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run 中正式点从 24 增至 53，停止后保存 78 点；浏览器复测通过 |
 | P-0084 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / export / live trend | 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑 | 2026-07-08 | 2026-07-08 | Codex | Operator 简化、温控不可用守卫和工程模式保留已浏览器复测；导出弹窗完整 run 流程待真机/可完成 run 环境复测 |
 | P-0085 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-09 | Codex | 待真实浏览器复测设备设置入口、环境检查、相机扫描、温控串口选择、测试与保存流程 |
+| P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0086 — 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/operatorTemperaturePolling.ts`, Operator actual-use UI
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+实际使用模式在未连接真实 Hik 相机和 LU92XX 温控器时，前端可能持续触发硬件状态检查、真实相机预览或温控串口读取，导致页面在 loading/error/unavailable 状态之间反复切换，表现为闪烁、黑屏、重复报错或高频扫描不存在的硬件。
+
+#### Expected
+
+```text
+Operator 页面首次进入只做一次真实硬件状态检查。
+真实硬件不可用时稳定显示“真实硬件不可用 / 请打开设备设置”。
+相机不可用时不自动请求 preview/setup-probe。
+温控不可用或串口错误时不进行 500ms 温度轮询。
+source-status 失败重试必须低频 backoff，且不能重入。
+设备设置向导打开时可扫描一次，后续刷新由用户手动触发具体步骤。
+```
+
+#### Resolution log
+
+- 2026-07-09: `source-status` 刷新增加单请求 in-flight 守卫、AbortController、5s/10s/30s 失败退避和深度相等判断；失败时不再清空旧的 `operatorSourceStatus`，只更新错误和上次检查时间。
+- 2026-07-09: Operator 温控自动轮询改为必须同时满足真实硬件可用、真实温控可用、当前无温控错误、未运行测试；无温控或串口错误时停止 500ms 轮询。
+- 2026-07-09: Operator 初始温度读取在 source-status 确认 `real_temperature_available` 前不会触碰串口；无硬件卡片增加稳定文案、上次检查时间、手动“重新检查”和“打开设备设置”入口。
+- 2026-07-09: 设备设置向导保留打开时一次性加载，但“重新检查 / 扫描相机 / 刷新串口列表”按钮分别只调用环境、相机、串口 API，避免每次按钮点击全量扫描。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs tests/hardwareSetupWizard.test.mjs
+Result: PASS, 15 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS.
+
+2026-07-09 final:
+
+cd frontend
+npm test
+Result: PASS, 114 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite build.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_text_safety.py -q
+Result: PASS, 1 passed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-09
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: Operator real-real hardware profile, configured temp port `/dev/cu.usbserial-11210`
+- Page: Operator `实时测试`, `设备设置` wizard
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real --restart --no-open`。
+  2. 打开 `http://127.0.0.1:5176/?mode=operator`。
+  3. 等待页面稳定，确认显示“真实硬件不可用”和“打开设备设置 / 重新检查”，检测当前帧和开始实时测试保持禁用。
+  4. 记录初始网络请求，等待 12 秒后再次记录请求。
+  5. 打开“设备设置”向导，确认打开时只发起一次环境检查、相机扫描和串口列表请求。
+  6. 切换到“扫描相机”和“选择温控器”步骤，确认步骤切换不新增硬件请求。
+  7. 分别点击“扫描相机”、“刷新串口列表”、“重新检查”，确认只新增对应的 `/api/hardware/cameras`、`/api/temperature/serial-ports`、`/api/hardware/setup/environment` 请求。
+- Expected:
+  - 无可用真实硬件时页面稳定显示不可用卡片，不闪烁，不黑屏。
+  - 不自动请求 `/api/camera/preview` 或 setup-probe。
+  - 温控读取失败后不进入 500ms 轮询。
+  - 设备向导打开时扫描一次，手动按钮只刷新当前硬件范围。
+- Actual:
+  - 页面稳定显示“真实硬件不可用 / 真实相机不可用，请检查设备连接或打开设备设置。”，上次检查时间保持稳定，操作按钮禁用状态正确。
+  - 干净加载后的请求为 `/api/offline-datasets`、`/api/operator/source-status`、一次 `/api/temperature/status` 失败读数和 dataset summary；12 秒后请求列表未增长。
+  - 干净加载后未出现 `/api/camera/preview`、`/api/camera/setup-probe`、`/api/hardware/cameras` 或 `/api/temperature/serial-ports` 自动循环。
+  - 设备向导打开时新增 `/api/hardware/setup/environment`、`/api/hardware/cameras`、`/api/temperature/serial-ports` 各一次；步骤切换不新增请求；三个手动刷新按钮分别只新增对应 API。
+- Result: PASS
+- Evidence: `output/playwright/operator-no-hardware-stable-20260709.png`; Playwright request logs showed no request growth after 12 seconds.
 
 ### P-0085 — 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML
 

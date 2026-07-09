@@ -675,8 +675,8 @@ export class ApiError extends Error {
   }
 }
 
-async function requestJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`);
+async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, options);
   if (!response.ok) {
     throw await apiErrorFromResponse(response);
   }
@@ -985,8 +985,8 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
   return requestJson<CameraPreviewResponse>("/api/camera/preview");
 }
 
-export async function getOperatorSourceStatus(): Promise<OperatorSourceStatus> {
-  return requestJson<OperatorSourceStatus>("/api/operator/source-status");
+export async function getOperatorSourceStatus(options: { signal?: AbortSignal } = {}): Promise<OperatorSourceStatus> {
+  return requestJson<OperatorSourceStatus>("/api/operator/source-status", { signal: options.signal });
 }
 
 export async function getHardwareProfile(): Promise<Record<string, unknown>> {
