@@ -22,6 +22,9 @@ from yyt1771_g3.core.hardware_config import HardwareConfig, hardware_config_path
 from yyt1771_g3.temperature.serial_ports import list_serial_ports
 
 
+EXAMPLE_CONFIG_SAVE_ERROR = "不能把设备绑定保存到 example 配置，请使用 configs/local/realcamera_temp.local.yaml。"
+
+
 class HardwareSetupError(RuntimeError):
     def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
@@ -110,7 +113,7 @@ def _assert_writable_hardware_profile_path(path: Path) -> None:
     name = normalized.name.lower()
     if name.endswith(".example.yaml") or name.endswith(".example.yml"):
         raise HardwareSetupError(
-            "Cannot save hardware binding to an example config. Use configs/local/realcamera_temp.local.yaml.",
+            EXAMPLE_CONFIG_SAVE_ERROR,
             details={"config_path": str(path)},
         )
     parts = tuple(part.lower() for part in normalized.parts)
@@ -118,7 +121,7 @@ def _assert_writable_hardware_profile_path(path: Path) -> None:
         configs_index = parts.index("configs")
         if len(parts) > configs_index + 1 and parts[configs_index + 1] in {"hardware", "camera", "temperature", "examples"}:
             raise HardwareSetupError(
-                "Cannot save hardware binding to an example config. Use configs/local/realcamera_temp.local.yaml.",
+                EXAMPLE_CONFIG_SAVE_ERROR,
                 details={"config_path": str(path)},
             )
 
@@ -170,13 +173,15 @@ def _check_hik_mvs_sdk_import(config: HardwareConfig) -> dict[str, Any]:
     try:
         HikMvsCameraSource._load_sdk(config.camera.to_profile())
     except CameraUnavailableError as exc:
+        details = _sdk_path_guidance_details(config)
+        details.update(exc.details)
         return {
             "id": "hik_mvs_sdk_import",
             "label": HIK_MVS_PYTHON_MODULE,
             "status": "failed",
             "message": str(exc),
             "suggestion": "Hik MVS SDK was not found. Install MVS or configure SDK paths.",
-            "details": exc.details,
+            "details": details,
         }
     except Exception as exc:
         return {
@@ -185,7 +190,7 @@ def _check_hik_mvs_sdk_import(config: HardwareConfig) -> dict[str, Any]:
             "status": "failed",
             "message": str(exc),
             "suggestion": "Hik MVS SDK was not found. Install MVS or configure SDK paths.",
-            "details": {"error": str(exc)},
+            "details": {**_sdk_path_guidance_details(config), "error": str(exc)},
         }
     return {
         "id": "hik_mvs_sdk_import",
@@ -193,10 +198,7 @@ def _check_hik_mvs_sdk_import(config: HardwareConfig) -> dict[str, Any]:
         "status": "passed",
         "message": "Hik MVS Python binding can be imported.",
         "suggestion": "",
-        "details": {
-            "sdk_python_path_env": os.environ.get(HIK_MVS_PYTHON_PATH_ENV, ""),
-            "sdk_python_paths": list(config.camera.sdk_python_paths),
-        },
+        "details": _sdk_path_guidance_details(config),
     }
 
 
@@ -209,7 +211,7 @@ def _check_mvs_dynamic_library_path(config: HardwareConfig) -> dict[str, Any]:
             "status": "failed",
             "message": "MVS dynamic library path is not configured.",
             "suggestion": "Configure camera.sdk_library_path or HIK_MVS_LIBRARY_PATH.",
-            "details": {"configured_path": ""},
+            "details": {**_sdk_path_guidance_details(config), "configured_path": ""},
         }
     path = Path(configured).expanduser()
     if path.is_file():
@@ -219,7 +221,7 @@ def _check_mvs_dynamic_library_path(config: HardwareConfig) -> dict[str, Any]:
             "status": "passed",
             "message": "MVS dynamic library path is configured.",
             "suggestion": "",
-            "details": {"configured_path": str(path)},
+            "details": {**_sdk_path_guidance_details(config), "configured_path": str(path)},
         }
     return {
         "id": "mvs_dynamic_library_path",
@@ -227,8 +229,43 @@ def _check_mvs_dynamic_library_path(config: HardwareConfig) -> dict[str, Any]:
         "status": "failed",
         "message": "Configured MVS dynamic library path does not exist.",
         "suggestion": "Install MVS or update camera.sdk_library_path.",
-        "details": {"configured_path": str(path)},
+        "details": {**_sdk_path_guidance_details(config), "configured_path": str(path)},
     }
+
+
+def _sdk_path_guidance_details(config: HardwareConfig) -> dict[str, Any]:
+    current_python_paths = [str(path) for path in config.camera.sdk_python_paths]
+    python_path_env = str(os.environ.get(HIK_MVS_PYTHON_PATH_ENV, "") or "")
+    current_library_path = str(config.camera.sdk_library_path or os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "") or "")
+    return {
+        "current_sdk_python_paths": current_python_paths,
+        "current_sdk_python_path_env": python_path_env,
+        "current_mvs_dynamic_library_path": current_library_path,
+        "current_mvs_dynamic_library_path_env": str(os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "") or ""),
+        "suggested_sdk_python_paths": _suggested_sdk_python_paths(),
+        "suggested_mvs_dynamic_library_paths": _suggested_mvs_dynamic_library_paths(),
+        "windows_sdk_library_dir": r"C:\Program Files (x86)\MVS\Development\Libraries\win64",
+        "fix_instructions": (
+            "Install Hikrobot MVS, then set camera.sdk_python_paths and camera.sdk_library_path in "
+            "configs/local/realcamera_temp.local.yaml or set HIK_MVS_PYTHON_PATH and HIK_MVS_LIBRARY_PATH."
+        ),
+    }
+
+
+def _suggested_sdk_python_paths() -> list[str]:
+    return [
+        "/Applications/MVS.app/Contents/Resources/MvImport",
+        "/opt/MVS/Samples/Python/MvImport",
+        r"C:\Program Files (x86)\MVS\Development\Samples\Python\MvImport",
+    ]
+
+
+def _suggested_mvs_dynamic_library_paths() -> list[str]:
+    return [
+        "/Applications/MVS.app/Contents/Frameworks/libMvCameraControl.dylib",
+        "/opt/MVS/lib/64/libMvCameraControl.so",
+        r"C:\Windows\System32\MvCameraControl.dll",
+    ]
 
 
 def _check_temperature_serial_ports() -> dict[str, Any]:

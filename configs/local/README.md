@@ -42,7 +42,7 @@ configs/local/realcamera_temp.local.yaml
 cp configs/hardware/realcamera_temp.example.yaml configs/local/realcamera_temp.local.yaml
 ```
 
-然后在 `configs/local/realcamera_temp.local.yaml` 中填写或通过向导保存本机 Hik MVS SDK 路径、相机筛选信息和 LU92XX 串口。源码和前端请求只读取 profile，不写死本机路径。
+然后在 `configs/local/realcamera_temp.local.yaml` 中填写或通过向导保存本机 Hik MVS SDK 路径、相机筛选信息和 LU92XX 串口。SDK 路径候选值和首次安装排查步骤见 `docs/production_setup.md`。源码和前端请求只读取 profile，不写死本机路径。
 
 快速启动三种硬件组合：
 

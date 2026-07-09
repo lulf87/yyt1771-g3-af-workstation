@@ -43,6 +43,59 @@ output/config/hardware_profile.local.yaml
 
 The backend rejects writes to example/template config files.
 
+## Hik MVS SDK Paths
+
+On a new computer, install Hikrobot MVS before running real-camera setup. If the environment check reports that `MvCameraControl_class` or the MVS dynamic library is missing, configure the local profile, not an example YAML.
+
+Edit or create:
+
+```text
+configs/local/realcamera_temp.local.yaml
+```
+
+Set these fields under `camera`:
+
+```yaml
+camera:
+  sdk_python_paths:
+    - /Applications/MVS.app/Contents/Resources/MvImport
+  sdk_library_path: /Applications/MVS.app/Contents/Frameworks/libMvCameraControl.dylib
+```
+
+Common candidate paths:
+
+```text
+macOS SDK Python path:
+  /Applications/MVS.app/Contents/Resources/MvImport
+
+macOS dynamic library:
+  /Applications/MVS.app/Contents/Frameworks/libMvCameraControl.dylib
+
+Linux SDK Python path:
+  /opt/MVS/Samples/Python/MvImport
+
+Linux dynamic library:
+  /opt/MVS/lib/64/libMvCameraControl.so
+
+Windows SDK Python path:
+  C:\Program Files (x86)\MVS\Development\Samples\Python\MvImport
+
+Windows SDK library dir:
+  C:\Program Files (x86)\MVS\Development\Libraries\win64
+
+Windows dynamic library:
+  C:\Windows\System32\MvCameraControl.dll
+```
+
+Environment variables are also supported for advanced deployments:
+
+```text
+HIK_MVS_PYTHON_PATH
+HIK_MVS_LIBRARY_PATH
+```
+
+After changing SDK paths, restart the backend and rerun `设备设置 / Environment check`. The setup wizard preserves existing SDK path fields when it saves camera and temperature bindings.
+
 ## First-Run Wizard Checklist
 
 1. Open Operator mode.

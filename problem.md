@@ -139,6 +139,9 @@
 - 2026-07-09: 新增 `/api/hardware/cameras/test` 和 `/api/hardware/temperature/test` 单设备测试 API；前端向导在相机步骤测试预览图，在温控步骤测试温度读数，最终保存前仍保留综合绑定测试。
 - 2026-07-09: 前端相机选择规则改为 0 台显示“未发现 Hik 相机”且禁用下一步，1 台支持相机可预选但需测试，多台相机必须用户手动选择；不再静默选择第一台。
 - 2026-07-09: 新增 `docs/production_setup.md`，说明新电脑首次绑定、按序列号绑定、更换相机/USB 串口后重新绑定、本地 YAML 不提交 Git，以及 example YAML 不应手动修改。
+- 2026-07-09: 二次收尾确认远端 PR diff 中 forbidden hidden Unicode 和额外 control/format 隐形字符计数均为 0；强化文本安全测试，扫描 Git tracked 相关文本文件并拒绝 UTF-8 BOM、bidi/control/format 隐形字符。
+- 2026-07-09: example/template 配置保存错误改为中文提示“不能把设备绑定保存到 example 配置，请使用 configs/local/realcamera_temp.local.yaml。”；后端环境检查在 SDK 缺失时返回当前 SDK Python path、当前 MVS 动态库路径、建议路径、Windows library dir 和修复说明，前端以折叠详情显示。
+- 2026-07-09: 增加回归测试覆盖无 profile 时多相机发现不预选第一台、温控 Modbus 超时失败、SDK 缺失 details 和前端环境检查 details 渲染。
 
 #### Tests run
 
@@ -156,6 +159,35 @@ Result: PASS, exit 0.
 cd frontend
 npm test
 Result: PASS, 107 passed.
+
+2026-07-09 follow-up:
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py backend/tests/unit/test_text_safety.py -q
+Result: PASS, 13 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit -q
+Result: PASS, 103 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py -q
+Result: PASS, 12 passed.
+
+cd frontend
+node --test tests/hardwareSetupWizard.test.mjs tests/apiClientUrls.test.mjs
+Result: PASS, 26 passed.
+
+cd frontend
+npm test
+Result: PASS, 111 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite build.
+
+git diff --check
+Result: PASS.
+
+Local and remote PR diff hidden/control Unicode scans
+Result: PASS, 0 forbidden / 0 other hidden-control findings.
 ```
 
 #### Browser retest log
@@ -190,6 +222,7 @@ Result: PASS, 107 passed.
 - Evidence: `output/playwright/p0085_device_setup_wizard_20260709.png`
 - Fresh PR retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, confirmed the Operator unavailable guard, five-step wizard, environment checks, no-camera disabled next button, and serial-port list including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_wizard_fresh_20260709.png`. Full camera binding test/save remains blocked by no discoverable Hik camera.
 - PR follow-up retest 2026-07-09: reopened the same operator URL in Playwright headed Chromium, confirmed the hardware-unavailable card still says “未完成设备绑定，请打开设备设置选择相机和温控串口。”, the camera step shows “未发现 Hik 相机”, `测试相机` and `下一步` are disabled, and the temperature step independently lists serial ports including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_no_camera_followup_20260709.png`. Did not run save in this no-camera session; full real camera binding save remains pending on-site verification.
+- SDK guidance follow-up retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, opened `设备设置`, expanded `SDK 路径详情`, and confirmed current SDK Python path, current MVS dynamic library path, suggested SDK Python paths, suggested MVS library paths, Windows SDK library dir, and fix instructions are displayed. Then entered camera scan and confirmed `未发现 Hik 相机`, disabled `测试相机`, and disabled `下一步`. Evidence: `output/playwright/p0085_device_setup_sdk_details_followup_20260709.png`. Full real camera binding test/save remains pending on-site verification.
 
 #### Production setup smoke checklist
 

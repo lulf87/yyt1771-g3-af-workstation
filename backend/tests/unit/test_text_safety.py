@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import os
+import subprocess
+import unicodedata
 from pathlib import Path
 
 
@@ -31,18 +32,6 @@ TEXT_SUFFIXES = {
     ".css",
 }
 
-SKIP_DIRS = {
-    ".git",
-    ".mypy_cache",
-    ".playwright-cli",
-    ".pytest_cache",
-    ".venv",
-    "dist",
-    "node_modules",
-    "output",
-    "__pycache__",
-}
-
 TEXT_ROOTS = (
     ".github",
     "backend",
@@ -63,35 +52,41 @@ def test_repository_text_files_do_not_contain_hidden_unicode() -> None:
     root = Path(__file__).resolve().parents[3]
     offenders: list[str] = []
 
-    for relative in TEXT_ROOTS:
-        scan_root = root / relative
-        if scan_root.exists():
-            _collect_tree_offenders(scan_root, root, offenders)
-    for relative in ROOT_TEXT_FILES:
-        path = root / relative
-        if path.exists():
-            _collect_forbidden_unicode(path, root, offenders)
+    for path in _tracked_text_files(root):
+        _collect_forbidden_unicode(path, root, offenders)
 
     assert offenders == []
 
 
-def _collect_tree_offenders(scan_root: Path, root: Path, offenders: list[str]) -> None:
-    for directory, dirnames, filenames in os.walk(scan_root):
-        dirnames[:] = [
-            dirname
-            for dirname in dirnames
-            if dirname not in SKIP_DIRS and not dirname.startswith("node_modules.")
-        ]
-        for filename in sorted(filenames):
-            path = Path(directory) / filename
-            if path.suffix not in TEXT_SUFFIXES:
-                continue
-            _collect_forbidden_unicode(path, root, offenders)
+def _tracked_text_files(root: Path) -> list[Path]:
+    output = subprocess.check_output(["git", "-C", str(root), "ls-files"], text=True)
+    paths: list[Path] = []
+    for relative in output.splitlines():
+        if relative in ROOT_TEXT_FILES or any(relative == prefix or relative.startswith(f"{prefix}/") for prefix in TEXT_ROOTS):
+            path = root / relative
+            if path.suffix in TEXT_SUFFIXES:
+                paths.append(path)
+    return paths
 
 
 def _collect_forbidden_unicode(path: Path, root: Path, offenders: list[str]) -> None:
-    text = path.read_text(encoding="utf-8")
-    for index, char in enumerate(text):
-        if char in FORBIDDEN_CODEPOINTS:
-            line = text.count("\n", 0, index) + 1
-            offenders.append(f"{path.relative_to(root)}:{line}: {FORBIDDEN_CODEPOINTS[char]}")
+    data = path.read_bytes()
+    if data.startswith(b"\xef\xbb\xbf"):
+        offenders.append(f"{path.relative_to(root)}:1: UTF-8 BOM")
+    text = data.decode("utf-8")
+    for line_number, line_text in enumerate(text.splitlines(keepends=True), start=1):
+        for char in line_text:
+            if char in FORBIDDEN_CODEPOINTS:
+                offenders.append(f"{path.relative_to(root)}:{line_number}: {FORBIDDEN_CODEPOINTS[char]}")
+                continue
+            if _is_hidden_control_or_format(char):
+                codepoint = f"U+{ord(char):04X}"
+                offenders.append(f"{path.relative_to(root)}:{line_number}: {codepoint} {unicodedata.name(char, 'UNKNOWN')}")
+
+
+def _is_hidden_control_or_format(char: str) -> bool:
+    if char in {"\n", "\r", "\t"}:
+        return False
+    category = unicodedata.category(char)
+    bidi = unicodedata.bidirectional(char)
+    return category in {"Cc", "Cf"} or bidi in {"RLO", "LRO", "RLE", "LRE", "PDF", "LRI", "RLI", "FSI", "PDI"}

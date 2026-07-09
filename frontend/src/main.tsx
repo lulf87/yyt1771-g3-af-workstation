@@ -2816,10 +2816,60 @@ function HardwareCheckList({ checks }: { checks: HardwareSetupEnvironment["check
           </div>
           <p>{localizeDisplayString(check.message, language)}</p>
           {check.suggestion ? <small>{localizeDisplayString(check.suggestion, language)}</small> : null}
+          <HardwareCheckDetails details={check.details} />
         </article>
       ))}
     </div>
   );
+}
+
+const HARDWARE_CHECK_DETAIL_FIELDS: Array<[string, string]> = [
+  ["current_sdk_python_paths", "Current SDK Python path"],
+  ["current_sdk_python_path_env", "Current SDK Python path env"],
+  ["current_mvs_dynamic_library_path", "Current MVS dynamic library path"],
+  ["current_mvs_dynamic_library_path_env", "Current MVS dynamic library path env"],
+  ["suggested_sdk_python_paths", "Suggested SDK Python path"],
+  ["suggested_mvs_dynamic_library_paths", "Suggested MVS dynamic library path"],
+  ["windows_sdk_library_dir", "Windows SDK library dir"],
+  ["fix_instructions", "Fix instructions"]
+];
+
+function HardwareCheckDetails({ details }: { details: Record<string, unknown> }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const rows = HARDWARE_CHECK_DETAIL_FIELDS.map(([key, label]) => ({
+    key,
+    label,
+    value: details[key]
+  })).filter((row) => hasHardwareCheckDetailValue(row.value));
+  if (!rows.length) return null;
+  return (
+    <details className="hardwareCheckDetails">
+      <summary>{t("SDK path details")}</summary>
+      <dl>
+        {rows.map((row) => (
+          <div key={row.key}>
+            <dt>{t(row.label)}</dt>
+            <dd>{formatHardwareCheckDetailValue(row.value, language, t)}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+function hasHardwareCheckDetailValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function formatHardwareCheckDetailValue(value: unknown, language: UiLanguage, t: (key: string) => string): string {
+  if (Array.isArray(value)) {
+    return value.length ? value.map((item) => localizeDisplayString(String(item), language)).join("; ") : t("Not configured");
+  }
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  const text = String(value ?? "").trim();
+  return text ? localizeDisplayString(text, language) : t("Not configured");
 }
 
 function HardwareCameraTestResult({ result }: { result: HardwareCameraTestResponse }) {

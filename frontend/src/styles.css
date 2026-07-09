@@ -2000,6 +2000,38 @@ input {
   margin: 0;
 }
 
+.hardwareCheckDetails {
+  color: #42505d;
+  font-size: 12px;
+}
+
+.hardwareCheckDetails summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.hardwareCheckDetails dl {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.hardwareCheckDetails div {
+  align-items: start;
+  display: grid;
+  gap: 2px;
+  justify-content: stretch;
+}
+
+.hardwareCheckDetails dt {
+  font-weight: 700;
+}
+
+.hardwareCheckDetails dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .wizardDeviceOption {
   cursor: pointer;
   grid-template-columns: auto minmax(0, 1fr);

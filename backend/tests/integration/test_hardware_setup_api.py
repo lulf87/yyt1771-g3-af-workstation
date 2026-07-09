@@ -45,8 +45,15 @@ def test_hardware_setup_environment_reports_sdk_and_serial_checks(monkeypatch, t
     assert checks["backend_running"]["status"] == "passed"
     assert checks["hik_mvs_sdk_import"]["status"] == "failed"
     assert "Hik MVS SDK" in checks["hik_mvs_sdk_import"]["message"]
+    assert checks["hik_mvs_sdk_import"]["details"]["current_sdk_python_paths"] == [str(tmp_path / "mvs_python")]
+    assert checks["hik_mvs_sdk_import"]["details"]["current_mvs_dynamic_library_path"] == str(missing_library)
+    assert checks["hik_mvs_sdk_import"]["details"]["suggested_sdk_python_paths"]
+    assert checks["hik_mvs_sdk_import"]["details"]["suggested_mvs_dynamic_library_paths"]
+    assert "configs/local/realcamera_temp.local.yaml" in checks["hik_mvs_sdk_import"]["details"]["fix_instructions"]
     assert checks["mvs_dynamic_library_path"]["status"] == "failed"
     assert str(missing_library) in checks["mvs_dynamic_library_path"]["details"]["configured_path"]
+    assert checks["mvs_dynamic_library_path"]["details"]["suggested_mvs_dynamic_library_paths"]
+    assert "camera.sdk_library_path" in checks["mvs_dynamic_library_path"]["details"]["fix_instructions"]
     assert checks["temperature_serial_ports"]["status"] == "passed"
     assert checks["temperature_serial_ports"]["details"]["ports"][0]["device"] == "/dev/tty.usbserial-setup"
 
@@ -100,6 +107,51 @@ def test_hardware_cameras_endpoint_returns_discovered_hik_devices(monkeypatch) -
             "is_selected": True,
         }
     ]
+
+
+def test_hardware_cameras_endpoint_does_not_select_first_discovered_camera_without_profile(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig
+
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="hik_gige_mvs",
+                allowed_models=["MV-CA060-11GM", "MV-CA050-10GM"],
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "yyt1771_g3.services.hardware_setup_service._enumerate_hik_mvs_device_descriptors",
+        lambda profile: [
+            {
+                "backend": "hik_gige_mvs",
+                "transport": "gige_vision",
+                "model": "MV-CA060-11GM",
+                "serial_number": "CAM-A",
+                "ip": "192.168.3.211",
+                "user_defined_name": "Line 1",
+            },
+            {
+                "backend": "hik_gige_mvs",
+                "transport": "gige_vision",
+                "model": "MV-CA050-10GM",
+                "serial_number": "CAM-B",
+                "ip": "192.168.3.212",
+                "user_defined_name": "Line 2",
+            },
+        ],
+    )
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/hardware/cameras")
+
+    assert response.status_code == 200
+    cameras = response.json()
+    assert [camera["serial_number"] for camera in cameras] == ["CAM-A", "CAM-B"]
+    assert [camera["is_selected"] for camera in cameras] == [False, False]
 
 
 def test_hardware_binding_save_patches_selected_camera_and_temperature_port(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -228,7 +280,7 @@ def test_hardware_binding_save_rejects_explicit_example_config_path(tmp_path: Pa
 
     assert response.status_code == 400
     assert response.json()["detail"]["message"] == (
-        "Cannot save hardware binding to an example config. Use configs/local/realcamera_temp.local.yaml."
+        "不能把设备绑定保存到 example 配置，请使用 configs/local/realcamera_temp.local.yaml。"
     )
     assert example_path.read_text(encoding="utf-8") == "camera: {}\ntemp: {}\n"
 
@@ -480,3 +532,35 @@ def test_hardware_temperature_test_endpoint_reports_serial_unavailable(monkeypat
     assert payload["error"] == "serial port unavailable"
     assert payload["temperature_celsius"] is None
     assert payload["serial_port"] == "/dev/cu.usbserial-missing"
+
+
+def test_hardware_temperature_test_endpoint_reports_modbus_failure(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig
+
+    class FakeTemperatureController:
+        def read_temperature(self):  # noqa: ANN201
+            raise TimeoutError("modbus response timeout")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig())
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeTemperatureController())
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/hardware/temperature/test",
+        json={
+            "serial_port": "/dev/cu.usbserial-11210",
+            "baudrate": 19200,
+            "slave_address": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["error"] == "modbus response timeout"
+    assert payload["temperature_celsius"] is None
+    assert payload["serial_port"] == "/dev/cu.usbserial-11210"

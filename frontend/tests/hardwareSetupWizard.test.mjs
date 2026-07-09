@@ -80,6 +80,20 @@ test("device setup wizard supports separate camera and temperature tests", () =>
   assert.match(temperatureResult, /result\.temperature_celsius/);
 });
 
+test("device setup environment checks render SDK path details for field repair", () => {
+  const checks = sourceSlice(
+    "function HardwareCheckList({",
+    "function HardwareCameraTestResult("
+  );
+
+  assert.match(checks, /HardwareCheckDetails/);
+  assert.match(checks, /current_sdk_python_paths/);
+  assert.match(checks, /current_mvs_dynamic_library_path/);
+  assert.match(checks, /suggested_sdk_python_paths/);
+  assert.match(checks, /suggested_mvs_dynamic_library_paths/);
+  assert.match(checks, /fix_instructions/);
+});
+
 test("device setup wizard does not silently select the first camera when multiple cameras are present", () => {
   const helper = sourceSlice(
     "function selectDefaultHardwareCamera(",
