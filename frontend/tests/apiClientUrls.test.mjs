@@ -297,6 +297,8 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
   const {
     getHardwareSetupEnvironment,
     listHardwareCameras,
+    testHardwareCamera,
+    testHardwareTemperature,
     testHardwareBinding,
     saveHardwareBinding
   } = await loadApiClientModule();
@@ -341,9 +343,39 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
+    if (path === "/api/hardware/cameras/test") {
+      return new Response(
+        JSON.stringify({
+          status: "passed",
+          error: "",
+          preview_image_data_url: "data:image/png;base64,abc",
+          shape: [6, 8],
+          camera_meta: { serial_number: "00J67378626" },
+          details: {}
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (path === "/api/hardware/temperature/test") {
+      return new Response(
+        JSON.stringify({
+          status: "passed",
+          error: "",
+          temperature_celsius: 31.2,
+          serial_port: "/dev/cu.usbserial-11210",
+          details: {}
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
     if (path === "/api/hardware/binding") {
       return new Response(
-        JSON.stringify({ saved: true, config_path: "/tmp/realcamera_temp.local.yaml" }),
+        JSON.stringify({
+          saved: true,
+          config_path: "/tmp/realcamera_temp.local.yaml",
+          real_hardware_available: false,
+          source_status: { real_hardware_available: false }
+        }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -367,22 +399,41 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
   try {
     const environment = await getHardwareSetupEnvironment();
     const cameras = await listHardwareCameras();
+    const cameraResult = await testHardwareCamera(binding.camera);
+    const temperatureResult = await testHardwareTemperature({
+      serial_port: "/dev/cu.usbserial-11210",
+      baudrate: 19200,
+      slave_address: 1
+    });
     const testResult = await testHardwareBinding(binding);
     const saveResult = await saveHardwareBinding(binding);
 
     assert.equal(environment.overall_status, "failed");
     assert.equal(cameras[0].serial_number, "00J67378626");
+    assert.equal(cameraResult.preview_image_data_url, "data:image/png;base64,abc");
+    assert.equal(temperatureResult.temperature_celsius, 31.2);
     assert.equal(testResult.overall_status, "passed");
     assert.equal(saveResult.saved, true);
-    assert.equal(calls.length, 4);
+    assert.equal(saveResult.real_hardware_available, false);
+    assert.equal(calls.length, 6);
     assert.match(calls[0].url, /\/api\/hardware\/setup\/environment$/);
     assert.match(calls[1].url, /\/api\/hardware\/cameras$/);
-    assert.match(calls[2].url, /\/api\/hardware\/binding\/test$/);
+    assert.match(calls[2].url, /\/api\/hardware\/cameras\/test$/);
     assert.equal(calls[2].init.method, "POST");
-    assert.deepEqual(JSON.parse(calls[2].init.body), binding);
-    assert.match(calls[3].url, /\/api\/hardware\/binding$/);
+    assert.deepEqual(JSON.parse(calls[2].init.body), binding.camera);
+    assert.match(calls[3].url, /\/api\/hardware\/temperature\/test$/);
     assert.equal(calls[3].init.method, "POST");
-    assert.deepEqual(JSON.parse(calls[3].init.body), binding);
+    assert.deepEqual(JSON.parse(calls[3].init.body), {
+      serial_port: "/dev/cu.usbserial-11210",
+      baudrate: 19200,
+      slave_address: 1
+    });
+    assert.match(calls[4].url, /\/api\/hardware\/binding\/test$/);
+    assert.equal(calls[4].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[4].init.body), binding);
+    assert.match(calls[5].url, /\/api\/hardware\/binding$/);
+    assert.equal(calls[5].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[5].init.body), binding);
   } finally {
     globalThis.fetch = originalFetch;
   }

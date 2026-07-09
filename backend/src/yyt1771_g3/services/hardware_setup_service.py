@@ -18,7 +18,7 @@ from yyt1771_g3.camera.hik_mvs_source import (
     _ip_from_int,
     _prepend_sdk_python_paths,
 )
-from yyt1771_g3.core.hardware_config import HardwareConfig, hardware_config_path
+from yyt1771_g3.core.hardware_config import HardwareConfig, hardware_config_path, local_hardware_profile_path
 from yyt1771_g3.temperature.serial_ports import list_serial_ports
 
 
@@ -67,8 +67,9 @@ def save_hardware_binding(
     temperature: dict[str, Any],
     path: str | Path | None = None,
 ) -> dict[str, Any]:
-    config_path = hardware_config_path(path)
-    payload = _load_existing_yaml_mapping(config_path)
+    config_path = local_hardware_profile_path(path)
+    _assert_writable_hardware_profile_path(config_path)
+    payload = _load_save_base_mapping(config_path)
     camera_payload = _ensure_mapping(payload, "camera")
     temp_payload = _ensure_mapping(payload, "temp")
     serial_payload = _ensure_mapping(temp_payload, "serial")
@@ -93,6 +94,33 @@ def save_hardware_binding(
             "serial_port": str(serial_payload.get("port", "") or ""),
         },
     }
+
+
+def _load_save_base_mapping(config_path: Path) -> dict[str, Any]:
+    if config_path.exists():
+        return _load_existing_yaml_mapping(config_path)
+    source_path = hardware_config_path()
+    if source_path != config_path and source_path.exists():
+        return _load_existing_yaml_mapping(source_path)
+    return {}
+
+
+def _assert_writable_hardware_profile_path(path: Path) -> None:
+    normalized = path.expanduser()
+    name = normalized.name.lower()
+    if name.endswith(".example.yaml") or name.endswith(".example.yml"):
+        raise HardwareSetupError(
+            "Cannot save hardware binding to an example config. Use configs/local/realcamera_temp.local.yaml.",
+            details={"config_path": str(path)},
+        )
+    parts = tuple(part.lower() for part in normalized.parts)
+    if "configs" in parts:
+        configs_index = parts.index("configs")
+        if len(parts) > configs_index + 1 and parts[configs_index + 1] in {"hardware", "camera", "temperature", "examples"}:
+            raise HardwareSetupError(
+                "Cannot save hardware binding to an example config. Use configs/local/realcamera_temp.local.yaml.",
+                details={"config_path": str(path)},
+            )
 
 
 def _check_backend_running() -> dict[str, Any]:

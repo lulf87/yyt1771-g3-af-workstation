@@ -145,6 +145,12 @@ def hardware_config_path(path: str | Path | None = None) -> Path:
     return _default_config_path()
 
 
+def local_hardware_profile_path(path: str | Path | None = None) -> Path:
+    if path is not None:
+        return Path(path).expanduser()
+    return _project_root() / "configs" / "local" / "realcamera_temp.local.yaml"
+
+
 def hardware_config_from_mapping(payload: dict[str, Any]) -> HardwareConfig:
     return HardwareConfig(
         camera=_camera_config(_mapping(payload.get("camera"))),

@@ -56,3 +56,50 @@ test("device setup wizard has five production setup steps and uses hardware APIs
   assert.match(wizard, /testHardwareBinding\(binding\)/);
   assert.match(wizard, /saveHardwareBinding\(binding\)/);
 });
+
+test("device setup wizard supports separate camera and temperature tests", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(wizard, /testHardwareCamera\(selectedCamera\)/);
+  assert.match(wizard, /testHardwareTemperature\(/);
+  assert.match(wizard, /Test camera/);
+  assert.match(wizard, /Test temperature/);
+
+  const cameraResult = sourceSlice(
+    "function HardwareCameraTestResult(",
+    "function HardwareTemperatureTestResult("
+  );
+  const temperatureResult = sourceSlice(
+    "function HardwareTemperatureTestResult(",
+    "function HardwareBindingSummary("
+  );
+  assert.match(cameraResult, /result\.preview_image_data_url/);
+  assert.match(temperatureResult, /result\.temperature_celsius/);
+});
+
+test("device setup wizard does not silently select the first camera when multiple cameras are present", () => {
+  const helper = sourceSlice(
+    "function selectDefaultHardwareCamera(",
+    "function RealHardwareUnavailableCard({"
+  );
+
+  assert.match(helper, /supported\.length === 1/);
+  assert.doesNotMatch(helper, /supported\[0\] \?\? cameras\[0\]/);
+  assert.match(helper, /return null;/);
+});
+
+test("device setup save refreshes hardware profile and source status and warns when unavailable", () => {
+  assert.match(mainSource, /async function handleDeviceSetupSaved\(\)/);
+  assert.match(mainSource, /await refreshHardwareProfile\(\)/);
+  assert.match(mainSource, /await refreshOperatorSourceStatus\(\)/);
+
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+  assert.match(wizard, /Configuration saved but hardware unavailable/);
+  assert.match(wizard, /saveResult\.real_hardware_available === false/);
+});

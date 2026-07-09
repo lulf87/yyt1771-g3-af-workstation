@@ -134,6 +134,11 @@
 - 2026-07-09: 新增 `/api/hardware/setup/environment`、`/api/hardware/cameras`、`/api/hardware/binding/test`、`/api/hardware/binding`；相机扫描复用 Hik MVS lazy import，保存绑定 patch 当前 `YYT1771_G3_HARDWARE_CONFIG` 指向的 YAML。
 - 2026-07-09: 前端新增顶部“设备设置”入口和真实硬件不可用卡片中的“打开设备设置”；向导分 5 步完成环境检查、相机选择、温控串口选择、测试和保存。
 - 2026-07-09: 新增前后端自动化测试覆盖硬件环境检查、相机扫描响应、绑定测试、YAML patch 保存、前端 API client 和向导入口。
+- 2026-07-09: PR #6 收尾补充 hidden Unicode 扫描测试和 GitHub Actions CI workflow，避免 PR 页面 hidden/bidirectional Unicode 警告和 Checks 0。
+- 2026-07-09: 保存绑定默认改为写入 `configs/local/realcamera_temp.local.yaml`，显式 example/template config 路径会拒绝写入并提示使用 local profile；保存成功后返回并刷新 `source_status` / `real_hardware_available`。
+- 2026-07-09: 新增 `/api/hardware/cameras/test` 和 `/api/hardware/temperature/test` 单设备测试 API；前端向导在相机步骤测试预览图，在温控步骤测试温度读数，最终保存前仍保留综合绑定测试。
+- 2026-07-09: 前端相机选择规则改为 0 台显示“未发现 Hik 相机”且禁用下一步，1 台支持相机可预选但需测试，多台相机必须用户手动选择；不再静默选择第一台。
+- 2026-07-09: 新增 `docs/production_setup.md`，说明新电脑首次绑定、按序列号绑定、更换相机/USB 串口后重新绑定、本地 YAML 不提交 Git，以及 example YAML 不应手动修改。
 
 #### Tests run
 
@@ -183,7 +188,22 @@ Result: PASS, 107 passed.
   - 相机扫描未发现相机；温控串口列表可读，显示 `/dev/cu.usbserial-1210 · configured`。未执行绑定测试或保存，避免在无可发现相机情况下写入本机硬件 YAML。
 - Result: PASS for browser entry / environment check / unavailable guard / serial-port selection; full camera binding test and save remain BLOCKED by no discoverable Hik camera in current retest session.
 - Evidence: `output/playwright/p0085_device_setup_wizard_20260709.png`
-- Fresh PR retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, confirmed the Operator unavailable guard, five-step wizard, environment checks, no-camera disabled next button, and serial-port list including `/dev/cu.usbserial-1210 · configured`. Evidence: `output/playwright/p0085_device_setup_wizard_fresh_20260709.png`. Full camera binding test/save remains blocked by no discoverable Hik camera.
+- Fresh PR retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, confirmed the Operator unavailable guard, five-step wizard, environment checks, no-camera disabled next button, and serial-port list including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_wizard_fresh_20260709.png`. Full camera binding test/save remains blocked by no discoverable Hik camera.
+- PR follow-up retest 2026-07-09: reopened the same operator URL in Playwright headed Chromium, confirmed the hardware-unavailable card still says “未完成设备绑定，请打开设备设置选择相机和温控串口。”, the camera step shows “未发现 Hik 相机”, `测试相机` and `下一步` are disabled, and the temperature step independently lists serial ports including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_no_camera_followup_20260709.png`. Did not run save in this no-camera session; full real camera binding save remains pending on-site verification.
+
+#### Production setup smoke checklist
+
+```text
+[x] No-camera flow: environment check shows SDK/backend/serial state.
+[x] No-camera flow: camera scan is empty and next is disabled.
+[ ] Real-camera flow: camera list shows model / serial number / IP.
+[ ] Real-camera flow: operator selects camera and camera test shows preview image.
+[ ] Temperature flow: serial ports list, selected port reads temperature successfully.
+[ ] Save flow: writes configs/local/realcamera_temp.local.yaml and reloads source-status.
+[ ] Operator flow: after full real hardware binding, actual-use mode can start real camera test.
+```
+
+真实相机完整绑定保存仍待现场验证。
 
 #### Final status
 

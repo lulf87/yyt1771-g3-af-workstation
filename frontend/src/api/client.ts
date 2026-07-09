@@ -201,6 +201,8 @@ export type HardwareCameraDevice = {
 export type HardwareTemperatureBinding = {
   backend: "lu92xx_modbus_rtu" | string;
   serial_port: string;
+  baudrate?: number | null;
+  slave_address?: number | null;
 };
 
 export type HardwareBinding = {
@@ -226,6 +228,35 @@ export type HardwareBindingSaveResponse = {
   config_path: string;
   camera?: Record<string, unknown>;
   temperature?: Record<string, unknown>;
+  source_status?: OperatorSourceStatus;
+  real_hardware_available?: boolean;
+};
+
+export type HardwareCameraTestResponse = {
+  status: "passed" | "failed" | string;
+  message?: string;
+  error: string;
+  suggestion?: string;
+  preview_image_data_url: string;
+  shape: number[];
+  camera_meta: Record<string, unknown>;
+  details: Record<string, unknown>;
+};
+
+export type HardwareTemperatureTestRequest = {
+  serial_port: string;
+  baudrate?: number | null;
+  slave_address?: number | null;
+};
+
+export type HardwareTemperatureTestResponse = {
+  status: "passed" | "failed" | string;
+  message?: string;
+  error: string;
+  suggestion?: string;
+  temperature_celsius: number | null;
+  serial_port: string;
+  details: Record<string, unknown>;
 };
 
 export type MeasurementDefinition = {
@@ -958,12 +989,42 @@ export async function getOperatorSourceStatus(): Promise<OperatorSourceStatus> {
   return requestJson<OperatorSourceStatus>("/api/operator/source-status");
 }
 
+export async function getHardwareProfile(): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>("/api/hardware/profile");
+}
+
 export async function getHardwareSetupEnvironment(): Promise<HardwareSetupEnvironment> {
   return requestJson<HardwareSetupEnvironment>("/api/hardware/setup/environment");
 }
 
 export async function listHardwareCameras(): Promise<HardwareCameraDevice[]> {
   return requestJson<HardwareCameraDevice[]>("/api/hardware/cameras");
+}
+
+export async function testHardwareCamera(camera: HardwareCameraDevice): Promise<HardwareCameraTestResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/cameras/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(camera)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareCameraTestResponse>;
+}
+
+export async function testHardwareTemperature(
+  request: HardwareTemperatureTestRequest
+): Promise<HardwareTemperatureTestResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/temperature/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareTemperatureTestResponse>;
 }
 
 export async function testHardwareBinding(binding: HardwareBinding): Promise<HardwareBindingTestResponse> {

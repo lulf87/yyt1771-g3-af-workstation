@@ -29,6 +29,7 @@ import {
   frameIndexImageUrl,
   frameImageUrl,
   getHardwareSetupEnvironment,
+  getHardwareProfile,
   getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
@@ -50,7 +51,9 @@ import {
   stopRealCameraRun,
   streamLiveOfflineRun,
   streamRealCameraRun,
+  testHardwareCamera,
   testHardwareBinding,
+  testHardwareTemperature,
   type ABPoint,
   type ApiErrorDetail,
   type AfasAnalysisParameters,
@@ -63,9 +66,11 @@ import {
   type ExportArtifact,
   type HardwareBinding,
   type HardwareBindingSaveResponse,
+  type HardwareCameraTestResponse,
   type HardwareBindingTestResponse,
   type HardwareCameraDevice,
   type HardwareSetupEnvironment,
+  type HardwareTemperatureTestResponse,
   type ImportedRunView,
   type LiveOfflineFrameEvent,
   type LiveOfflineProgressEvent,
@@ -874,7 +879,12 @@ function App() {
     }
   }
 
+  async function refreshHardwareProfile() {
+    await getHardwareProfile();
+  }
+
   async function handleDeviceSetupSaved() {
+    await refreshHardwareProfile();
     await refreshOperatorSourceStatus();
     await refreshSerialPorts();
   }
@@ -2468,9 +2478,13 @@ function DeviceSetupWizard({
   const [ports, setPorts] = useState<SerialPortInfo[]>([]);
   const [selectedCameraKey, setSelectedCameraKey] = useState("");
   const [selectedPort, setSelectedPort] = useState("");
+  const [cameraTestResult, setCameraTestResult] = useState<HardwareCameraTestResponse | null>(null);
+  const [temperatureTestResult, setTemperatureTestResult] = useState<HardwareTemperatureTestResponse | null>(null);
   const [testResult, setTestResult] = useState<HardwareBindingTestResponse | null>(null);
   const [saveResult, setSaveResult] = useState<HardwareBindingSaveResponse | null>(null);
   const [loadingWizard, setLoadingWizard] = useState(false);
+  const [testingCamera, setTestingCamera] = useState(false);
+  const [testingTemperature, setTestingTemperature] = useState(false);
   const [testingBinding, setTestingBinding] = useState(false);
   const [savingBinding, setSavingBinding] = useState(false);
   const [error, setError] = useState("");
@@ -2478,11 +2492,25 @@ function DeviceSetupWizard({
   useEffect(() => {
     if (!open) return;
     setActiveStep(0);
+    setCameraTestResult(null);
+    setTemperatureTestResult(null);
     setTestResult(null);
     setSaveResult(null);
     setError("");
     void refreshWizardData();
   }, [open]);
+
+  useEffect(() => {
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+  }, [selectedCameraKey]);
+
+  useEffect(() => {
+    setTemperatureTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+  }, [selectedPort]);
 
   if (!open) return null;
 
@@ -2500,9 +2528,9 @@ function DeviceSetupWizard({
     activeStep === 0
       ? true
       : activeStep === 1
-        ? Boolean(selectedCamera)
+        ? Boolean(selectedCamera) && cameraTestResult?.status === "passed"
         : activeStep === 2
-          ? Boolean(selectedPort)
+          ? Boolean(selectedPort) && temperatureTestResult?.status === "passed"
           : activeStep === 3
             ? testResult?.overall_status === "passed"
             : true;
@@ -2523,7 +2551,10 @@ function DeviceSetupWizard({
     }
     if (cameraResult.status === "fulfilled") {
       setCameras(cameraResult.value);
-      setSelectedCameraKey((current) => current || hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value)));
+      setSelectedCameraKey((current) => {
+        if (current && cameraResult.value.some((camera) => hardwareCameraKey(camera) === current)) return current;
+        return hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value));
+      });
     } else {
       setCameras([]);
       setSelectedCameraKey("");
@@ -2538,6 +2569,46 @@ function DeviceSetupWizard({
       setError(portResult.reason instanceof Error ? portResult.reason.message : String(portResult.reason));
     }
     setLoadingWizard(false);
+  }
+
+  async function runCameraTest() {
+    if (!selectedCamera) {
+      setError(t("Select camera before testing"));
+      return;
+    }
+    setTestingCamera(true);
+    setError("");
+    try {
+      setCameraTestResult(await testHardwareCamera(selectedCamera));
+    } catch (err) {
+      setCameraTestResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingCamera(false);
+    }
+  }
+
+  async function runTemperatureTest() {
+    if (!selectedPort) {
+      setError(t("Select serial port before testing"));
+      return;
+    }
+    setTestingTemperature(true);
+    setError("");
+    try {
+      setTemperatureTestResult(
+        await testHardwareTemperature({
+          serial_port: selectedPort,
+          baudrate: 19200,
+          slave_address: 1
+        })
+      );
+    } catch (err) {
+      setTemperatureTestResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingTemperature(false);
+    }
   }
 
   async function runBindingTest() {
@@ -2562,6 +2633,10 @@ function DeviceSetupWizard({
   async function saveBinding() {
     if (!binding) {
       setError(t("Select camera and serial port before saving"));
+      return;
+    }
+    if (testResult?.overall_status !== "passed") {
+      setError(t("Run binding test before saving"));
       return;
     }
     setSavingBinding(true);
@@ -2635,7 +2710,13 @@ function DeviceSetupWizard({
                   </label>
                 ))}
               </div>
-              {!cameras.length ? <div className="statusBlock">{t("No cameras found")}</div> : null}
+              {!cameras.length ? <div className="statusBlock">{t("No Hik cameras found")}</div> : null}
+              {cameras.length > 1 && !selectedCamera ? <div className="inlineWarning">{t("Select one camera to continue")}</div> : null}
+              {cameraTestResult ? <HardwareCameraTestResult result={cameraTestResult} /> : null}
+              <button className="primaryButton" disabled={!selectedCamera || testingCamera} onClick={runCameraTest} type="button">
+                <Camera size={16} aria-hidden="true" />
+                {testingCamera ? t("Testing") : t("Test camera")}
+              </button>
               <button className="secondaryButton" disabled={loadingWizard} onClick={refreshWizardData} type="button">
                 <Camera size={16} aria-hidden="true" />
                 {t("Scan camera")}
@@ -2657,6 +2738,11 @@ function DeviceSetupWizard({
                 </select>
               </label>
               {!ports.length ? <div className="statusBlock">{t("No serial ports found")}</div> : null}
+              {temperatureTestResult ? <HardwareTemperatureTestResult result={temperatureTestResult} /> : null}
+              <button className="primaryButton" disabled={!selectedPort || testingTemperature} onClick={runTemperatureTest} type="button">
+                <Usb size={16} aria-hidden="true" />
+                {testingTemperature ? t("Testing") : t("Test temperature")}
+              </button>
               <button className="secondaryButton" disabled={loadingWizard} onClick={refreshWizardData} type="button">
                 <Usb size={16} aria-hidden="true" />
                 {t("Refresh ports")}
@@ -2679,12 +2765,15 @@ function DeviceSetupWizard({
               <h3>{t("Save configuration")}</h3>
               <HardwareBindingSummary camera={selectedCamera} serialPort={selectedPort} />
               {saveResult ? (
-                <div className="inlineSuccess">
-                  {t("Device binding saved")}: {saveResult.config_path}
+                <div className={saveResult.real_hardware_available === false ? "inlineWarning" : "inlineSuccess"}>
+                  {saveResult.real_hardware_available === false
+                    ? t("Configuration saved but hardware unavailable")
+                    : t("Real camera + real temperature controller")}
+                  : {saveResult.config_path}
                 </div>
               ) : null}
               <div className="buttonPair">
-                <button className="primaryButton" disabled={!binding || savingBinding} onClick={saveBinding} type="button">
+                <button className="primaryButton" disabled={!binding || testResult?.overall_status !== "passed" || savingBinding} onClick={saveBinding} type="button">
                   <Settings size={16} aria-hidden="true" />
                   {savingBinding ? t("Saving") : t("Save configuration")}
                 </button>
@@ -2733,6 +2822,34 @@ function HardwareCheckList({ checks }: { checks: HardwareSetupEnvironment["check
   );
 }
 
+function HardwareCameraTestResult({ result }: { result: HardwareCameraTestResponse }) {
+  const t = useUiText();
+  return (
+    <div className={result.status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+      <strong>{t(result.status === "passed" ? "Camera test passed" : "Camera test failed")}</strong>
+      {result.error ? <span>{result.error}</span> : null}
+      {result.preview_image_data_url ? (
+        <img alt={t("Camera preview")} className="devicePreviewImage" src={result.preview_image_data_url} />
+      ) : null}
+    </div>
+  );
+}
+
+function HardwareTemperatureTestResult({ result }: { result: HardwareTemperatureTestResponse }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const temperature =
+    result.temperature_celsius == null || !Number.isFinite(result.temperature_celsius)
+      ? t("None")
+      : formatTemperatureValue(result.temperature_celsius, language);
+  return (
+    <div className={result.status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+      <strong>{t(result.status === "passed" ? "Temperature test passed" : "Temperature test failed")}</strong>
+      {result.error ? <span>{result.error}</span> : <span>{temperature}</span>}
+    </div>
+  );
+}
+
 function HardwareBindingSummary({
   camera,
   serialPort
@@ -2768,7 +2885,9 @@ function hardwareCameraKey(camera: HardwareCameraDevice | null | undefined): str
 }
 
 function selectDefaultHardwareCamera(cameras: HardwareCameraDevice[]): HardwareCameraDevice | null {
-  return cameras.find((camera) => camera.is_selected) ?? cameras.find((camera) => camera.is_supported_model) ?? cameras[0] ?? null;
+  const supported = cameras.filter((camera) => camera.is_supported_model);
+  if (supported.length === 1) return supported[0];
+  return null;
 }
 
 function RealHardwareUnavailableCard({
