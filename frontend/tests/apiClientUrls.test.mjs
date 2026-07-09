@@ -293,6 +293,152 @@ test("operator source status uses the dedicated endpoint", async () => {
   }
 });
 
+test("hardware setup APIs use dedicated environment, camera, test, and save endpoints", async () => {
+  const {
+    getHardwareSetupEnvironment,
+    listHardwareCameras,
+    testHardwareCamera,
+    testHardwareTemperature,
+    testHardwareBinding,
+    saveHardwareBinding
+  } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/hardware/setup/environment") {
+      return new Response(
+        JSON.stringify({
+          overall_status: "failed",
+          checks: [{ id: "hik_mvs_sdk_import", status: "failed", message: "missing", suggestion: "", details: {} }]
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (path === "/api/hardware/cameras") {
+      return new Response(
+        JSON.stringify([
+          {
+            backend: "hik_gige_mvs",
+            transport: "gige_vision",
+            model: "MV-CA060-11GM",
+            serial_number: "00J67378626",
+            ip: "192.168.3.211",
+            user_defined_name: "Line 1",
+            is_supported_model: true,
+            is_selected: false
+          }
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (path === "/api/hardware/binding/test") {
+      return new Response(
+        JSON.stringify({
+          overall_status: "passed",
+          camera: { status: "passed", message: "ok", suggestion: "", details: {} },
+          temperature: { status: "passed", message: "ok", suggestion: "", details: {} }
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (path === "/api/hardware/cameras/test") {
+      return new Response(
+        JSON.stringify({
+          status: "passed",
+          error: "",
+          preview_image_data_url: "data:image/png;base64,abc",
+          shape: [6, 8],
+          camera_meta: { serial_number: "00J67378626" },
+          details: {}
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (path === "/api/hardware/temperature/test") {
+      return new Response(
+        JSON.stringify({
+          status: "passed",
+          error: "",
+          temperature_celsius: 31.2,
+          serial_port: "/dev/cu.usbserial-11210",
+          details: {}
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (path === "/api/hardware/binding") {
+      return new Response(
+        JSON.stringify({
+          saved: true,
+          config_path: "/tmp/realcamera_temp.local.yaml",
+          real_hardware_available: false,
+          source_status: { real_hardware_available: false }
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    throw new Error(`unexpected path ${path}`);
+  };
+  const binding = {
+    camera: {
+      backend: "hik_gige_mvs",
+      transport: "gige_vision",
+      model: "MV-CA060-11GM",
+      serial_number: "00J67378626",
+      ip: "192.168.3.211",
+      user_defined_name: "Line 1"
+    },
+    temperature: {
+      backend: "lu92xx_modbus_rtu",
+      serial_port: "/dev/cu.usbserial-11210"
+    }
+  };
+
+  try {
+    const environment = await getHardwareSetupEnvironment();
+    const cameras = await listHardwareCameras();
+    const cameraResult = await testHardwareCamera(binding.camera);
+    const temperatureResult = await testHardwareTemperature({
+      serial_port: "/dev/cu.usbserial-11210",
+      baudrate: 19200,
+      slave_address: 1
+    });
+    const testResult = await testHardwareBinding(binding);
+    const saveResult = await saveHardwareBinding(binding);
+
+    assert.equal(environment.overall_status, "failed");
+    assert.equal(cameras[0].serial_number, "00J67378626");
+    assert.equal(cameraResult.preview_image_data_url, "data:image/png;base64,abc");
+    assert.equal(temperatureResult.temperature_celsius, 31.2);
+    assert.equal(testResult.overall_status, "passed");
+    assert.equal(saveResult.saved, true);
+    assert.equal(saveResult.real_hardware_available, false);
+    assert.equal(calls.length, 6);
+    assert.match(calls[0].url, /\/api\/hardware\/setup\/environment$/);
+    assert.match(calls[1].url, /\/api\/hardware\/cameras$/);
+    assert.match(calls[2].url, /\/api\/hardware\/cameras\/test$/);
+    assert.equal(calls[2].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[2].init.body), binding.camera);
+    assert.match(calls[3].url, /\/api\/hardware\/temperature\/test$/);
+    assert.equal(calls[3].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[3].init.body), {
+      serial_port: "/dev/cu.usbserial-11210",
+      baudrate: 19200,
+      slave_address: 1
+    });
+    assert.match(calls[4].url, /\/api\/hardware\/binding\/test$/);
+    assert.equal(calls[4].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[4].init.body), binding);
+    assert.match(calls[5].url, /\/api\/hardware\/binding$/);
+    assert.equal(calls[5].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[5].init.body), binding);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
   const { probeRealCameraSetupFrame } = await loadApiClientModule();
   const measurement = {

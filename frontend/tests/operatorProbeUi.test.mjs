@@ -73,7 +73,7 @@ test("operator real-camera mode requires real hardware before showing frames or 
   );
 
   assert.match(mainSource, /const \[operatorSourceStatus, setOperatorSourceStatus\] = useState<OperatorSourceStatus \| null>\(null\);/);
-  assert.match(mainSource, /getOperatorSourceStatus\(\)/);
+  assert.match(mainSource, /getOperatorSourceStatus\(\{ signal: controller\.signal \}\)/);
   assert.match(mainSource, /operatorDataSource === "real_camera" && !operatorRealHardwareAvailable/);
   assert.match(mainSource, /const operatorTemperatureHardwareUnavailable =/);
   assert.match(mainSource, /const operatorRealHardwareAvailable = operatorSourceRealHardwareAvailable && !operatorTemperatureHardwareUnavailable;/);

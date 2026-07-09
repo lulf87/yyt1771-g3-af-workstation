@@ -81,6 +81,21 @@ test("operator camera area only exposes current-frame probe and hides engineerin
   }
 });
 
+test("operator mode does not auto-open real camera preview on source selection or source-status success", () => {
+  const app = sourceSlice(
+    "function App() {",
+    "function TabButton({"
+  );
+  const chooseSetupSource = sourceSlice(
+    "function chooseSetupSource(",
+    "function chooseOperatorDataSource("
+  );
+
+  assert.doesNotMatch(app, /operatorSourceStatus\.real_hardware_available\) \{[\s\S]{0,420}previewRealCameraFrame/);
+  assert.match(chooseSetupSource, /source === "real_camera" &&\s+uiMode !== "operator"/);
+  assert.doesNotMatch(chooseSetupSource, /operatorSourceStatus\?\.real_hardware_available === true/);
+});
+
 test("operator temperature panel auto-read path removes manual read temperature button", () => {
   const panel = sourceSlice(
     "function OperatorTemperaturePanel({",
@@ -97,36 +112,102 @@ test("operator temperature panel auto-read path removes manual read temperature 
   assert.doesNotMatch(panel, /Read temp/);
 });
 
-test("operator temperature polling runs every 500ms only while idle", async () => {
+test("operator source-status refresh is stable and does not clear old status on failures", () => {
+  const app = sourceSlice(
+    "function App() {",
+    "function TabButton({"
+  );
+
+  assert.match(mainSource, /OPERATOR_SOURCE_STATUS_RETRY_DELAYS_MS\s*=\s*\[5000, 10000, 30000\]/);
+  assert.match(app, /operatorSourceStatusRequestInFlightRef/);
+  assert.match(app, /operatorSourceStatusAbortRef/);
+  assert.match(app, /operatorSourceStatusRetryTimerRef/);
+  assert.match(app, /sameOperatorSourceStatus\(current, nextStatus\)/);
+  assert.match(app, /setOperatorSourceStatus\(\(current\) =>/);
+  assert.match(app, /scheduleOperatorSourceStatusRetry\(\)/);
+  assert.doesNotMatch(app, /setOperatorSourceStatus\(null\)/);
+});
+
+test("operator temperature polling runs every 500ms only when real temperature is available and idle", async () => {
+  const app = sourceSlice(
+    "function App() {",
+    "function TabButton({"
+  );
   const {
-    OPERATOR_TEMPERATURE_POLL_INTERVAL_MS,
+    OPERATOR_TEMPERATURE_IDLE_POLL_MS,
     shouldAutoPollOperatorTemperature
   } = await loadOperatorTemperaturePollingModule();
 
-  assert.equal(OPERATOR_TEMPERATURE_POLL_INTERVAL_MS, 500);
+  assert.equal(OPERATOR_TEMPERATURE_IDLE_POLL_MS, 500);
+  assert.match(app, /hardwareSetupWizardOpen:\s*deviceSetupOpen/);
+  assert.match(app, /operatorTemperaturePollInFlightRef/);
+  assert.match(app, /window\.setInterval\(\s*tick,\s*OPERATOR_TEMPERATURE_IDLE_POLL_MS\s*\)/s);
+  assert.match(app, /window\.clearInterval\(id\)/);
+  assert.match(app, /if \(operatorTemperaturePollInFlightRef\.current\) return/);
+  assert.match(app, /operatorTemperaturePollInFlightRef\.current = true/);
+  assert.match(app, /operatorTemperaturePollInFlightRef\.current = false/);
+  assert.match(app, /const ok = await readCurrentTemperature/);
+  assert.match(app, /if \(!ok && !cancelled\)/);
+  assert.match(app, /deviceSetupOpen,\s+operatorSettings\?\.serialPort/s);
   assert.equal(shouldAutoPollOperatorTemperature({
     uiMode: "operator",
     page: "operatorRun",
     operatorDataSource: "real_camera",
-    realHardwareAvailable: true,
+    realTemperatureAvailable: true,
+    hasTemperatureError: false,
     runningCamera: false,
-    runningOffline: false
+    runningOffline: false,
+    hardwareSetupWizardOpen: false
   }), true);
   assert.equal(shouldAutoPollOperatorTemperature({
     uiMode: "operator",
     page: "operatorRun",
     operatorDataSource: "real_camera",
-    realHardwareAvailable: true,
+    realTemperatureAvailable: true,
+    hasTemperatureError: false,
     runningCamera: true,
-    runningOffline: false
+    runningOffline: false,
+    hardwareSetupWizardOpen: false
+  }), false);
+  assert.equal(shouldAutoPollOperatorTemperature({
+    uiMode: "operator",
+    page: "operatorRun",
+    operatorDataSource: "real_camera",
+    realTemperatureAvailable: false,
+    hasTemperatureError: false,
+    runningCamera: false,
+    runningOffline: false,
+    hardwareSetupWizardOpen: false
+  }), false);
+  assert.equal(shouldAutoPollOperatorTemperature({
+    uiMode: "operator",
+    page: "operatorRun",
+    operatorDataSource: "real_camera",
+    realTemperatureAvailable: true,
+    hasTemperatureError: true,
+    runningCamera: false,
+    runningOffline: false,
+    hardwareSetupWizardOpen: false
+  }), false);
+  assert.equal(shouldAutoPollOperatorTemperature({
+    uiMode: "operator",
+    page: "operatorRun",
+    operatorDataSource: "real_camera",
+    realTemperatureAvailable: true,
+    hasTemperatureError: false,
+    runningCamera: false,
+    runningOffline: false,
+    hardwareSetupWizardOpen: true
   }), false);
   assert.equal(shouldAutoPollOperatorTemperature({
     uiMode: "engineering",
     page: "setup",
     operatorDataSource: "real_camera",
-    realHardwareAvailable: true,
+    realTemperatureAvailable: true,
+    hasTemperatureError: false,
     runningCamera: false,
-    runningOffline: false
+    runningOffline: false,
+    hardwareSetupWizardOpen: false
   }), false);
 });
 

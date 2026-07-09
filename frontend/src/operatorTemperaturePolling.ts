@@ -1,12 +1,14 @@
-export const OPERATOR_TEMPERATURE_POLL_INTERVAL_MS = 500;
+export const OPERATOR_TEMPERATURE_IDLE_POLL_MS = 500;
 
 export type OperatorTemperaturePollingState = {
   uiMode: string;
   page: string;
   operatorDataSource: string;
-  realHardwareAvailable: boolean;
+  realTemperatureAvailable: boolean;
+  hasTemperatureError: boolean;
   runningCamera: boolean;
   runningOffline: boolean;
+  hardwareSetupWizardOpen: boolean;
 };
 
 export function shouldAutoPollOperatorTemperature(state: OperatorTemperaturePollingState): boolean {
@@ -14,8 +16,10 @@ export function shouldAutoPollOperatorTemperature(state: OperatorTemperaturePoll
     state.uiMode === "operator" &&
     state.page === "operatorRun" &&
     state.operatorDataSource === "real_camera" &&
-    state.realHardwareAvailable &&
+    state.realTemperatureAvailable &&
+    !state.hasTemperatureError &&
     !state.runningCamera &&
-    !state.runningOffline
+    !state.runningOffline &&
+    !state.hardwareSetupWizardOpen
   );
 }

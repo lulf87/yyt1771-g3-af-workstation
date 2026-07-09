@@ -26,13 +26,23 @@ golden_c_20260529_dev_lab -> C 类多细支 / 多线束整体结构
 3. 如果本机路径变化，只改该 local json，不要在代码中硬编码路径。
 ```
 
-真实相机和 LU92XX 温控联调时，可从模板复制本机配置：
+真实相机和 LU92XX 温控联调时，优先在前端“设备设置 / 首次安装向导”中扫描相机、选择温控串口、测试并保存绑定。生产首次安装流程见 `docs/production_setup.md`。
+
+向导默认写入本机 profile：
+
+```text
+configs/local/realcamera_temp.local.yaml
+```
+
+相机按 `serial_number` 绑定，IP 仅作为连接信息一并保存。更换相机后需要重新绑定；更换 USB 口导致温控串口变化后，需要重新选择串口并保存。不要手动修改 `configs/hardware/*.example.yaml`，也不要把 `configs/local/*.yaml` 提交到 Git。
+
+如需手工准备初始文件，可从模板复制本机配置：
 
 ```bash
 cp configs/hardware/realcamera_temp.example.yaml configs/local/realcamera_temp.local.yaml
 ```
 
-然后在 `configs/local/realcamera_temp.local.yaml` 中填写本机 Hik MVS SDK 路径、相机筛选信息和 LU92XX 串口。源码和前端请求只读取 profile，不写死本机路径。
+然后在 `configs/local/realcamera_temp.local.yaml` 中填写或通过向导保存本机 Hik MVS SDK 路径、相机筛选信息和 LU92XX 串口。SDK 路径候选值和首次安装排查步骤见 `docs/production_setup.md`。源码和前端请求只读取 profile，不写死本机路径。
 
 快速启动三种硬件组合：
 

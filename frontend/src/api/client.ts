@@ -171,6 +171,94 @@ export type OperatorSourceStatus = {
   provenance?: SourceProvenance;
 };
 
+export type HardwareSetupCheckStatus = "passed" | "failed" | "warning" | string;
+
+export type HardwareSetupCheck = {
+  id: string;
+  label: string;
+  status: HardwareSetupCheckStatus;
+  message: string;
+  suggestion: string;
+  details: Record<string, unknown>;
+};
+
+export type HardwareSetupEnvironment = {
+  overall_status: "passed" | "failed" | string;
+  checks: HardwareSetupCheck[];
+};
+
+export type HardwareCameraDevice = {
+  backend: string;
+  transport: string;
+  model: string;
+  serial_number: string;
+  ip: string;
+  user_defined_name: string;
+  is_supported_model: boolean;
+  is_selected: boolean;
+};
+
+export type HardwareTemperatureBinding = {
+  backend: "lu92xx_modbus_rtu" | string;
+  serial_port: string;
+  baudrate?: number | null;
+  slave_address?: number | null;
+};
+
+export type HardwareBinding = {
+  camera: HardwareCameraDevice;
+  temperature: HardwareTemperatureBinding;
+};
+
+export type HardwareBindingTestItem = {
+  status: "passed" | "failed" | string;
+  message: string;
+  suggestion: string;
+  details: Record<string, unknown>;
+};
+
+export type HardwareBindingTestResponse = {
+  overall_status: "passed" | "failed" | string;
+  camera: HardwareBindingTestItem;
+  temperature: HardwareBindingTestItem;
+};
+
+export type HardwareBindingSaveResponse = {
+  saved: boolean;
+  config_path: string;
+  camera?: Record<string, unknown>;
+  temperature?: Record<string, unknown>;
+  source_status?: OperatorSourceStatus;
+  real_hardware_available?: boolean;
+};
+
+export type HardwareCameraTestResponse = {
+  status: "passed" | "failed" | string;
+  message?: string;
+  error: string;
+  suggestion?: string;
+  preview_image_data_url: string;
+  shape: number[];
+  camera_meta: Record<string, unknown>;
+  details: Record<string, unknown>;
+};
+
+export type HardwareTemperatureTestRequest = {
+  serial_port: string;
+  baudrate?: number | null;
+  slave_address?: number | null;
+};
+
+export type HardwareTemperatureTestResponse = {
+  status: "passed" | "failed" | string;
+  message?: string;
+  error: string;
+  suggestion?: string;
+  temperature_celsius: number | null;
+  serial_port: string;
+  details: Record<string, unknown>;
+};
+
 export type MeasurementDefinition = {
   measurement_id: string;
   source: "offline_dataset" | "real_camera";
@@ -587,8 +675,8 @@ export class ApiError extends Error {
   }
 }
 
-async function requestJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`);
+async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, options);
   if (!response.ok) {
     throw await apiErrorFromResponse(response);
   }
@@ -897,8 +985,70 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
   return requestJson<CameraPreviewResponse>("/api/camera/preview");
 }
 
-export async function getOperatorSourceStatus(): Promise<OperatorSourceStatus> {
-  return requestJson<OperatorSourceStatus>("/api/operator/source-status");
+export async function getOperatorSourceStatus(options: { signal?: AbortSignal } = {}): Promise<OperatorSourceStatus> {
+  return requestJson<OperatorSourceStatus>("/api/operator/source-status", { signal: options.signal });
+}
+
+export async function getHardwareProfile(): Promise<Record<string, unknown>> {
+  return requestJson<Record<string, unknown>>("/api/hardware/profile");
+}
+
+export async function getHardwareSetupEnvironment(): Promise<HardwareSetupEnvironment> {
+  return requestJson<HardwareSetupEnvironment>("/api/hardware/setup/environment");
+}
+
+export async function listHardwareCameras(): Promise<HardwareCameraDevice[]> {
+  return requestJson<HardwareCameraDevice[]>("/api/hardware/cameras");
+}
+
+export async function testHardwareCamera(camera: HardwareCameraDevice): Promise<HardwareCameraTestResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/cameras/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(camera)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareCameraTestResponse>;
+}
+
+export async function testHardwareTemperature(
+  request: HardwareTemperatureTestRequest
+): Promise<HardwareTemperatureTestResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/temperature/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareTemperatureTestResponse>;
+}
+
+export async function testHardwareBinding(binding: HardwareBinding): Promise<HardwareBindingTestResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/binding/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(binding)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareBindingTestResponse>;
+}
+
+export async function saveHardwareBinding(binding: HardwareBinding): Promise<HardwareBindingSaveResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/binding`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(binding)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareBindingSaveResponse>;
 }
 
 export async function releaseRealCameraPreview(): Promise<CameraPreviewReleaseResponse> {

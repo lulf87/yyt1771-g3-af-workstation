@@ -28,12 +28,15 @@ import {
   fetchRunExportBundle,
   frameIndexImageUrl,
   frameImageUrl,
+  getHardwareSetupEnvironment,
+  getHardwareProfile,
   getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
   getRunAvailability,
   getOfflineDatasetSummary,
   importRunExportFile,
+  listHardwareCameras,
   listTemperatureSerialPorts,
   listOfflineDatasets,
   previewRealCamera,
@@ -44,9 +47,13 @@ import {
   releaseRealCameraPreview,
   recomputeRunAnalysis,
   runFrameImageUrl,
+  saveHardwareBinding,
   stopRealCameraRun,
   streamLiveOfflineRun,
   streamRealCameraRun,
+  testHardwareCamera,
+  testHardwareBinding,
+  testHardwareTemperature,
   type ABPoint,
   type ApiErrorDetail,
   type AfasAnalysisParameters,
@@ -57,6 +64,13 @@ import {
   type DiagnosticImages,
   type MeasurementDefinition,
   type ExportArtifact,
+  type HardwareBinding,
+  type HardwareBindingSaveResponse,
+  type HardwareCameraTestResponse,
+  type HardwareBindingTestResponse,
+  type HardwareCameraDevice,
+  type HardwareSetupEnvironment,
+  type HardwareTemperatureTestResponse,
   type ImportedRunView,
   type LiveOfflineFrameEvent,
   type LiveOfflineProgressEvent,
@@ -183,7 +197,7 @@ import {
   writeBlobToDirectory
 } from "./exportSaveTarget";
 import {
-  OPERATOR_TEMPERATURE_POLL_INTERVAL_MS,
+  OPERATOR_TEMPERATURE_IDLE_POLL_MS,
   shouldAutoPollOperatorTemperature
 } from "./operatorTemperaturePolling";
 import {
@@ -354,6 +368,7 @@ const DEFAULT_AFAS_ANALYSIS_FORM: AfasAnalysisFormState = {
 
 const LIVE_FRAME_DISPLAY_MAX_WIDTH = 1024;
 const REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS = 500;
+const OPERATOR_SOURCE_STATUS_RETRY_DELAYS_MS = [5000, 10000, 30000] as const;
 
 const OBJECT_CLASS_OPTIONS = [
   { value: "A_BALLOON_ENVELOPE", label: "A balloon envelope", detector: "BalloonEnvelopeDetector", widthMode: "max_width" as const },
@@ -586,6 +601,7 @@ function App() {
   const [uiMode, setUiMode] = useState<UiMode>(initialUiMode);
   const [page, setPage] = useState<Page>(() => defaultPageForUiMode(initialUiMode));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
+  const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
   const [setupSource, setSetupSource] = useState<SetupSourceKind>(() =>
     initialUiMode === "operator" ? initialOperatorDataSource : "offline_dataset"
   );
@@ -599,6 +615,7 @@ function App() {
   const [operatorSourceStatus, setOperatorSourceStatus] = useState<OperatorSourceStatus | null>(null);
   const [operatorSourceStatusError, setOperatorSourceStatusError] = useState("");
   const [loadingOperatorSourceStatus, setLoadingOperatorSourceStatus] = useState(false);
+  const [operatorSourceStatusLastCheckedAt, setOperatorSourceStatusLastCheckedAt] = useState<number | null>(null);
   const [importedRun, setImportedRun] = useState<ImportedRunView | null>(null);
   const [frameIndex, setFrameIndex] = useState(1);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
@@ -625,6 +642,11 @@ function App() {
   const liveRunProcessedFramesRef = useRef(0);
   const cameraPreviewRequestInFlightRef = useRef(false);
   const cameraPreviewPollGenerationRef = useRef(0);
+  const operatorSourceStatusRequestInFlightRef = useRef(false);
+  const operatorSourceStatusAbortRef = useRef<AbortController | null>(null);
+  const operatorSourceStatusRetryTimerRef = useRef<number | null>(null);
+  const operatorSourceStatusRetryCountRef = useRef(0);
+  const operatorTemperaturePollInFlightRef = useRef(false);
   const measurementRef = useRef<MeasurementDefinition | null>(null);
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
@@ -641,22 +663,25 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (uiMode !== "operator") return;
-    void refreshOperatorSourceStatus();
+    if (uiMode !== "operator" || operatorDataSource !== "real_camera") {
+      clearOperatorSourceStatusRetry();
+      operatorSourceStatusAbortRef.current?.abort();
+      return;
+    }
+    void refreshOperatorSourceStatus({ reason: "initial" });
   }, [uiMode, operatorDataSource]);
+
+  useEffect(() => {
+    return () => {
+      clearOperatorSourceStatusRetry();
+      operatorSourceStatusAbortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (uiMode !== "operator" || operatorDataSource !== "real_camera") return;
     if (operatorSourceStatus == null) return;
     if (operatorSourceStatus.real_hardware_available) {
-      if (setupSource === "real_camera" && !cameraPreviewUrl && !previewingCamera) {
-        setCameraPreviewState((current) => resumeLivePreview(current));
-        window.setTimeout(() => {
-          if (measurementRef.current?.source === "real_camera") {
-            void previewRealCameraFrame("live", { clearProbe: false });
-          }
-        }, 0);
-      }
       return;
     }
     setCameraPreview(null);
@@ -676,10 +701,7 @@ function App() {
   }, [
     uiMode,
     operatorDataSource,
-    operatorSourceStatus?.real_hardware_available,
-    setupSource,
-    cameraPreviewUrl,
-    previewingCamera
+    operatorSourceStatus?.real_hardware_available
   ]);
 
   useEffect(() => {
@@ -715,50 +737,70 @@ function App() {
 
   useEffect(() => {
     if (pageForSetupEffects !== "setup" || setupSource !== "real_camera") return;
+    if (uiMode === "operator") return;
     if (temperatureStatus || temperatureError || checkingTemperature) return;
     void readCurrentTemperature();
-  }, [pageForSetupEffects, setupSource, temperatureStatus, temperatureError, checkingTemperature]);
+  }, [
+    pageForSetupEffects,
+    setupSource,
+    temperatureStatus,
+    temperatureError,
+    checkingTemperature,
+    uiMode
+  ]);
 
   useEffect(() => {
     if (!shouldAutoPollOperatorTemperature({
       uiMode,
       page,
       operatorDataSource,
-      realHardwareAvailable: operatorSourceRealHardwareAvailable,
+      realTemperatureAvailable: operatorSourceStatus?.real_temperature_available === true,
+      hasTemperatureError: operatorTemperatureHardwareUnavailable,
       runningCamera,
-      runningOffline: running
+      runningOffline: running,
+      hardwareSetupWizardOpen: deviceSetupOpen
     })) {
       return;
     }
     let cancelled = false;
-    let timer: number | null = null;
-    const pollTemperature = async () => {
-      await readCurrentTemperature({
-        quiet: true,
-        port: operatorSettings?.serialPort ?? measurementRef.current?.detector_config.temperature_serial_port
-      });
+    let id: number | null = null;
+    async function tick() {
       if (cancelled) return;
-      timer = window.setTimeout(() => {
-        void pollTemperature();
-      }, OPERATOR_TEMPERATURE_POLL_INTERVAL_MS);
-    };
-    void pollTemperature();
+      if (operatorTemperaturePollInFlightRef.current) return;
+      operatorTemperaturePollInFlightRef.current = true;
+      try {
+        const ok = await readCurrentTemperature({
+          quiet: true,
+          port: operatorSettings?.serialPort ?? measurementRef.current?.detector_config.temperature_serial_port
+        });
+        if (!ok && !cancelled) {
+          cancelled = true;
+          if (id !== null) window.clearInterval(id);
+        }
+      } finally {
+        operatorTemperaturePollInFlightRef.current = false;
+      }
+    }
+    void tick();
+    id = window.setInterval(tick, OPERATOR_TEMPERATURE_IDLE_POLL_MS);
     return () => {
       cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
+      if (id !== null) window.clearInterval(id);
     };
   }, [
     uiMode,
     page,
     operatorDataSource,
-    operatorSourceRealHardwareAvailable,
+    operatorSourceStatus?.real_temperature_available,
+    operatorTemperatureHardwareUnavailable,
     runningCamera,
     running,
+    deviceSetupOpen,
     operatorSettings?.serialPort
   ]);
 
   useEffect(() => {
-    if (uiMode === "operator" && operatorDataSource === "real_camera" && !operatorRealHardwareAvailable) return;
+    if (uiMode === "operator") return;
     if (!shouldPollRealCameraPreview(pageForSetupEffects, setupSource, cameraPreviewState)) return;
     if (runningCamera || probing) return;
     let cancelled = false;
@@ -792,9 +834,7 @@ function App() {
     measurement?.detector_config.setup_preview_fps,
     runningCamera,
     probing,
-    uiMode,
-    operatorDataSource,
-    operatorRealHardwareAvailable
+    uiMode
   ]);
 
   useEffect(() => {
@@ -851,17 +891,65 @@ function App() {
     }
   }
 
-  async function refreshOperatorSourceStatus() {
-    setLoadingOperatorSourceStatus(true);
-    setOperatorSourceStatusError("");
-    try {
-      setOperatorSourceStatus(await getOperatorSourceStatus());
-    } catch (err) {
-      setOperatorSourceStatus(null);
-      setOperatorSourceStatusError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoadingOperatorSourceStatus(false);
+  function clearOperatorSourceStatusRetry() {
+    if (operatorSourceStatusRetryTimerRef.current === null) return;
+    window.clearTimeout(operatorSourceStatusRetryTimerRef.current);
+    operatorSourceStatusRetryTimerRef.current = null;
+  }
+
+  function scheduleOperatorSourceStatusRetry() {
+    if (uiMode !== "operator" || operatorDataSource !== "real_camera") return;
+    if (operatorSourceStatusRetryTimerRef.current !== null) return;
+    const delayMs = operatorSourceStatusRetryDelayMs(operatorSourceStatusRetryCountRef.current);
+    operatorSourceStatusRetryCountRef.current += 1;
+    operatorSourceStatusRetryTimerRef.current = window.setTimeout(() => {
+      operatorSourceStatusRetryTimerRef.current = null;
+      void refreshOperatorSourceStatus({ reason: "retry" });
+    }, delayMs);
+  }
+
+  async function refreshOperatorSourceStatus(options: { reason?: "initial" | "manual" | "saved" | "retry" } = {}) {
+    const reason = options.reason ?? "manual";
+    const canReplaceInFlight = reason === "manual" || reason === "saved";
+    if (operatorSourceStatusRequestInFlightRef.current) {
+      if (!canReplaceInFlight) return;
+      operatorSourceStatusAbortRef.current?.abort();
     }
+    clearOperatorSourceStatusRetry();
+    const controller = new AbortController();
+    operatorSourceStatusAbortRef.current = controller;
+    operatorSourceStatusRequestInFlightRef.current = true;
+    setLoadingOperatorSourceStatus(true);
+    if (reason !== "retry") setOperatorSourceStatusError("");
+    try {
+      const nextStatus = await getOperatorSourceStatus({ signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setOperatorSourceStatus((current) => (sameOperatorSourceStatus(current, nextStatus) ? current : nextStatus));
+      setOperatorSourceStatusError("");
+      setOperatorSourceStatusLastCheckedAt(Date.now());
+      operatorSourceStatusRetryCountRef.current = 0;
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
+      setOperatorSourceStatusError(err instanceof Error ? err.message : String(err));
+      setOperatorSourceStatusLastCheckedAt(Date.now());
+      scheduleOperatorSourceStatusRetry();
+    } finally {
+      if (operatorSourceStatusAbortRef.current === controller) {
+        operatorSourceStatusAbortRef.current = null;
+        operatorSourceStatusRequestInFlightRef.current = false;
+        setLoadingOperatorSourceStatus(false);
+      }
+    }
+  }
+
+  async function refreshHardwareProfile() {
+    await getHardwareProfile();
+  }
+
+  async function handleDeviceSetupSaved() {
+    await refreshHardwareProfile();
+    await refreshOperatorSourceStatus({ reason: "saved" });
+    await refreshSerialPorts();
   }
 
   function changeUiMode(nextMode: UiMode) {
@@ -1092,7 +1180,7 @@ function App() {
     });
     const canPreviewRealCamera =
       source === "real_camera" &&
-      (uiMode !== "operator" || operatorSourceStatus?.real_hardware_available === true);
+      uiMode !== "operator";
     if (canPreviewRealCamera) {
       setCameraPreviewState((current) => resumeLivePreview(current));
       window.setTimeout(() => {
@@ -1305,7 +1393,14 @@ function App() {
     setCameraPreviewState((current) => confirmPreviewRoi(current, measurementRef.current?.roi ?? null));
   }
 
-  async function readCurrentTemperature(options: { quiet?: boolean; port?: string | null } = {}) {
+  async function readCurrentTemperature(options: { quiet?: boolean; port?: string | null } = {}): Promise<boolean> {
+    if (
+      uiMode === "operator" &&
+      operatorDataSource === "real_camera" &&
+      operatorSourceStatus?.real_temperature_available !== true
+    ) {
+      return false;
+    }
     setCheckingTemperature(true);
     if (!options.quiet) setError("");
     setTemperatureError(null);
@@ -1315,10 +1410,12 @@ function App() {
           port: options.port ?? measurementRef.current?.detector_config.temperature_serial_port
         })
       );
+      return true;
     } catch (err) {
       if (!options.quiet) setError(err instanceof Error ? err.message : String(err));
       setTemperatureError(temperatureErrorFromUnknown(err));
       setTemperatureStatus(null);
+      return false;
     } finally {
       setCheckingTemperature(false);
     }
@@ -1504,6 +1601,9 @@ function App() {
             ))}
           </select>
         </label>
+        <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
+          <Settings size={17} aria-hidden="true" />
+        </button>
         <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
           <RefreshCcw size={17} aria-hidden="true" />
         </button>
@@ -1555,6 +1655,7 @@ function App() {
               operatorSourceStatus={operatorSourceStatus}
               operatorSourceStatusError={operatorSourceStatusError}
               loadingOperatorSourceStatus={loadingOperatorSourceStatus}
+              operatorSourceStatusLastCheckedAt={operatorSourceStatusLastCheckedAt}
               onSelectedDataset={setSelectedId}
               onOperatorDataSource={chooseOperatorDataSource}
               probe={probe}
@@ -1595,11 +1696,18 @@ function App() {
               onStartRealCameraRun={startRealCameraRun}
               onReadCurrentTemperature={readCurrentTemperature}
               onRefreshSerialPorts={refreshSerialPorts}
+              onRefreshOperatorSourceStatus={() => void refreshOperatorSourceStatus({ reason: "manual" })}
+              onOpenDeviceSetup={() => setDeviceSetupOpen(true)}
               page={page}
             />
           ) : null}
         </section>
       </section>
+      <DeviceSetupWizard
+        open={deviceSetupOpen}
+        onClose={() => setDeviceSetupOpen(false)}
+        onSaved={handleDeviceSetupSaved}
+      />
     </main>
     </UiLanguageContext.Provider>
   );
@@ -1672,6 +1780,7 @@ function PageContent({
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
+  operatorSourceStatusLastCheckedAt,
   onSelectedDataset,
   onOperatorDataSource,
   probe,
@@ -1712,6 +1821,8 @@ function PageContent({
   onStartRealCameraRun,
   onReadCurrentTemperature,
   onRefreshSerialPorts,
+  onRefreshOperatorSourceStatus,
+  onOpenDeviceSetup,
   page
 }: {
   dataset: OfflineDatasetListItem;
@@ -1729,6 +1840,7 @@ function PageContent({
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
+  operatorSourceStatusLastCheckedAt: number | null;
   onSelectedDataset: (datasetId: string) => void;
   onOperatorDataSource: (source: OperatorDataSource) => void;
   probe: ProbeResponse | null;
@@ -1769,6 +1881,8 @@ function PageContent({
   onStartRealCameraRun: () => void;
   onReadCurrentTemperature: () => void;
   onRefreshSerialPorts: () => void;
+  onRefreshOperatorSourceStatus: () => void;
+  onOpenDeviceSetup: () => void;
   page: Page;
 }) {
   const language = useUiLanguage();
@@ -1903,6 +2017,7 @@ function PageContent({
         operatorSourceStatus={operatorSourceStatus}
         operatorSourceStatusError={operatorSourceStatusError}
         loadingOperatorSourceStatus={loadingOperatorSourceStatus}
+        operatorSourceStatusLastCheckedAt={operatorSourceStatusLastCheckedAt}
         probe={displayedProbe}
         probing={probing}
         operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
@@ -1922,6 +2037,8 @@ function PageContent({
         onProbeRealCameraSetup={onOperatorProbeCurrentFrame}
         onStopRun={onStopRun}
         onRefreshSerialPorts={onRefreshSerialPorts}
+        onRefreshOperatorSourceStatus={onRefreshOperatorSourceStatus}
+        onOpenDeviceSetup={onOpenDeviceSetup}
         onRoiChange={updateRoi}
         onRoiCommit={commitRoi}
       />
@@ -2039,6 +2156,7 @@ function OperatorRunPage({
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
+  operatorSourceStatusLastCheckedAt,
   probe,
   probing,
   operatorSettings,
@@ -2058,6 +2176,8 @@ function OperatorRunPage({
   onProbeRealCameraSetup,
   onStopRun,
   onRefreshSerialPorts,
+  onRefreshOperatorSourceStatus,
+  onOpenDeviceSetup,
   onRoiChange,
   onRoiCommit
 }: {
@@ -2074,6 +2194,7 @@ function OperatorRunPage({
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
+  operatorSourceStatusLastCheckedAt: number | null;
   probe: ProbeResponse | null;
   probing: boolean;
   operatorSettings: OperatorConfirmedSettings;
@@ -2093,6 +2214,8 @@ function OperatorRunPage({
   onProbeRealCameraSetup: () => void;
   onStopRun: () => void;
   onRefreshSerialPorts: () => void;
+  onRefreshOperatorSourceStatus: () => void;
+  onOpenDeviceSetup: () => void;
   onRoiChange: (roi: RotatedROI) => void;
   onRoiCommit: (roi: RotatedROI) => void;
 }) {
@@ -2164,8 +2287,11 @@ function OperatorRunPage({
         {!realHardwareAvailable ? (
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
+            lastCheckedAt={operatorSourceStatusLastCheckedAt}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
+            onRecheck={onRefreshOperatorSourceStatus}
+            onOpenDeviceSetup={onOpenDeviceSetup}
           />
         ) : null}
         <OperatorDetectionParameterPanel
@@ -2202,6 +2328,7 @@ function OperatorRunPage({
           temperatureError={temperatureError}
           checkingTemperature={checkingTemperature}
           loadingSerialPorts={loadingSerialPorts}
+          operatorRunActive={operatorRunActive}
           mode={realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
           onPatch={onOperatorSettingsPatch}
           onConfirm={onOperatorSettingsConfirm}
@@ -2240,8 +2367,11 @@ function OperatorRunPage({
         {!realHardwareAvailable ? (
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
+            lastCheckedAt={operatorSourceStatusLastCheckedAt}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
+            onRecheck={onRefreshOperatorSourceStatus}
+            onOpenDeviceSetup={onOpenDeviceSetup}
           />
         ) : latestFrameUrl ? (
           <FrameCanvas
@@ -2413,20 +2543,572 @@ function OperatorSourceControls({
   );
 }
 
+const HARDWARE_SETUP_STEPS = [
+  "Environment check",
+  "Scan camera",
+  "Select temperature controller",
+  "Test binding",
+  "Save configuration"
+] as const;
+
+function DeviceSetupWizard({
+  open,
+  onClose,
+  onSaved
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const t = useUiText();
+  const [activeStep, setActiveStep] = useState(0);
+  const [environment, setEnvironment] = useState<HardwareSetupEnvironment | null>(null);
+  const [cameras, setCameras] = useState<HardwareCameraDevice[]>([]);
+  const [ports, setPorts] = useState<SerialPortInfo[]>([]);
+  const [selectedCameraKey, setSelectedCameraKey] = useState("");
+  const [selectedPort, setSelectedPort] = useState("");
+  const [cameraTestResult, setCameraTestResult] = useState<HardwareCameraTestResponse | null>(null);
+  const [temperatureTestResult, setTemperatureTestResult] = useState<HardwareTemperatureTestResponse | null>(null);
+  const [testResult, setTestResult] = useState<HardwareBindingTestResponse | null>(null);
+  const [saveResult, setSaveResult] = useState<HardwareBindingSaveResponse | null>(null);
+  const [loadingWizard, setLoadingWizard] = useState(false);
+  const [testingCamera, setTestingCamera] = useState(false);
+  const [testingTemperature, setTestingTemperature] = useState(false);
+  const [testingBinding, setTestingBinding] = useState(false);
+  const [savingBinding, setSavingBinding] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setActiveStep(0);
+    setCameraTestResult(null);
+    setTemperatureTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+    setError("");
+    void refreshWizardData();
+  }, [open]);
+
+  useEffect(() => {
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+  }, [selectedCameraKey]);
+
+  useEffect(() => {
+    setTemperatureTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+  }, [selectedPort]);
+
+  if (!open) return null;
+
+  const selectedCamera = cameras.find((camera) => hardwareCameraKey(camera) === selectedCameraKey) ?? null;
+  const binding = selectedCamera && selectedPort
+    ? {
+        camera: selectedCamera,
+        temperature: {
+          backend: "lu92xx_modbus_rtu",
+          serial_port: selectedPort
+        }
+      } satisfies HardwareBinding
+    : null;
+  const canAdvance =
+    activeStep === 0
+      ? true
+      : activeStep === 1
+        ? Boolean(selectedCamera) && cameraTestResult?.status === "passed"
+        : activeStep === 2
+          ? Boolean(selectedPort) && temperatureTestResult?.status === "passed"
+          : activeStep === 3
+            ? testResult?.overall_status === "passed"
+            : true;
+
+  async function refreshWizardData() {
+    setLoadingWizard(true);
+    setError("");
+    const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
+      getHardwareSetupEnvironment(),
+      listHardwareCameras(),
+      listTemperatureSerialPorts()
+    ]);
+    if (environmentResult.status === "fulfilled") {
+      setEnvironment(environmentResult.value);
+    } else {
+      setEnvironment(null);
+      setError(environmentResult.reason instanceof Error ? environmentResult.reason.message : String(environmentResult.reason));
+    }
+    if (cameraResult.status === "fulfilled") {
+      setCameras(cameraResult.value);
+      setSelectedCameraKey((current) => {
+        if (current && cameraResult.value.some((camera) => hardwareCameraKey(camera) === current)) return current;
+        return hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value));
+      });
+    } else {
+      setCameras([]);
+      setSelectedCameraKey("");
+      setError(cameraResult.reason instanceof Error ? cameraResult.reason.message : String(cameraResult.reason));
+    }
+    if (portResult.status === "fulfilled") {
+      setPorts(portResult.value);
+      setSelectedPort((current) => current || portResult.value[0]?.device || "");
+    } else {
+      setPorts([]);
+      setSelectedPort("");
+      setError(portResult.reason instanceof Error ? portResult.reason.message : String(portResult.reason));
+    }
+    setLoadingWizard(false);
+  }
+
+  async function refreshEnvironmentChecks() {
+    setLoadingWizard(true);
+    setError("");
+    try {
+      setEnvironment(await getHardwareSetupEnvironment());
+    } catch (err) {
+      setEnvironment(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingWizard(false);
+    }
+  }
+
+  async function scanHardwareCameras() {
+    setLoadingWizard(true);
+    setError("");
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+    try {
+      const nextCameras = await listHardwareCameras();
+      setCameras(nextCameras);
+      setSelectedCameraKey((current) => {
+        if (current && nextCameras.some((camera) => hardwareCameraKey(camera) === current)) return current;
+        return hardwareCameraKey(selectDefaultHardwareCamera(nextCameras));
+      });
+    } catch (err) {
+      setCameras([]);
+      setSelectedCameraKey("");
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingWizard(false);
+    }
+  }
+
+  async function refreshTemperaturePorts() {
+    setLoadingWizard(true);
+    setError("");
+    setTemperatureTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+    try {
+      const nextPorts = await listTemperatureSerialPorts();
+      setPorts(nextPorts);
+      setSelectedPort((current) => current || nextPorts[0]?.device || "");
+    } catch (err) {
+      setPorts([]);
+      setSelectedPort("");
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingWizard(false);
+    }
+  }
+
+  async function runCameraTest() {
+    if (!selectedCamera) {
+      setError(t("Select camera before testing"));
+      return;
+    }
+    setTestingCamera(true);
+    setError("");
+    try {
+      setCameraTestResult(await testHardwareCamera(selectedCamera));
+    } catch (err) {
+      setCameraTestResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingCamera(false);
+    }
+  }
+
+  async function runTemperatureTest() {
+    if (!selectedPort) {
+      setError(t("Select serial port before testing"));
+      return;
+    }
+    setTestingTemperature(true);
+    setError("");
+    try {
+      setTemperatureTestResult(
+        await testHardwareTemperature({
+          serial_port: selectedPort,
+          baudrate: 19200,
+          slave_address: 1
+        })
+      );
+    } catch (err) {
+      setTemperatureTestResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingTemperature(false);
+    }
+  }
+
+  async function runBindingTest() {
+    if (!binding) {
+      setError(t("Select camera and serial port before testing"));
+      return;
+    }
+    setTestingBinding(true);
+    setError("");
+    try {
+      const result = await testHardwareBinding(binding);
+      setTestResult(result);
+      if (result.overall_status === "passed") setActiveStep(4);
+    } catch (err) {
+      setTestResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingBinding(false);
+    }
+  }
+
+  async function saveBinding() {
+    if (!binding) {
+      setError(t("Select camera and serial port before saving"));
+      return;
+    }
+    if (testResult?.overall_status !== "passed") {
+      setError(t("Run binding test before saving"));
+      return;
+    }
+    setSavingBinding(true);
+    setError("");
+    try {
+      const result = await saveHardwareBinding(binding);
+      setSaveResult(result);
+      await onSaved();
+    } catch (err) {
+      setSaveResult(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingBinding(false);
+    }
+  }
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section aria-modal="true" className="deviceSetupDialog" role="dialog">
+        <header>
+          <div>
+            <h2>{t("Device setup")}</h2>
+            <p>{t("Camera and temperature controller binding")}</p>
+          </div>
+          <button aria-label={t("Cancel")} className="iconButton" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+        <ol className="wizardStepList">
+          {HARDWARE_SETUP_STEPS.map((step, index) => (
+            <li className={index === activeStep ? "active" : index < activeStep ? "complete" : ""} key={step}>
+              <button onClick={() => setActiveStep(index)} type="button">
+                <span>{index + 1}</span>
+                {t(step)}
+              </button>
+            </li>
+          ))}
+        </ol>
+        {error ? <div className="inlineError">{error}</div> : null}
+        {loadingWizard ? <div className="statusBlock">{t("Scanning")}</div> : null}
+        <div className="wizardBody">
+          {activeStep === 0 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Environment check")}</h3>
+              <HardwareCheckList checks={environment?.checks ?? []} />
+              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshEnvironmentChecks} type="button">
+                <RefreshCcw size={16} aria-hidden="true" />
+                {t("Refresh checks")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 1 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Scan camera")}</h3>
+              <div className="wizardDeviceList">
+                {cameras.map((camera) => (
+                  <label className={camera.is_supported_model ? "wizardDeviceOption" : "wizardDeviceOption warning"} key={hardwareCameraKey(camera)}>
+                    <input
+                      checked={hardwareCameraKey(camera) === selectedCameraKey}
+                      disabled={!camera.is_supported_model}
+                      onChange={() => setSelectedCameraKey(hardwareCameraKey(camera))}
+                      type="radio"
+                    />
+                    <span>
+                      <strong>{camera.model || t("Unknown camera")}</strong>
+                      <small>
+                        {camera.serial_number || t("No serial")} · {camera.ip || camera.transport || t("None")}
+                      </small>
+                      {camera.user_defined_name ? <small>{camera.user_defined_name}</small> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {!cameras.length ? <div className="statusBlock">{t("No Hik cameras found")}</div> : null}
+              {cameras.length > 1 && !selectedCamera ? <div className="inlineWarning">{t("Select one camera to continue")}</div> : null}
+              {cameraTestResult ? <HardwareCameraTestResult result={cameraTestResult} /> : null}
+              <button className="primaryButton" disabled={!selectedCamera || testingCamera} onClick={runCameraTest} type="button">
+                <Camera size={16} aria-hidden="true" />
+                {testingCamera ? t("Testing") : t("Test camera")}
+              </button>
+              <button className="secondaryButton" disabled={loadingWizard} onClick={scanHardwareCameras} type="button">
+                <Camera size={16} aria-hidden="true" />
+                {t("Scan camera")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 2 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Select temperature controller")}</h3>
+              <label className="field">
+                <span>{t("Temperature serial port")}</span>
+                <select onChange={(event) => setSelectedPort(event.target.value)} value={selectedPort}>
+                  <option value="">{t("Select serial port")}</option>
+                  {ports.map((port) => (
+                    <option key={port.device || port.name} value={port.device}>
+                      {port.device || port.name} {port.description ? `· ${port.description}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!ports.length ? <div className="statusBlock">{t("No serial ports found")}</div> : null}
+              {temperatureTestResult ? <HardwareTemperatureTestResult result={temperatureTestResult} /> : null}
+              <button className="primaryButton" disabled={!selectedPort || testingTemperature} onClick={runTemperatureTest} type="button">
+                <Usb size={16} aria-hidden="true" />
+                {testingTemperature ? t("Testing") : t("Test temperature")}
+              </button>
+              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshTemperaturePorts} type="button">
+                <Usb size={16} aria-hidden="true" />
+                {t("Refresh ports")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 3 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Test binding")}</h3>
+              <HardwareBindingSummary camera={selectedCamera} serialPort={selectedPort} />
+              {testResult ? <HardwareTestResult result={testResult} /> : null}
+              <button className="primaryButton" disabled={!binding || testingBinding} onClick={runBindingTest} type="button">
+                <Activity size={16} aria-hidden="true" />
+                {testingBinding ? t("Testing") : t("Test binding")}
+              </button>
+            </section>
+          ) : null}
+          {activeStep === 4 ? (
+            <section className="wizardStepPanel">
+              <h3>{t("Save configuration")}</h3>
+              <HardwareBindingSummary camera={selectedCamera} serialPort={selectedPort} />
+              {saveResult ? (
+                <div className={saveResult.real_hardware_available === false ? "inlineWarning" : "inlineSuccess"}>
+                  {saveResult.real_hardware_available === false
+                    ? t("Configuration saved but hardware unavailable")
+                    : t("Real camera + real temperature controller")}
+                  : {saveResult.config_path}
+                </div>
+              ) : null}
+              <div className="buttonPair">
+                <button className="primaryButton" disabled={!binding || testResult?.overall_status !== "passed" || savingBinding} onClick={saveBinding} type="button">
+                  <Settings size={16} aria-hidden="true" />
+                  {savingBinding ? t("Saving") : t("Save configuration")}
+                </button>
+                <button className="secondaryButton" onClick={onClose} type="button">
+                  {t("Finish")}
+                </button>
+              </div>
+            </section>
+          ) : null}
+        </div>
+        <footer className="wizardFooter">
+          <button className="secondaryButton" disabled={activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))} type="button">
+            {t("Back")}
+          </button>
+          <button
+            className="secondaryButton"
+            disabled={activeStep >= HARDWARE_SETUP_STEPS.length - 1 || !canAdvance}
+            onClick={() => setActiveStep((step) => Math.min(HARDWARE_SETUP_STEPS.length - 1, step + 1))}
+            type="button"
+          >
+            {t("Next")}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function HardwareCheckList({ checks }: { checks: HardwareSetupEnvironment["checks"] }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  if (!checks.length) return <div className="statusBlock">{t("No checks available")}</div>;
+  return (
+    <div className="hardwareCheckList">
+      {checks.map((check) => (
+        <article className={check.status === "passed" ? "hardwareCheck passed" : "hardwareCheck failed"} key={check.id}>
+          <div>
+            <strong>{t(check.label)}</strong>
+            <span>{t(check.status)}</span>
+          </div>
+          <p>{localizeDisplayString(check.message, language)}</p>
+          {check.suggestion ? <small>{localizeDisplayString(check.suggestion, language)}</small> : null}
+          <HardwareCheckDetails details={check.details} />
+        </article>
+      ))}
+    </div>
+  );
+}
+
+const HARDWARE_CHECK_DETAIL_FIELDS: Array<[string, string]> = [
+  ["current_sdk_python_paths", "Current SDK Python path"],
+  ["current_sdk_python_path_env", "Current SDK Python path env"],
+  ["current_mvs_dynamic_library_path", "Current MVS dynamic library path"],
+  ["current_mvs_dynamic_library_path_env", "Current MVS dynamic library path env"],
+  ["suggested_sdk_python_paths", "Suggested SDK Python path"],
+  ["suggested_mvs_dynamic_library_paths", "Suggested MVS dynamic library path"],
+  ["windows_sdk_library_dir", "Windows SDK library dir"],
+  ["fix_instructions", "Fix instructions"]
+];
+
+function HardwareCheckDetails({ details }: { details: Record<string, unknown> }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const rows = HARDWARE_CHECK_DETAIL_FIELDS.map(([key, label]) => ({
+    key,
+    label,
+    value: details[key]
+  })).filter((row) => hasHardwareCheckDetailValue(row.value));
+  if (!rows.length) return null;
+  return (
+    <details className="hardwareCheckDetails">
+      <summary>{t("SDK path details")}</summary>
+      <dl>
+        {rows.map((row) => (
+          <div key={row.key}>
+            <dt>{t(row.label)}</dt>
+            <dd>{formatHardwareCheckDetailValue(row.value, language, t)}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+function hasHardwareCheckDetailValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function formatHardwareCheckDetailValue(value: unknown, language: UiLanguage, t: (key: string) => string): string {
+  if (Array.isArray(value)) {
+    return value.length ? value.map((item) => localizeDisplayString(String(item), language)).join("; ") : t("Not configured");
+  }
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  const text = String(value ?? "").trim();
+  return text ? localizeDisplayString(text, language) : t("Not configured");
+}
+
+function HardwareCameraTestResult({ result }: { result: HardwareCameraTestResponse }) {
+  const t = useUiText();
+  return (
+    <div className={result.status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+      <strong>{t(result.status === "passed" ? "Camera test passed" : "Camera test failed")}</strong>
+      {result.error ? <span>{result.error}</span> : null}
+      {result.preview_image_data_url ? (
+        <img alt={t("Camera preview")} className="devicePreviewImage" src={result.preview_image_data_url} />
+      ) : null}
+    </div>
+  );
+}
+
+function HardwareTemperatureTestResult({ result }: { result: HardwareTemperatureTestResponse }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const temperature =
+    result.temperature_celsius == null || !Number.isFinite(result.temperature_celsius)
+      ? t("None")
+      : formatTemperatureValue(result.temperature_celsius, language);
+  return (
+    <div className={result.status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+      <strong>{t(result.status === "passed" ? "Temperature test passed" : "Temperature test failed")}</strong>
+      {result.error ? <span>{result.error}</span> : <span>{temperature}</span>}
+    </div>
+  );
+}
+
+function HardwareBindingSummary({
+  camera,
+  serialPort
+}: {
+  camera: HardwareCameraDevice | null;
+  serialPort: string;
+}) {
+  const t = useUiText();
+  return (
+    <dl className="metricGrid compact">
+      <Metric label="Camera" value={camera ? `${camera.model || "Unknown camera"} / ${camera.serial_number || "No serial"}` : "None"} />
+      <Metric label="ip" value={camera?.ip || "None"} />
+      <Metric label="Temperature serial port" value={serialPort || "None"} />
+      <Metric label="Source" value={t("Real camera + real temperature controller")} />
+    </dl>
+  );
+}
+
+function HardwareTestResult({ result }: { result: HardwareBindingTestResponse }) {
+  const t = useUiText();
+  return (
+    <div className={result.overall_status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+      <strong>{t(result.overall_status === "passed" ? "Binding test passed" : "Binding test failed")}</strong>
+      <span>{t("Camera")}: {result.camera.message}</span>
+      <span>{t("Temperature")}: {result.temperature.message}</span>
+    </div>
+  );
+}
+
+function hardwareCameraKey(camera: HardwareCameraDevice | null | undefined): string {
+  if (!camera) return "";
+  return [camera.backend, camera.transport, camera.model, camera.serial_number, camera.ip].join("|");
+}
+
+function selectDefaultHardwareCamera(cameras: HardwareCameraDevice[]): HardwareCameraDevice | null {
+  const supported = cameras.filter((camera) => camera.is_supported_model);
+  if (supported.length === 1) return supported[0];
+  return null;
+}
+
 function RealHardwareUnavailableCard({
   loading,
+  lastCheckedAt,
   sourceStatus,
-  statusError
+  statusError,
+  onRecheck,
+  onOpenDeviceSetup
 }: {
   loading: boolean;
+  lastCheckedAt: number | null;
   sourceStatus: OperatorSourceStatus | null;
   statusError: string;
+  onRecheck?: () => void;
+  onOpenDeviceSetup?: () => void;
 }) {
+  const language = useUiLanguage();
   const t = useUiText();
   return (
     <section className="operatorHardwareErrorCard" aria-live="polite">
       <h3>{t("Real hardware unavailable")}</h3>
-      <p>{loading ? t("Checking real hardware") : t("Real hardware unavailable guidance")}</p>
+      <p>{t("Real camera is unavailable. Check the device connection or open device setup.")}</p>
+      <p>{t("Device binding incomplete guidance")}</p>
+      <div className="operatorHardwareMeta">
+        <span>{t("Last checked")}: {formatOperatorLastCheckedAt(lastCheckedAt, language)}</span>
+        {loading ? <span>{t("Rechecking")}...</span> : null}
+      </div>
       {statusError ? <div className="inlineError">{statusError}</div> : null}
       {sourceStatus?.errors.length ? (
         <ul className="operatorWarningList compactList">
@@ -2435,6 +3117,20 @@ function RealHardwareUnavailableCard({
           ))}
         </ul>
       ) : null}
+      <div className="buttonPair">
+        {onRecheck ? (
+          <button className="secondaryButton" disabled={loading} onClick={onRecheck} type="button">
+            <RefreshCcw size={16} aria-hidden="true" />
+            {loading ? t("Rechecking") : t("Recheck")}
+          </button>
+        ) : null}
+        {onOpenDeviceSetup ? (
+          <button className="secondaryButton" onClick={onOpenDeviceSetup} type="button">
+            <Settings size={16} aria-hidden="true" />
+            {t("Open device setup")}
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -2447,6 +3143,7 @@ function OperatorTemperaturePanel({
   temperatureError,
   checkingTemperature,
   loadingSerialPorts,
+  operatorRunActive,
   mode,
   onPatch,
   onConfirm,
@@ -2459,6 +3156,7 @@ function OperatorTemperaturePanel({
   temperatureError: SetupTemperatureError | null;
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
+  operatorRunActive: boolean;
   mode: "offline_dataset" | "real_camera_available" | "real_camera_unavailable";
   onPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onConfirm: () => void;
@@ -2468,13 +3166,20 @@ function OperatorTemperaturePanel({
   const t = useUiText();
   const simulatedMode = mode === "offline_dataset";
   const hardwareUnavailable = mode === "real_camera_unavailable";
+  const temperatureReadoutStatus = operatorRunActive
+    ? t("From live test")
+    : checkingTemperature || temperatureStatus?.temperature_status === "ok"
+      ? t("Auto refreshing")
+      : temperatureStatus?.temperature_status
+        ? uiStatus(language, temperatureStatus.temperature_status)
+        : t("Not read");
   return (
     <div className="controlStack operatorTemperaturePanel">
       <h3>{t("Temperature Control")}</h3>
       {simulatedMode || hardwareUnavailable ? (
         <div className={hardwareUnavailable ? "inlineError" : "inlineWarning"}>
           {hardwareUnavailable
-            ? t("Real hardware unavailable")
+            ? t("Temperature controller unavailable. Open device setup.")
             : t("Offline dataset mode does not connect to a real temperature controller.")}
         </div>
       ) : (
@@ -2482,7 +3187,7 @@ function OperatorTemperaturePanel({
           <div className="operatorTemperatureReadout">
             <small>{t("Current temperature")}</small>
             <span>{formatTemperatureValue(currentTemperature, language)}</span>
-            <small>{temperatureStatus?.temperature_status ? uiStatus(language, temperatureStatus.temperature_status) : t("Not read")}</small>
+            <small>{temperatureReadoutStatus}</small>
           </div>
           {temperatureError ? <div className="inlineError">{temperatureError.message}</div> : null}
         </>
@@ -2523,7 +3228,7 @@ function OperatorTemperaturePanel({
           {t("Confirm test settings")}
         </button>
         {!simulatedMode ? (
-          <button className="secondaryButton" disabled={loadingSerialPorts || hardwareUnavailable} onClick={onRefreshSerialPorts} type="button">
+          <button className="secondaryButton" disabled={loadingSerialPorts} onClick={onRefreshSerialPorts} type="button">
             <Usb size={16} aria-hidden="true" />
             {loadingSerialPorts ? t("Scanning") : t("Refresh ports")}
           </button>
@@ -6362,6 +7067,35 @@ function unknownFallbackProvenance(): SourceProvenance {
     display_label_zh: "未知来源",
     display_label_en: "Unknown source"
   };
+}
+
+function operatorSourceStatusRetryDelayMs(retryCount: number): number {
+  const index = Math.min(
+    Math.max(0, retryCount),
+    OPERATOR_SOURCE_STATUS_RETRY_DELAYS_MS.length - 1
+  );
+  return OPERATOR_SOURCE_STATUS_RETRY_DELAYS_MS[index];
+}
+
+function sameOperatorSourceStatus(
+  previous: OperatorSourceStatus | null,
+  nextStatus: OperatorSourceStatus | null
+): boolean {
+  return JSON.stringify(previous) === JSON.stringify(nextStatus);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function formatOperatorLastCheckedAt(timestampMs: number | null, language: UiLanguage): string {
+  if (timestampMs === null) return uiText(language, "Not checked");
+  return new Date(timestampMs).toLocaleTimeString(language === "zh" ? "zh-CN" : "en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
 }
 
 function createInitialLiveRun(datasetId: string, startFrame: number, frameCount: number): LiveRunState {

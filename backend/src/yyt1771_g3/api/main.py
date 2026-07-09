@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableError
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
-from yyt1771_g3.core.hardware_config import HardwareConfig, load_hardware_config
+from yyt1771_g3.core.hardware_config import HARDWARE_CONFIG_ENV, HardwareConfig, load_hardware_config
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
 from yyt1771_g3.core.models import MeasurementDefinition
@@ -43,6 +43,12 @@ from yyt1771_g3.services.live_offline_run_service import (
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.export_service import export_run, export_run_bundle
+from yyt1771_g3.services.hardware_setup_service import (
+    HardwareSetupError,
+    build_hardware_environment_report,
+    discover_hardware_cameras,
+    save_hardware_binding,
+)
 from yyt1771_g3.services.import_service import RunExportImportError, import_run_export_bytes
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
@@ -361,6 +367,28 @@ class RealCameraSetupProbeRequest(BaseModel):
 class AnalysisRecomputeRequest(BaseModel):
     afas_preprocessing_parameters: dict[str, Any] | None = None
     afas_analysis_parameters: dict[str, Any] | None = None
+
+
+class HardwareCameraBindingRequest(BaseModel):
+    backend: str = "hik_gige_mvs"
+    transport: str = "gige_vision"
+    model: str = ""
+    serial_number: str = ""
+    ip: str = ""
+    user_defined_name: str = ""
+
+
+class HardwareTemperatureBindingRequest(BaseModel):
+    backend: str = "lu92xx_modbus_rtu"
+    serial_port: str = ""
+    baudrate: int | None = None
+    slave_address: int | None = None
+
+
+class HardwareBindingRequest(BaseModel):
+    camera: HardwareCameraBindingRequest
+    temperature: HardwareTemperatureBindingRequest
+    config_path: str | None = None
 
 
 def _run_store() -> RunStore:
@@ -758,6 +786,84 @@ def get_hardware_profile() -> dict[str, Any]:
     }
 
 
+@app.get("/api/hardware/setup/environment")
+def get_hardware_setup_environment() -> dict[str, Any]:
+    return build_hardware_environment_report(_hardware_config())
+
+
+@app.get("/api/hardware/cameras")
+def get_hardware_cameras() -> list[dict[str, Any]]:
+    try:
+        return discover_hardware_cameras(_hardware_config())
+    except CameraUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "camera_status": "unavailable",
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+    except HardwareSetupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "camera_status": "unavailable",
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+
+
+@app.post("/api/hardware/cameras/test")
+def check_hardware_camera(request: HardwareCameraBindingRequest) -> dict[str, Any]:
+    return _test_bound_camera(_hardware_config(), request)
+
+
+@app.post("/api/hardware/temperature/test")
+def check_hardware_temperature(request: HardwareTemperatureBindingRequest) -> dict[str, Any]:
+    return _test_bound_temperature(_hardware_config(), request)
+
+
+@app.post("/api/hardware/binding/test")
+def check_hardware_binding(request: HardwareBindingRequest) -> dict[str, Any]:
+    config = _hardware_config()
+    camera_result = _test_bound_camera(config, request.camera)
+    temperature_result = _test_bound_temperature(config, request.temperature)
+    failed = camera_result["status"] == "failed" or temperature_result["status"] == "failed"
+    return {
+        "overall_status": "failed" if failed else "passed",
+        "camera": camera_result,
+        "temperature": temperature_result,
+    }
+
+
+@app.post("/api/hardware/binding")
+def save_hardware_binding_endpoint(request: HardwareBindingRequest) -> dict[str, Any]:
+    try:
+        result = save_hardware_binding(
+            camera=request.camera.model_dump(mode="json"),
+            temperature=request.temperature.model_dump(mode="json"),
+            path=request.config_path,
+        )
+        saved_config_path = str(result["config_path"])
+        os.environ[HARDWARE_CONFIG_ENV] = saved_config_path
+        source_status = _operator_source_status_payload(load_hardware_config(saved_config_path))
+        return {
+            **result,
+            "source_status": source_status,
+            "real_hardware_available": bool(source_status["real_hardware_available"]),
+        }
+    except HardwareSetupError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": str(exc),
+                "details": exc.details,
+            },
+        ) from exc
+
+
 @app.get("/api/temperature/serial-ports")
 def get_temperature_serial_ports() -> dict[str, Any]:
     try:
@@ -928,6 +1034,128 @@ def build_temperature_controller(config: HardwareConfig):  # noqa: ANN201
     if not config.temp.serial.port.strip():
         return None
     return LU92XXModbusRtuController(config.temp)
+
+
+def _test_bound_camera(config: HardwareConfig, camera: HardwareCameraBindingRequest) -> dict[str, Any]:
+    camera_profile = {
+        **config.camera.to_profile(),
+        **camera.model_dump(mode="json"),
+    }
+    source = None
+    try:
+        source = _build_camera_source(camera_profile)
+        frame = source.preview_frame()
+    except CameraUnavailableError as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "error": str(exc),
+            "suggestion": "Check the selected Hik camera, SDK paths, network address, and exclusive access.",
+            "preview_image_data_url": "",
+            "shape": [],
+            "camera_meta": {},
+            "details": exc.details,
+        }
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "error": str(exc),
+            "suggestion": "Check the selected camera and close other software using it.",
+            "preview_image_data_url": "",
+            "shape": [],
+            "camera_meta": {},
+            "details": {"error": str(exc)},
+        }
+    finally:
+        if source is not None:
+            try:
+                source.close()
+            except Exception:
+                pass
+    return {
+        "status": "passed",
+        "message": "Camera test frame captured.",
+        "error": "",
+        "suggestion": "",
+        "preview_image_data_url": _array_to_png_data_url(frame.array),
+        "shape": list(frame.array.shape),
+        "camera_meta": {
+            "model": str(frame.camera_meta.get("model", camera.model)),
+            "serial_number": str(frame.camera_meta.get("serial_number", camera.serial_number)),
+            "ip": str(frame.camera_meta.get("ip", camera.ip)),
+            **frame.camera_meta,
+        },
+        "details": {
+            "shape": list(frame.array.shape),
+            "timestamp_ms": frame.timestamp_ms,
+            "model": str(frame.camera_meta.get("model", camera.model)),
+            "serial_number": str(frame.camera_meta.get("serial_number", camera.serial_number)),
+            "ip": str(frame.camera_meta.get("ip", camera.ip)),
+        },
+    }
+
+
+def _test_bound_temperature(config: HardwareConfig, temperature: HardwareTemperatureBindingRequest) -> dict[str, Any]:
+    bound_config = _hardware_config_with_temperature_binding(config, temperature)
+    controller = build_temperature_controller(bound_config)
+    if controller is None:
+        return {
+            "status": "failed",
+            "message": "LU92XX temperature controller is not configured.",
+            "error": "LU92XX temperature controller is not configured.",
+            "suggestion": "Select a temperature serial port.",
+            "temperature_celsius": None,
+            "serial_port": temperature.serial_port,
+            "details": {"serial_port": temperature.serial_port},
+        }
+    try:
+        reading = controller.read_temperature()
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "error": str(exc),
+            "suggestion": "Check the temperature controller power, Modbus address, and serial-port permissions.",
+            "temperature_celsius": None,
+            "serial_port": bound_config.temp.serial.port,
+            "details": {"error": str(exc), "serial_port": temperature.serial_port},
+        }
+    finally:
+        try:
+            controller.close()
+        except Exception:
+            pass
+    return {
+        "status": "passed",
+        "message": "Temperature controller responded.",
+        "error": "",
+        "suggestion": "",
+        "temperature_celsius": reading.celsius,
+        "serial_port": bound_config.temp.serial.port,
+        "details": {
+            "timestamp_ms": reading.timestamp_ms,
+            "celsius": reading.celsius,
+            "source": reading.source,
+            "serial_port": bound_config.temp.serial.port,
+        },
+    }
+
+
+def _hardware_config_with_temperature_binding(
+    config: HardwareConfig,
+    temperature: HardwareTemperatureBindingRequest,
+) -> HardwareConfig:
+    selected_port = str(temperature.serial_port or "").strip()
+    serial = config.temp.serial
+    if selected_port:
+        serial = replace(serial, port=selected_port)
+    if temperature.baudrate is not None:
+        serial = replace(serial, baudrate=int(temperature.baudrate))
+    temp = replace(config.temp, serial=serial)
+    if temperature.slave_address is not None:
+        temp = replace(temp, slave_address=int(temperature.slave_address))
+    return replace(config, temp=temp)
 
 
 @app.post("/api/runs/{run_id}/exports")

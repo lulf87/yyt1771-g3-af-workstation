@@ -100,10 +100,366 @@
 | P-0082 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real run curves | 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run→Stop 浏览器复测通过，stream 阶段事件和 temporal mask 默认关闭已验证 |
 | P-0083 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / live run trend | 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run 中正式点从 24 增至 53，停止后保存 78 点；浏览器复测通过 |
 | P-0084 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / export / live trend | 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑 | 2026-07-08 | 2026-07-08 | Codex | Operator 简化、温控不可用守卫和工程模式保留已浏览器复测；导出弹窗完整 run 流程待真机/可完成 run 环境复测 |
+| P-0085 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-09 | Codex | 待真实浏览器复测设备设置入口、环境检查、相机扫描、温控串口选择、测试与保存流程 |
+| P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
+| P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
+| P-0088 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / export csv | 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败 | 2026-07-09 | 2026-07-09 | Codex | 后端导出 API、backend integration/unit、frontend test/build 已通过；导出下载浏览器复测待补 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0088 — 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/export_service.py`, export CSV
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+`frame_results.csv` 为新增 `detector_mode` 和距离异常过滤诊断字段后，把 `detector_mode` 插入在 `detection_status` 与 `distance_px` 之间，导致旧兼容断言 `frame_index,detection_status,distance_px` 失败。新增诊断列需要保留，但旧核心 CSV 字段顺序应尽量保持稳定。
+
+#### Expected
+
+```text
+CSV 表头前置旧核心字段：
+frame_index,detection_status,distance_px,raw_distance_px,stabilized_distance_px,result_display_source,curve_point_status,exclusion_reason,rejected_reason,temperature_celsius,temperature_sync_status,temperature_delta_ms
+
+detector_mode、contrast_threshold、raw_detected_distance_px、distance_outlier_filtered 等新增诊断字段追加在核心字段之后。
+导出导入逻辑按字段名读取，不依赖新增字段插在核心字段中间。
+```
+
+#### Resolution log
+
+- 2026-07-09: `export_service._write_csv()` 调整 fieldnames，恢复旧核心列前置顺序，将 `detector_mode`、`contrast_threshold`、`raw_detected_distance_px`、`distance_outlier_*` 等新增诊断列追加到核心列后。
+- 2026-07-09: 新增前置核心别名 `exclusion_reason`，同时保留现有 `curve_exclusion_reason` 诊断列，避免破坏近期导出导入字段。
+- 2026-07-09: `test_export_api_creates_artifacts_and_downloads_csv` 增加核心列顺序断言，并用 `csv.DictReader` 按字段名读取 `detector_mode` 和 `distance_outlier_filtered`。
+
+#### Tests run
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/integration/test_export_api.py::test_export_api_creates_artifacts_and_downloads_csv -q
+Result: PASS, 1 passed.
+
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/integration -q
+Result: PASS, 96 passed.
+
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python -m pytest backend/tests/unit -q
+Result: PASS, 103 passed.
+
+cd frontend
+npm test && npm run build
+Result: PASS, 114 frontend tests passed and Vite build completed.
+```
+
+#### Browser retest log
+
+Pending. Need browser export-download smoke retest before marking this issue `RESOLVED_BROWSER_VERIFIED`.
+
+### P-0087 — 真实温控可用且空闲时需要恢复 gated 500ms 自动读温
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/operatorTemperaturePolling.ts`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+无硬件闪烁修复后，需要确认没有把 Operator 空闲状态下的自动读温能力一起关掉。真实温控可用、实际使用模式打开、未开始实时测试时，界面仍应每 500ms 自动读取一次当前温度；但真实温控不可用、串口读取已报错、设备设置向导打开或实时测试运行中，不能继续高频打开串口。
+
+#### Expected
+
+```text
+Operator 实际使用页、真实相机数据源、真实温控可用且空闲时，每 500ms 自动读取当前温度。
+真实温控不可用或串口读取失败后，不进行 500ms 高频轮询。
+设备设置向导打开时暂停读温轮询，避免和向导测试/串口刷新互相抢资源。
+实时测试运行中不额外轮询温控，只使用 stream event 中的 temperature_celsius 更新 UI。
+停止实时测试后，如果真实温控仍可用，恢复 500ms 空闲自动读温。
+```
+
+#### Resolution log
+
+- 2026-07-09: 新增 `OPERATOR_TEMPERATURE_IDLE_POLL_MS = 500`，Operator 空闲读温 effect 使用 `setInterval` 和 `operatorTemperaturePollInFlightRef`，上一次请求未结束时不重入。
+- 2026-07-09: 轮询 gate 限定为 Operator 实际使用页、真实相机数据源、`real_temperature_available === true`、未运行实时测试、未打开设备设置向导、当前无温控错误。
+- 2026-07-09: `readCurrentTemperature` 返回成功/失败布尔值；串口缺失、访问失败或 LU92XX 无响应导致读取失败时，当前轮询 interval 立即停止，后续由 source-status 重新检查或设备设置流程恢复。
+- 2026-07-09: 温控面板保留“刷新串口列表”，不恢复“读取温度”按钮；空闲读数显示“自动刷新中”，实时测试中显示“来自实时测试”，不可用时显示“温控不可用，请打开设备设置”。
+- 2026-07-09: 后端补充 `/api/temperature/status` 串口读取失败时返回结构化 503 错误并关闭控制器的集成测试。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs
+Result: PASS, 8 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_camera_api.py -q
+Result: PASS, 24 passed.
+
+git diff --check
+Result: PASS.
+
+cd frontend
+npm test
+Result: PASS, 114 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite build.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-09
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real-real hardware profile, configured temp port `/dev/cu.usbserial-11210`
+- Page: Operator `实时测试`
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real --restart --no-open`。
+  2. 打开 `http://127.0.0.1:5176/?mode=operator`。
+  3. 确认页面稳定显示“真实硬件不可用”和温控区“温控不可用，请打开设备设置。”。
+  4. 等待 12 秒后检查浏览器请求列表。
+- Expected:
+  - 无可用真实温控串口时不进行 500ms 高频 `/api/temperature/status` 轮询。
+  - 串口打开失败后显示温控不可用，并保留“打开设备设置 / 重新检查 / 刷新串口列表”入口。
+- Actual:
+  - 页面稳定显示不可用卡片，检测当前帧和开始实时测试均禁用。
+  - 12 秒内仅出现一次 `/api/temperature/status` 请求，该请求因 `/dev/cu.usbserial-11210` 不存在返回 503 后未继续 500ms 重试。
+- Result: PASS for unavailable temperature guard and no high-frequency retry. Positive 500 ms idle auto-refresh with a working LU92XX controller remains pending on-site verification because the current retest session has no available configured temperature serial port.
+- Evidence: `output/playwright/p0087_temperature_polling_unavailable_20260709.png`
+
+### P-0086 — 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/operatorTemperaturePolling.ts`, Operator actual-use UI
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+实际使用模式在未连接真实 Hik 相机和 LU92XX 温控器时，前端可能持续触发硬件状态检查、真实相机预览或温控串口读取，导致页面在 loading/error/unavailable 状态之间反复切换，表现为闪烁、黑屏、重复报错或高频扫描不存在的硬件。
+
+#### Expected
+
+```text
+Operator 页面首次进入只做一次真实硬件状态检查。
+真实硬件不可用时稳定显示“真实硬件不可用 / 请打开设备设置”。
+相机不可用时不自动请求 preview/setup-probe。
+温控不可用或串口错误时不进行 500ms 温度轮询。
+source-status 失败重试必须低频 backoff，且不能重入。
+设备设置向导打开时可扫描一次，后续刷新由用户手动触发具体步骤。
+```
+
+#### Resolution log
+
+- 2026-07-09: `source-status` 刷新增加单请求 in-flight 守卫、AbortController、5s/10s/30s 失败退避和深度相等判断；失败时不再清空旧的 `operatorSourceStatus`，只更新错误和上次检查时间。
+- 2026-07-09: Operator 温控自动轮询改为必须同时满足真实硬件可用、真实温控可用、当前无温控错误、未运行测试；无温控或串口错误时停止 500ms 轮询。
+- 2026-07-09: Operator 初始温度读取在 source-status 确认 `real_temperature_available` 前不会触碰串口；无硬件卡片增加稳定文案、上次检查时间、手动“重新检查”和“打开设备设置”入口。
+- 2026-07-09: 设备设置向导保留打开时一次性加载，但“重新检查 / 扫描相机 / 刷新串口列表”按钮分别只调用环境、相机、串口 API，避免每次按钮点击全量扫描。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs tests/hardwareSetupWizard.test.mjs
+Result: PASS, 15 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS.
+
+2026-07-09 final:
+
+cd frontend
+npm test
+Result: PASS, 114 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite build.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit/test_text_safety.py -q
+Result: PASS, 1 passed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-09
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: Operator real-real hardware profile, configured temp port `/dev/cu.usbserial-11210`
+- Page: Operator `实时测试`, `设备设置` wizard
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real --restart --no-open`。
+  2. 打开 `http://127.0.0.1:5176/?mode=operator`。
+  3. 等待页面稳定，确认显示“真实硬件不可用”和“打开设备设置 / 重新检查”，检测当前帧和开始实时测试保持禁用。
+  4. 记录初始网络请求，等待 12 秒后再次记录请求。
+  5. 打开“设备设置”向导，确认打开时只发起一次环境检查、相机扫描和串口列表请求。
+  6. 切换到“扫描相机”和“选择温控器”步骤，确认步骤切换不新增硬件请求。
+  7. 分别点击“扫描相机”、“刷新串口列表”、“重新检查”，确认只新增对应的 `/api/hardware/cameras`、`/api/temperature/serial-ports`、`/api/hardware/setup/environment` 请求。
+- Expected:
+  - 无可用真实硬件时页面稳定显示不可用卡片，不闪烁，不黑屏。
+  - 不自动请求 `/api/camera/preview` 或 setup-probe。
+  - 温控读取失败后不进入 500ms 轮询。
+  - 设备向导打开时扫描一次，手动按钮只刷新当前硬件范围。
+- Actual:
+  - 页面稳定显示“真实硬件不可用 / 真实相机不可用，请检查设备连接或打开设备设置。”，上次检查时间保持稳定，操作按钮禁用状态正确。
+  - 干净加载后的请求为 `/api/offline-datasets`、`/api/operator/source-status`、一次 `/api/temperature/status` 失败读数和 dataset summary；12 秒后请求列表未增长。
+  - 干净加载后未出现 `/api/camera/preview`、`/api/camera/setup-probe`、`/api/hardware/cameras` 或 `/api/temperature/serial-ports` 自动循环。
+  - 设备向导打开时新增 `/api/hardware/setup/environment`、`/api/hardware/cameras`、`/api/temperature/serial-ports` 各一次；步骤切换不新增请求；三个手动刷新按钮分别只新增对应 API。
+- Result: PASS
+- Evidence: `output/playwright/operator-no-hardware-stable-20260709.png`; Playwright request logs showed no request growth after 12 seconds.
+
+### P-0085 — 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/hardware_setup_service.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/api/client.ts`, `frontend/src/main.tsx`, hardware setup UI
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+当前每台新电脑、新 Hikrobot 相机和 LU92XX 温控串口都需要手动修改 `configs/local/realcamera_temp.local.yaml`，生产部署时容易选错相机、串口或 SDK 路径，也不适合操作者独立完成首次安装。
+
+#### Expected
+
+```text
+实际使用模式提供“设备设置 / 首次安装向导 / 相机与温控绑定”入口。
+真实硬件不可用时提示“未完成设备绑定，请打开设备设置选择相机和温控串口。”
+向导包含环境检查、扫描相机、选择温控串口、测试绑定、保存配置五步。
+后端提供环境检查、Hik 相机扫描、绑定测试和保存绑定 API。
+保存配置只 patch 当前硬件 YAML 的设备绑定字段，不改检测算法或 AFAS 数学逻辑。
+```
+
+#### Resolution log
+
+- 2026-07-09: 新增 `hardware_setup_service`，提供后端运行、Hik MVS SDK import、MVS 动态库路径、OS/Python 位数和温控串口读取检查。
+- 2026-07-09: 新增 `/api/hardware/setup/environment`、`/api/hardware/cameras`、`/api/hardware/binding/test`、`/api/hardware/binding`；相机扫描复用 Hik MVS lazy import，保存绑定 patch 当前 `YYT1771_G3_HARDWARE_CONFIG` 指向的 YAML。
+- 2026-07-09: 前端新增顶部“设备设置”入口和真实硬件不可用卡片中的“打开设备设置”；向导分 5 步完成环境检查、相机选择、温控串口选择、测试和保存。
+- 2026-07-09: 新增前后端自动化测试覆盖硬件环境检查、相机扫描响应、绑定测试、YAML patch 保存、前端 API client 和向导入口。
+- 2026-07-09: PR #6 收尾补充 hidden Unicode 扫描测试和 GitHub Actions CI workflow，避免 PR 页面 hidden/bidirectional Unicode 警告和 Checks 0。
+- 2026-07-09: 保存绑定默认改为写入 `configs/local/realcamera_temp.local.yaml`，显式 example/template config 路径会拒绝写入并提示使用 local profile；保存成功后返回并刷新 `source_status` / `real_hardware_available`。
+- 2026-07-09: 新增 `/api/hardware/cameras/test` 和 `/api/hardware/temperature/test` 单设备测试 API；前端向导在相机步骤测试预览图，在温控步骤测试温度读数，最终保存前仍保留综合绑定测试。
+- 2026-07-09: 前端相机选择规则改为 0 台显示“未发现 Hik 相机”且禁用下一步，1 台支持相机可预选但需测试，多台相机必须用户手动选择；不再静默选择第一台。
+- 2026-07-09: 新增 `docs/production_setup.md`，说明新电脑首次绑定、按序列号绑定、更换相机/USB 串口后重新绑定、本地 YAML 不提交 Git，以及 example YAML 不应手动修改。
+- 2026-07-09: 二次收尾确认远端 PR diff 中 forbidden hidden Unicode 和额外 control/format 隐形字符计数均为 0；强化文本安全测试，扫描 Git tracked 相关文本文件并拒绝 UTF-8 BOM、bidi/control/format 隐形字符。
+- 2026-07-09: example/template 配置保存错误改为中文提示“不能把设备绑定保存到 example 配置，请使用 configs/local/realcamera_temp.local.yaml。”；后端环境检查在 SDK 缺失时返回当前 SDK Python path、当前 MVS 动态库路径、建议路径、Windows library dir 和修复说明，前端以折叠详情显示。
+- 2026-07-09: 增加回归测试覆盖无 profile 时多相机发现不预选第一台、温控 Modbus 超时失败、SDK 缺失 details 和前端环境检查 details 渲染。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py -q
+Result: PASS, 4 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py backend/tests/integration/test_camera_api.py backend/tests/integration/test_real_camera_run_service.py backend/tests/unit/test_hardware_config.py backend/tests/unit/test_camera_lazy_import.py backend/tests/unit/test_lu92xx_modbus.py backend/tests/unit/test_simulated_temperature.py -q
+Result: PASS, 59 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+cd frontend
+npm test
+Result: PASS, 107 passed.
+
+2026-07-09 follow-up:
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py backend/tests/unit/test_text_safety.py -q
+Result: PASS, 13 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit -q
+Result: PASS, 103 passed.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_hardware_setup_api.py -q
+Result: PASS, 12 passed.
+
+cd frontend
+node --test tests/hardwareSetupWizard.test.mjs tests/apiClientUrls.test.mjs
+Result: PASS, 26 passed.
+
+cd frontend
+npm test
+Result: PASS, 111 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite build.
+
+git diff --check
+Result: PASS.
+
+Local and remote PR diff hidden/control Unicode scans
+Result: PASS, 0 forbidden / 0 other hidden-control findings.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-09
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real-real hardware profile (`hik_gige_mvs` + `lu92xx_modbus_rtu`, configured port `/dev/cu.usbserial-1210`)
+- Page: Operator `实时测试`, `设备设置` wizard
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real --restart --no-open`，确认 backend `http://127.0.0.1:8022` 和 frontend `http://127.0.0.1:5176/` 可访问。
+  2. 打开 `http://127.0.0.1:5176/?mode=operator`。
+  3. 确认真实硬件不可用时显示“未完成设备绑定，请打开设备设置选择相机和温控串口。”，且“检测当前帧”和“开始实时测试”禁用。
+  4. 点击顶部“设备设置”入口，打开“设备设置 / 相机与温控绑定”弹窗。
+  5. 检查 5 步向导：环境检查、扫描相机、选择温控器、测试绑定、保存配置。
+  6. 等待环境检查返回，确认后端、OS、Python 位数、`MvCameraControl_class`、MVS 动态库路径和温控串口列表显示检查结果。
+  7. 进入“扫描相机”，确认无可发现相机时显示“未发现相机”，且下一步禁用。
+  8. 直接进入“选择温控器”，确认串口列表可读，并包含 `/dev/cu.usbserial-1210 · configured` 占位项。
+- Expected:
+  - Operator 硬件不可用提示提供“打开设备设置”。
+  - 设备设置弹窗可打开，显示 5 步向导。
+  - 环境检查和串口列表通过真实后端 API 返回。
+  - 没有可发现相机时不能继续测试/保存绑定。
+- Actual:
+  - Operator 显示设备绑定未完成提示，并禁用检测和开始实时测试。
+  - 设备设置弹窗正常打开，5 步导航完整。
+  - 环境检查中 backend、OS、Python 64-bit、Hik MVS Python binding、MVS 动态库路径和温控串口列表均显示“通过”。
+  - 相机扫描未发现相机；温控串口列表可读，显示 `/dev/cu.usbserial-1210 · configured`。未执行绑定测试或保存，避免在无可发现相机情况下写入本机硬件 YAML。
+- Result: PASS for browser entry / environment check / unavailable guard / serial-port selection; full camera binding test and save remain BLOCKED by no discoverable Hik camera in current retest session.
+- Evidence: `output/playwright/p0085_device_setup_wizard_20260709.png`
+- Fresh PR retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, confirmed the Operator unavailable guard, five-step wizard, environment checks, no-camera disabled next button, and serial-port list including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_wizard_fresh_20260709.png`. Full camera binding test/save remains blocked by no discoverable Hik camera.
+- PR follow-up retest 2026-07-09: reopened the same operator URL in Playwright headed Chromium, confirmed the hardware-unavailable card still says “未完成设备绑定，请打开设备设置选择相机和温控串口。”, the camera step shows “未发现 Hik 相机”, `测试相机` and `下一步` are disabled, and the temperature step independently lists serial ports including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_no_camera_followup_20260709.png`. Did not run save in this no-camera session; full real camera binding save remains pending on-site verification.
+- SDK guidance follow-up retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, opened `设备设置`, expanded `SDK 路径详情`, and confirmed current SDK Python path, current MVS dynamic library path, suggested SDK Python paths, suggested MVS library paths, Windows SDK library dir, and fix instructions are displayed. Then entered camera scan and confirmed `未发现 Hik 相机`, disabled `测试相机`, and disabled `下一步`. Evidence: `output/playwright/p0085_device_setup_sdk_details_followup_20260709.png`. Full real camera binding test/save remains pending on-site verification.
+
+#### Production setup smoke checklist
+
+```text
+[x] No-camera flow: environment check shows SDK/backend/serial state.
+[x] No-camera flow: camera scan is empty and next is disabled.
+[ ] Real-camera flow: camera list shows model / serial number / IP.
+[ ] Real-camera flow: operator selects camera and camera test shows preview image.
+[ ] Temperature flow: serial ports list, selected port reads temperature successfully.
+[ ] Save flow: writes configs/local/realcamera_temp.local.yaml and reloads source-status.
+[ ] Operator flow: after full real hardware binding, actual-use mode can start real camera test.
+```
+
+真实相机完整绑定保存仍待现场验证。
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
 
 ### P-0084 — 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑
 

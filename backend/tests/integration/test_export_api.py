@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import zipfile
 
@@ -46,6 +47,27 @@ def test_export_api_creates_artifacts_and_downloads_csv(tmp_path, monkeypatch) -
     assert download.status_code == 200
     assert download.headers["content-type"].startswith("text/csv")
     assert "frame_index,detection_status,distance_px" in download.text
+    reader = csv.DictReader(io.StringIO(download.text))
+    assert reader.fieldnames is not None
+    assert reader.fieldnames[:12] == [
+        "frame_index",
+        "detection_status",
+        "distance_px",
+        "raw_distance_px",
+        "stabilized_distance_px",
+        "result_display_source",
+        "curve_point_status",
+        "exclusion_reason",
+        "rejected_reason",
+        "temperature_celsius",
+        "temperature_sync_status",
+        "temperature_delta_ms",
+    ]
+    rows = list(reader)
+    assert rows
+    assert "detector_mode" in rows[0]
+    assert rows[0]["detector_mode"] == "default"
+    assert "distance_outlier_filtered" in rows[0]
 
 
 def test_export_api_downloads_nonempty_zip_bundle_when_afas_unavailable(tmp_path, monkeypatch) -> None:  # noqa: ANN001
