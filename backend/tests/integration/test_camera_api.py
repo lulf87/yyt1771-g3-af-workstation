@@ -743,6 +743,28 @@ def test_temperature_status_endpoint_uses_selected_serial_port(monkeypatch, tmp_
     assert controller.closed is True
 
 
+def test_temperature_status_endpoint_returns_structured_serial_error(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+
+    class FailingTemperatureController(FakeApiTemperatureController):
+        def read_temperature(self) -> TemperatureReading:
+            raise RuntimeError("serial port not found")
+
+    controller = FailingTemperatureController()
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: controller)
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/temperature/status", params={"port": "/dev/missing-temp"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "temperature_status": "unavailable",
+        "message": "serial port not found",
+    }
+    assert controller.closed is True
+
+
 def test_temperature_serial_ports_endpoint_returns_discovered_ports(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.temperature.serial_ports import SerialPortInfo

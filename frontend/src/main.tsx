@@ -197,7 +197,7 @@ import {
   writeBlobToDirectory
 } from "./exportSaveTarget";
 import {
-  OPERATOR_TEMPERATURE_POLL_INTERVAL_MS,
+  OPERATOR_TEMPERATURE_IDLE_POLL_MS,
   shouldAutoPollOperatorTemperature
 } from "./operatorTemperaturePolling";
 import {
@@ -646,6 +646,7 @@ function App() {
   const operatorSourceStatusAbortRef = useRef<AbortController | null>(null);
   const operatorSourceStatusRetryTimerRef = useRef<number | null>(null);
   const operatorSourceStatusRetryCountRef = useRef(0);
+  const operatorTemperaturePollInFlightRef = useRef(false);
   const measurementRef = useRef<MeasurementDefinition | null>(null);
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
@@ -753,40 +754,48 @@ function App() {
       uiMode,
       page,
       operatorDataSource,
-      realHardwareAvailable: operatorSourceRealHardwareAvailable,
       realTemperatureAvailable: operatorSourceStatus?.real_temperature_available === true,
       hasTemperatureError: operatorTemperatureHardwareUnavailable,
       runningCamera,
-      runningOffline: running
+      runningOffline: running,
+      hardwareSetupWizardOpen: deviceSetupOpen
     })) {
       return;
     }
     let cancelled = false;
-    let timer: number | null = null;
-    const pollTemperature = async () => {
-      await readCurrentTemperature({
-        quiet: true,
-        port: operatorSettings?.serialPort ?? measurementRef.current?.detector_config.temperature_serial_port
-      });
+    let id: number | null = null;
+    async function tick() {
       if (cancelled) return;
-      timer = window.setTimeout(() => {
-        void pollTemperature();
-      }, OPERATOR_TEMPERATURE_POLL_INTERVAL_MS);
-    };
-    void pollTemperature();
+      if (operatorTemperaturePollInFlightRef.current) return;
+      operatorTemperaturePollInFlightRef.current = true;
+      try {
+        const ok = await readCurrentTemperature({
+          quiet: true,
+          port: operatorSettings?.serialPort ?? measurementRef.current?.detector_config.temperature_serial_port
+        });
+        if (!ok && !cancelled) {
+          cancelled = true;
+          if (id !== null) window.clearInterval(id);
+        }
+      } finally {
+        operatorTemperaturePollInFlightRef.current = false;
+      }
+    }
+    void tick();
+    id = window.setInterval(tick, OPERATOR_TEMPERATURE_IDLE_POLL_MS);
     return () => {
       cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
+      if (id !== null) window.clearInterval(id);
     };
   }, [
     uiMode,
     page,
     operatorDataSource,
-    operatorSourceRealHardwareAvailable,
     operatorSourceStatus?.real_temperature_available,
     operatorTemperatureHardwareUnavailable,
     runningCamera,
     running,
+    deviceSetupOpen,
     operatorSettings?.serialPort
   ]);
 
@@ -1384,13 +1393,13 @@ function App() {
     setCameraPreviewState((current) => confirmPreviewRoi(current, measurementRef.current?.roi ?? null));
   }
 
-  async function readCurrentTemperature(options: { quiet?: boolean; port?: string | null } = {}) {
+  async function readCurrentTemperature(options: { quiet?: boolean; port?: string | null } = {}): Promise<boolean> {
     if (
       uiMode === "operator" &&
       operatorDataSource === "real_camera" &&
       operatorSourceStatus?.real_temperature_available !== true
     ) {
-      return;
+      return false;
     }
     setCheckingTemperature(true);
     if (!options.quiet) setError("");
@@ -1401,10 +1410,12 @@ function App() {
           port: options.port ?? measurementRef.current?.detector_config.temperature_serial_port
         })
       );
+      return true;
     } catch (err) {
       if (!options.quiet) setError(err instanceof Error ? err.message : String(err));
       setTemperatureError(temperatureErrorFromUnknown(err));
       setTemperatureStatus(null);
+      return false;
     } finally {
       setCheckingTemperature(false);
     }
@@ -2317,6 +2328,7 @@ function OperatorRunPage({
           temperatureError={temperatureError}
           checkingTemperature={checkingTemperature}
           loadingSerialPorts={loadingSerialPorts}
+          operatorRunActive={operatorRunActive}
           mode={realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
           onPatch={onOperatorSettingsPatch}
           onConfirm={onOperatorSettingsConfirm}
@@ -3131,6 +3143,7 @@ function OperatorTemperaturePanel({
   temperatureError,
   checkingTemperature,
   loadingSerialPorts,
+  operatorRunActive,
   mode,
   onPatch,
   onConfirm,
@@ -3143,6 +3156,7 @@ function OperatorTemperaturePanel({
   temperatureError: SetupTemperatureError | null;
   checkingTemperature: boolean;
   loadingSerialPorts: boolean;
+  operatorRunActive: boolean;
   mode: "offline_dataset" | "real_camera_available" | "real_camera_unavailable";
   onPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onConfirm: () => void;
@@ -3152,13 +3166,20 @@ function OperatorTemperaturePanel({
   const t = useUiText();
   const simulatedMode = mode === "offline_dataset";
   const hardwareUnavailable = mode === "real_camera_unavailable";
+  const temperatureReadoutStatus = operatorRunActive
+    ? t("From live test")
+    : checkingTemperature || temperatureStatus?.temperature_status === "ok"
+      ? t("Auto refreshing")
+      : temperatureStatus?.temperature_status
+        ? uiStatus(language, temperatureStatus.temperature_status)
+        : t("Not read");
   return (
     <div className="controlStack operatorTemperaturePanel">
       <h3>{t("Temperature Control")}</h3>
       {simulatedMode || hardwareUnavailable ? (
         <div className={hardwareUnavailable ? "inlineError" : "inlineWarning"}>
           {hardwareUnavailable
-            ? t("Real hardware unavailable")
+            ? t("Temperature controller unavailable. Open device setup.")
             : t("Offline dataset mode does not connect to a real temperature controller.")}
         </div>
       ) : (
@@ -3166,7 +3187,7 @@ function OperatorTemperaturePanel({
           <div className="operatorTemperatureReadout">
             <small>{t("Current temperature")}</small>
             <span>{formatTemperatureValue(currentTemperature, language)}</span>
-            <small>{temperatureStatus?.temperature_status ? uiStatus(language, temperatureStatus.temperature_status) : t("Not read")}</small>
+            <small>{temperatureReadoutStatus}</small>
           </div>
           {temperatureError ? <div className="inlineError">{temperatureError.message}</div> : null}
         </>

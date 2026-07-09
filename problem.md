@@ -102,10 +102,90 @@
 | P-0084 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / export / live trend | 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑 | 2026-07-08 | 2026-07-08 | Codex | Operator 简化、温控不可用守卫和工程模式保留已浏览器复测；导出弹窗完整 run 流程待真机/可完成 run 环境复测 |
 | P-0085 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-09 | Codex | 待真实浏览器复测设备设置入口、环境检查、相机扫描、温控串口选择、测试与保存流程 |
 | P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
+| P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0087 — 真实温控可用且空闲时需要恢复 gated 500ms 自动读温
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/operatorTemperaturePolling.ts`, `backend/src/yyt1771_g3/api/main.py`
+- Found date: 2026-07-09
+- Last update: 2026-07-09
+
+#### Problem
+
+无硬件闪烁修复后，需要确认没有把 Operator 空闲状态下的自动读温能力一起关掉。真实温控可用、实际使用模式打开、未开始实时测试时，界面仍应每 500ms 自动读取一次当前温度；但真实温控不可用、串口读取已报错、设备设置向导打开或实时测试运行中，不能继续高频打开串口。
+
+#### Expected
+
+```text
+Operator 实际使用页、真实相机数据源、真实温控可用且空闲时，每 500ms 自动读取当前温度。
+真实温控不可用或串口读取失败后，不进行 500ms 高频轮询。
+设备设置向导打开时暂停读温轮询，避免和向导测试/串口刷新互相抢资源。
+实时测试运行中不额外轮询温控，只使用 stream event 中的 temperature_celsius 更新 UI。
+停止实时测试后，如果真实温控仍可用，恢复 500ms 空闲自动读温。
+```
+
+#### Resolution log
+
+- 2026-07-09: 新增 `OPERATOR_TEMPERATURE_IDLE_POLL_MS = 500`，Operator 空闲读温 effect 使用 `setInterval` 和 `operatorTemperaturePollInFlightRef`，上一次请求未结束时不重入。
+- 2026-07-09: 轮询 gate 限定为 Operator 实际使用页、真实相机数据源、`real_temperature_available === true`、未运行实时测试、未打开设备设置向导、当前无温控错误。
+- 2026-07-09: `readCurrentTemperature` 返回成功/失败布尔值；串口缺失、访问失败或 LU92XX 无响应导致读取失败时，当前轮询 interval 立即停止，后续由 source-status 重新检查或设备设置流程恢复。
+- 2026-07-09: 温控面板保留“刷新串口列表”，不恢复“读取温度”按钮；空闲读数显示“自动刷新中”，实时测试中显示“来自实时测试”，不可用时显示“温控不可用，请打开设备设置”。
+- 2026-07-09: 后端补充 `/api/temperature/status` 串口读取失败时返回结构化 503 错误并关闭控制器的集成测试。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs
+Result: PASS, 8 passed.
+
+cd frontend
+./node_modules/.bin/tsc --noEmit
+Result: PASS, exit 0.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/integration/test_camera_api.py -q
+Result: PASS, 24 passed.
+
+git diff --check
+Result: PASS.
+
+cd frontend
+npm test
+Result: PASS, 114 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite build.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-09
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: real-real hardware profile, configured temp port `/dev/cu.usbserial-11210`
+- Page: Operator `实时测试`
+- Steps:
+  1. 运行 `scripts/g3_fast_start.sh real-real --restart --no-open`。
+  2. 打开 `http://127.0.0.1:5176/?mode=operator`。
+  3. 确认页面稳定显示“真实硬件不可用”和温控区“温控不可用，请打开设备设置。”。
+  4. 等待 12 秒后检查浏览器请求列表。
+- Expected:
+  - 无可用真实温控串口时不进行 500ms 高频 `/api/temperature/status` 轮询。
+  - 串口打开失败后显示温控不可用，并保留“打开设备设置 / 重新检查 / 刷新串口列表”入口。
+- Actual:
+  - 页面稳定显示不可用卡片，检测当前帧和开始实时测试均禁用。
+  - 12 秒内仅出现一次 `/api/temperature/status` 请求，该请求因 `/dev/cu.usbserial-11210` 不存在返回 503 后未继续 500ms 重试。
+- Result: PASS for unavailable temperature guard and no high-frequency retry. Positive 500 ms idle auto-refresh with a working LU92XX controller remains pending on-site verification because the current retest session has no available configured temperature serial port.
+- Evidence: `output/playwright/p0087_temperature_polling_unavailable_20260709.png`
 
 ### P-0086 — 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁
 
