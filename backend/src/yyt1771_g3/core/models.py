@@ -18,6 +18,18 @@ from yyt1771_g3.core.enums import (
 )
 
 
+REGION_COLORS = (
+    "#ef4444",
+    "#3b82f6",
+    "#22c55e",
+    "#f59e0b",
+    "#a855f7",
+    "#06b6d4",
+)
+MIN_MEASUREMENT_REGIONS = 1
+MAX_MEASUREMENT_REGIONS = len(REGION_COLORS)
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -45,6 +57,43 @@ class RotatedROI(G3Model):
         if value <= 0:
             raise ValueError(f"{info.field_name} must be > 0")
         return value
+
+
+class MeasurementRegion(G3Model):
+    region_id: str
+    index: int
+    label: str
+    enabled: bool = True
+    roi: RotatedROI
+    color: str
+
+    @field_validator("region_id", "label")
+    @classmethod
+    def _non_empty_text(cls, value: str, info) -> str:  # noqa: ANN001
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError(f"{info.field_name} must not be empty")
+        return normalized
+
+    @field_validator("index")
+    @classmethod
+    def _positive_index(cls, value: int) -> int:
+        normalized = int(value)
+        if normalized <= 0:
+            raise ValueError("index must be > 0")
+        return normalized
+
+    @field_validator("color")
+    @classmethod
+    def _hex_color(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if len(normalized) != 7 or not normalized.startswith("#"):
+            raise ValueError("color must use #RRGGBB format")
+        try:
+            int(normalized[1:], 16)
+        except ValueError as exc:
+            raise ValueError("color must use #RRGGBB format") from exc
+        return normalized
 
 
 class DetectorConfig(G3Model):
@@ -236,8 +285,32 @@ class MeasurementDefinition(G3Model):
     detector_mode: DetectorMode = DetectorMode.DEFAULT
     width_mode: WidthMode = WidthMode.MAX_WIDTH
     measurement_coordinates: MeasurementCoordinateKind = MeasurementCoordinateKind.SOURCE_PIXEL
-    roi: RotatedROI
+    roi: RotatedROI | None = None
+    regions: list[MeasurementRegion] = Field(default_factory=list)
     detector_config: DetectorConfig = Field(default_factory=DetectorConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_roi(cls, value: Any) -> Any:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        regions = payload.get("regions")
+        roi = payload.get("roi")
+        if not regions and roi is not None:
+            payload["regions"] = [
+                {
+                    "region_id": "region_1",
+                    "index": 1,
+                    "label": "位置 1",
+                    "enabled": True,
+                    "roi": roi,
+                    "color": REGION_COLORS[0],
+                }
+            ]
+        return payload
 
     @model_validator(mode="after")
     def _validate_width_mode(self) -> "MeasurementDefinition":
@@ -246,7 +319,27 @@ class MeasurementDefinition(G3Model):
             ObjectClass.C_BUNDLE_ENVELOPE,
         } and self.width_mode != WidthMode.MAX_WIDTH:
             raise ValueError("A/C object classes only support max_width in G3 phase 1")
+
+        region_count = len(self.regions)
+        if not MIN_MEASUREMENT_REGIONS <= region_count <= MAX_MEASUREMENT_REGIONS:
+            raise ValueError(
+                f"regions count must be between {MIN_MEASUREMENT_REGIONS} and {MAX_MEASUREMENT_REGIONS}"
+            )
+        region_ids = [region.region_id for region in self.regions]
+        if len(set(region_ids)) != len(region_ids):
+            raise ValueError("region_id values must be unique")
+        region_indices = [region.index for region in self.regions]
+        if len(set(region_indices)) != len(region_indices):
+            raise ValueError("region index values must be unique")
+        enabled = self.enabled_regions
+        if not enabled:
+            raise ValueError("at least one enabled region is required")
+        object.__setattr__(self, "roi", enabled[0].roi)
         return self
+
+    @property
+    def enabled_regions(self) -> list[MeasurementRegion]:
+        return sorted((region for region in self.regions if region.enabled), key=lambda region: region.index)
 
 
 class FrameRecord(G3Model):
@@ -301,6 +394,10 @@ class DetectionQuality(G3Model):
 class DetectionResult(G3Model):
     frame_index: int
     detection_status: DetectionStatus
+    region_id: str = "region_1"
+    region_index: int = 1
+    region_label: str = "位置 1"
+    region_color: str = REGION_COLORS[0]
     ab_points: ABPoints | None = None
     measurement_segment: list[ABPoint] | None = None
     distance_px: float | None = None
@@ -376,10 +473,17 @@ class RunManifest(G3Model):
     frame_records: list[FrameRecord] = Field(default_factory=list)
     temperature_records: list[TemperatureRecord] = Field(default_factory=list)
     detection_results: list[DetectionResult] = Field(default_factory=list)
+    region_detection_results: list[DetectionResult] = Field(default_factory=list)
     export_artifacts: list[ExportArtifact] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now_iso)
     config_snapshot: dict[str, Any] = Field(default_factory=dict)
     software: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalize_region_detection_results(self) -> "RunManifest":
+        if not self.region_detection_results and self.detection_results:
+            object.__setattr__(self, "region_detection_results", list(self.detection_results))
+        return self
 
 
 class CurvePoint(G3Model):
@@ -387,6 +491,24 @@ class CurvePoint(G3Model):
     y: float
     frame_index: int
     sync_status: TemperatureSyncStatus | None = None
+
+
+class RegionAnalysisResult(G3Model):
+    region_id: str
+    region_index: int
+    region_label: str
+    color: str
+    all_frames: list[DetectionResult] = Field(default_factory=list)
+    distance_time: list[CurvePoint] = Field(default_factory=list)
+    raw_distance_time: list[CurvePoint] = Field(default_factory=list)
+    stabilized_distance_time: list[CurvePoint] = Field(default_factory=list)
+    temperature_time: list[CurvePoint] = Field(default_factory=list)
+    temperature_distance: list[CurvePoint] = Field(default_factory=list)
+    raw_temperature_distance: list[CurvePoint] = Field(default_factory=list)
+    stabilized_temperature_distance: list[CurvePoint] = Field(default_factory=list)
+    afas_preprocessing: dict[str, Any] = Field(default_factory=dict)
+    afas_analysis: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalysisResult(G3Model):
@@ -404,5 +526,48 @@ class AnalysisResult(G3Model):
     stabilized_temperature_distance: list[CurvePoint] = Field(default_factory=list)
     afas_preprocessing: dict[str, Any] = Field(default_factory=dict)
     afas_analysis: dict[str, Any] = Field(default_factory=dict)
+    regions: list[RegionAnalysisResult] = Field(default_factory=list)
     export_artifacts: list[ExportArtifact] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now_iso)
+
+    @model_validator(mode="after")
+    def _normalize_regions_and_legacy_fields(self) -> "AnalysisResult":
+        if not self.regions:
+            object.__setattr__(
+                self,
+                "regions",
+                [
+                    RegionAnalysisResult(
+                        region_id="region_1",
+                        region_index=1,
+                        region_label="位置 1",
+                        color=REGION_COLORS[0],
+                        all_frames=list(self.all_frames),
+                        distance_time=list(self.distance_time),
+                        raw_distance_time=list(self.raw_distance_time),
+                        stabilized_distance_time=list(self.stabilized_distance_time),
+                        temperature_time=list(self.temperature_time),
+                        temperature_distance=list(self.temperature_distance),
+                        raw_temperature_distance=list(self.raw_temperature_distance),
+                        stabilized_temperature_distance=list(self.stabilized_temperature_distance),
+                        afas_preprocessing=dict(self.afas_preprocessing),
+                        afas_analysis=dict(self.afas_analysis),
+                    )
+                ],
+            )
+        first = sorted(self.regions, key=lambda region: region.region_index)[0]
+        for field_name in (
+            "all_frames",
+            "distance_time",
+            "raw_distance_time",
+            "stabilized_distance_time",
+            "temperature_time",
+            "temperature_distance",
+            "raw_temperature_distance",
+            "stabilized_temperature_distance",
+            "afas_preprocessing",
+            "afas_analysis",
+        ):
+            value = getattr(first, field_name)
+            object.__setattr__(self, field_name, value.copy() if hasattr(value, "copy") else value)
+        return self
