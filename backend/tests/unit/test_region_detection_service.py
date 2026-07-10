@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 
 import numpy as np
+import pytest
 
 from yyt1771_g3.core.models import MeasurementDefinition
 
@@ -86,3 +87,28 @@ def test_detect_regions_for_frame_skips_disabled_regions() -> None:
     )
 
     assert [item.detection.region_id for item in results] == ["region_1", "region_3"]
+
+
+def test_region_local_detector_exception_does_not_stop_other_regions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = importlib.import_module("yyt1771_g3.services.region_detection_service")
+    original = service.detect_frame_with_state
+
+    def fail_middle_region(frame, measurement, **kwargs):  # noqa: ANN001
+        if measurement.regions[0].region_id == "region_2":
+            raise RuntimeError("middle region failed")
+        return original(frame, measurement, **kwargs)
+
+    monkeypatch.setattr(service, "detect_frame_with_state", fail_middle_region)
+    results, _ = service.detect_regions_for_frame(
+        _three_region_frame(),
+        _three_region_measurement(),
+        frame_index=11,
+        generate_diagnostics=False,
+    )
+
+    assert results[0].detection.detection_status == "VALID"
+    assert results[1].detection.detection_status == "INVALID"
+    assert results[1].detection.rejected_reason == "region_detection_error:RuntimeError"
+    assert results[2].detection.detection_status == "VALID"

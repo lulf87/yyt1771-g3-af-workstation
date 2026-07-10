@@ -105,6 +105,89 @@ def _fake_policy_detection(frame_index: int, mode: str, debug: dict[str, object]
     )
 
 
+def _multi_region_offline_measurement() -> MeasurementDefinition:
+    roi = RotatedROI(center_x=60.0, center_y=35.0, width=70.0, height=40.0)
+    return MeasurementDefinition.model_validate(
+        {
+            "measurement_id": "multi-region-offline-run",
+            "object_class": "A_BALLOON_ENVELOPE",
+            "detector": "BalloonEnvelopeDetector",
+            "width_mode": "max_width",
+            "roi": roi.model_dump(mode="json"),
+            "regions": [
+                {
+                    "region_id": "region_1",
+                    "index": 1,
+                    "label": "位置 1",
+                    "enabled": True,
+                    "roi": roi.model_dump(mode="json"),
+                    "color": "#ef4444",
+                },
+                {
+                    "region_id": "region_2",
+                    "index": 2,
+                    "label": "位置 2",
+                    "enabled": True,
+                    "roi": roi.model_dump(mode="json"),
+                    "color": "#3b82f6",
+                },
+            ],
+            "detector_config": {
+                "distance_outlier_filter_enabled": True,
+                "distance_outlier_reference_count": 5,
+                "distance_outlier_max_jump_px": 10.0,
+                "distance_outlier_baseline": "last",
+            },
+        }
+    )
+
+
+def test_streamed_live_offline_run_filters_each_region_independently(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
+    _write_run_dataset(dataset_root, frame_count=2)
+    config_path = tmp_path / "offline_datasets.local.json"
+    _write_registry(config_path, dataset_root)
+    registry = load_dataset_registry(config_path)
+    run_store = RunStore(tmp_path / "runs")
+    distances = {
+        "region_1": {1: 100.0, 2: 160.0},
+        "region_2": {1: 500.0, 2: 506.0},
+    }
+
+    def fake_detect(frame, measurement, *, frame_index, stability_state, generate_diagnostics, collect_temporal_artifacts=False):  # noqa: ANN001, ARG001
+        region_id = measurement.regions[0].region_id
+        return _fake_policy_detection(
+            frame_index,
+            "fast",
+            distance=distances[region_id][frame_index],
+        ), stability_state
+
+    monkeypatch.setattr(live_service, "_detect_frame_for_run", fake_detect)
+
+    events = list(
+        iter_live_offline_run_events(
+            registry,
+            run_store,
+            dataset_id="golden_run",
+            measurement=_multi_region_offline_measurement(),
+            start_frame=1,
+            max_frames=2,
+            target_fps=8.0,
+        )
+    )
+
+    frame_events = [event for event in events if event["event"] == "frame"]
+    second_by_id = {item["region_id"]: item for item in frame_events[1]["region_results"]}
+    assert second_by_id["region_1"]["curve_points"]["temperature_distance"] is None
+    assert second_by_id["region_1"]["live_point_status"]["reason_if_missing"] == "distance_outlier_filtered"
+    assert second_by_id["region_2"]["curve_points"]["temperature_distance"] is not None
+    assert second_by_id["region_2"]["live_point_status"]["temperature_distance_point_count"] == 2
+    complete = events[-1]
+    assert len(complete["run_manifest"]["detection_results"]) == 2
+    assert len(complete["run_manifest"]["region_detection_results"]) == 4
+
+
 def test_live_offline_run_filters_distance_jump_outliers_before_analysis(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     dataset_root = tmp_path / "dataset"
     dataset_root.mkdir()

@@ -194,6 +194,24 @@ def _real_camera_measurement(max_frames: int = 2) -> MeasurementDefinition:
     )
 
 
+def _multi_region_real_camera_measurement(max_frames: int = 1) -> MeasurementDefinition:
+    payload = _real_camera_measurement(max_frames=max_frames).model_dump(mode="json")
+    roi = payload["roi"]
+    colors = ["#ef4444", "#3b82f6", "#22c55e"]
+    payload["regions"] = [
+        {
+            "region_id": f"region_{index}",
+            "index": index,
+            "label": f"位置 {index}",
+            "enabled": True,
+            "roi": roi,
+            "color": colors[index - 1],
+        }
+        for index in range(1, 4)
+    ]
+    return MeasurementDefinition.model_validate(payload)
+
+
 def test_attach_temperature_honors_real_hardware_sync_tolerance() -> None:
     detection = _valid_detection()
 
@@ -222,6 +240,36 @@ def test_attach_temperature_honors_real_hardware_sync_tolerance() -> None:
     assert ten_ms_stale.temperature_delta_ms == 100.0
     assert thousand_ms_ok.temperature_sync_status == TemperatureSyncStatus.TEMP_SYNC_OK
     assert thousand_ms_ok.temperature_delta_ms == 100.0
+
+
+def test_real_camera_multi_region_frame_reads_camera_and_temperature_once(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    camera = FakeCameraSource()
+    temperature = FakeTemperatureController()
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=camera,
+            temperature_controller=temperature,
+            measurement=_multi_region_real_camera_measurement(max_frames=1),
+            max_frames=1,
+            target_fps=10.0,
+        )
+    )
+
+    frame_event = next(event for event in events if event["event"] == "frame")
+    complete = events[-1]
+    assert camera.index == 1
+    assert temperature.index == 1
+    assert [item["region_id"] for item in frame_event["region_results"]] == [
+        "region_1",
+        "region_2",
+        "region_3",
+    ]
+    assert frame_event["detection_result"] == frame_event["region_results"][0]["detection_result"]
+    assert len(complete["run_manifest"]["detection_results"]) == 1
+    assert len(complete["run_manifest"]["region_detection_results"]) == 3
 
 
 def test_real_camera_run_defaults_to_preview_without_saving_raw_frames(tmp_path: Path) -> None:

@@ -21,6 +21,12 @@ from yyt1771_g3.services.analysis_service import build_analysis_result, curve_po
 from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter, filter_detection_sequence
 from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, OfflineDatasetRegistry
+from yyt1771_g3.services.region_detection_service import (
+    RegionFrameResult,
+    create_region_runtime_state,
+    detect_regions_for_run_frame,
+    region_frame_result_payload,
+)
 from yyt1771_g3.services.run_detector_policy import (
     RunDetectorPolicyState,
     analyze_detection_suspicion,
@@ -65,6 +71,16 @@ def run_live_offline_dataset(
     max_frames: int | None = None,
     target_fps: float | None = None,
 ) -> LiveOfflineRunResult:
+    if len(measurement.enabled_regions) > 1:
+        return _run_live_offline_dataset_multi(
+            registry,
+            run_store,
+            dataset_id=dataset_id,
+            measurement=measurement,
+            start_frame=start_frame,
+            max_frames=max_frames,
+            target_fps=target_fps,
+        )
     resolved = registry.resolve_dataset(dataset_id)
     manifest_payload = registry.load_manifest(dataset_id)
     temperature_rows = registry.load_temperature_csv(dataset_id)
@@ -130,6 +146,17 @@ def iter_live_offline_run_events(
     max_frames: int | None = None,
     target_fps: float | None = None,
 ) -> Iterator[dict[str, Any]]:
+    if len(measurement.enabled_regions) > 1:
+        yield from _iter_live_offline_run_events_multi(
+            registry,
+            run_store,
+            dataset_id=dataset_id,
+            measurement=measurement,
+            start_frame=start_frame,
+            max_frames=max_frames,
+            target_fps=target_fps,
+        )
+        return
     resolved = registry.resolve_dataset(dataset_id)
     manifest_payload = registry.load_manifest(dataset_id)
     temperature_rows = registry.load_temperature_csv(dataset_id)
@@ -258,6 +285,213 @@ def iter_live_offline_run_events(
             )
 
 
+def _run_live_offline_dataset_multi(
+    registry: OfflineDatasetRegistry,
+    run_store: RunStore,
+    *,
+    dataset_id: str,
+    measurement: MeasurementDefinition,
+    start_frame: int,
+    max_frames: int | None,
+    target_fps: float | None,
+) -> LiveOfflineRunResult:
+    for event in _iter_live_offline_run_events_multi(
+        registry,
+        run_store,
+        dataset_id=dataset_id,
+        measurement=measurement,
+        start_frame=start_frame,
+        max_frames=max_frames,
+        target_fps=target_fps,
+    ):
+        if event.get("event") == "complete":
+            return LiveOfflineRunResult(
+                manifest=RunManifest.model_validate(event["run_manifest"]),
+                analysis=AnalysisResult.model_validate(event["analysis_result"]),
+            )
+    raise OfflineDatasetError("multi-region offline run ended without a complete event")
+
+
+def _iter_live_offline_run_events_multi(
+    registry: OfflineDatasetRegistry,
+    run_store: RunStore,
+    *,
+    dataset_id: str,
+    measurement: MeasurementDefinition,
+    start_frame: int,
+    max_frames: int | None,
+    target_fps: float | None,
+) -> Iterator[dict[str, Any]]:
+    resolved = registry.resolve_dataset(dataset_id)
+    manifest_payload = registry.load_manifest(dataset_id)
+    temperature_rows = registry.load_temperature_csv(dataset_id)
+    window = _resolve_frame_window(resolved.frame_count, start_frame, max_frames)
+    run_id = _new_run_id(dataset_id)
+    provenance = offline_dataset_provenance(dataset_id)
+    runtime_state = create_region_runtime_state(
+        measurement,
+        temporal_artifact_root=_temporal_mask_artifact_dir(measurement, run_store.run_dir(run_id)),
+    )
+    frame_records: list[FrameRecord] = []
+    temperature_records: list[TemperatureRecord] = []
+    detection_results: list[DetectionResult] = []
+    region_detection_results: list[DetectionResult] = []
+    saved_result: LiveOfflineRunResult | None = None
+    stop_reason = "complete"
+
+    try:
+        for processed, frame_index in enumerate(range(window.start_frame, window.end_frame + 1), start=1):
+            frame = registry.load_frame(dataset_id, frame_index)
+            frame_meta = _frame_meta(manifest_payload, frame_index)
+            frame_timestamp_ms = _int_or_none(frame_meta.get("timestamp_ms"))
+            synced = sync_temperature_for_frame(frame_index, frame_timestamp_ms, temperature_rows)
+            frame_record = FrameRecord(
+                frame_index=frame_index,
+                frame_path=str(frame_meta.get("npy", frame.frame_path.name)),
+                timestamp_ms=frame_timestamp_ms,
+                shape=list(frame.array.shape),
+                dtype=str(frame.array.dtype),
+                source=str(frame_meta.get("source", "offline_dataset")),
+                camera_meta=frame_meta.get("camera_meta", {})
+                if isinstance(frame_meta.get("camera_meta"), dict)
+                else {},
+            )
+            temperature_record = TemperatureRecord(
+                timestamp_ms=synced.timestamp_ms,
+                celsius=synced.celsius,
+                source=synced.source,
+                sampled_this_frame=synced.sampled_this_frame,
+            )
+            region_results, runtime_state = detect_regions_for_run_frame(
+                frame.array,
+                measurement,
+                frame_index=frame_index,
+                detector=_detect_frame_for_run,
+                runtime_state=runtime_state,
+                detection_transform=lambda detection: _attach_temperature(
+                    detection,
+                    frame_timestamp_ms,
+                    synced,
+                ),
+            )
+            first = region_results[0]
+            frame_records.append(frame_record)
+            temperature_records.append(temperature_record)
+            detection_results.append(first.detection)
+            region_detection_results.extend(item.detection for item in region_results)
+            first_preview = _live_afas_preprocessing_preview(
+                runtime_state.temperature_distance_points[first.region.region_id],
+                processed_frames=processed,
+            )
+            yield _frame_event(
+                run_id=run_id,
+                dataset_id=dataset_id,
+                frame_count=resolved.frame_count,
+                frame_limit=window.frame_limit,
+                processed_frames=processed,
+                frame_record=frame_record,
+                temperature_record=temperature_record,
+                detection=first.detection,
+                curve_points=first.curve_points,
+                afas_preprocessing=first_preview,
+                provenance=provenance,
+                region_results=_region_event_payloads(
+                    region_results,
+                    runtime_state.temperature_distance_points,
+                    processed_frames=processed,
+                ),
+            )
+            if _target_temperature_reached(measurement, first.detection):
+                stop_reason = "target_temperature_reached"
+                break
+
+        yield _run_stage_event(
+            run_id=run_id,
+            event="stopping",
+            dataset_id=dataset_id,
+            processed_frames=len(frame_records),
+            frame_count=resolved.frame_count,
+            frame_limit=window.frame_limit,
+            stop_reason=stop_reason,
+        )
+        manifest = _build_run_manifest(
+            run_id=run_id,
+            dataset_id=dataset_id,
+            measurement=measurement,
+            frame_records=frame_records,
+            temperature_records=temperature_records,
+            detection_results=detection_results,
+            region_detection_results=region_detection_results,
+            start_frame=window.start_frame,
+            frame_limit=window.frame_limit,
+            target_fps=target_fps,
+            stop_reason=stop_reason,
+            provenance=provenance,
+        )
+        yield _run_stage_event(
+            run_id=run_id,
+            event="saving_manifest",
+            dataset_id=dataset_id,
+            processed_frames=len(frame_records),
+            frame_count=resolved.frame_count,
+            frame_limit=window.frame_limit,
+            stop_reason=stop_reason,
+        )
+        run_store.write_run_manifest(manifest)
+        yield _run_stage_event(
+            run_id=run_id,
+            event="building_analysis",
+            dataset_id=dataset_id,
+            processed_frames=len(frame_records),
+            frame_count=resolved.frame_count,
+            frame_limit=window.frame_limit,
+            stop_reason=stop_reason,
+        )
+        analysis = build_analysis_result(manifest)
+        run_store.write_analysis_result(analysis)
+        saved_result = LiveOfflineRunResult(manifest=manifest, analysis=analysis)
+        yield {
+            "event": "complete",
+            "run_manifest": manifest.model_dump(mode="json"),
+            "analysis_result": analysis.model_dump(mode="json"),
+        }
+    finally:
+        if saved_result is None and frame_records:
+            _save_run_result(
+                run_store,
+                run_id=run_id,
+                dataset_id=dataset_id,
+                measurement=measurement,
+                frame_records=frame_records,
+                temperature_records=temperature_records,
+                detection_results=detection_results,
+                region_detection_results=region_detection_results,
+                start_frame=window.start_frame,
+                frame_limit=window.frame_limit,
+                target_fps=target_fps,
+                stop_reason="stream_closed",
+                provenance=provenance,
+            )
+
+
+def _region_event_payloads(
+    results: list[RegionFrameResult],
+    points_by_region: dict[str, list[CurvePoint]],
+    *,
+    processed_frames: int,
+) -> list[dict[str, Any]]:
+    return [
+        region_frame_result_payload(
+            item,
+            afas_preprocessing=_live_afas_preprocessing_preview(
+                points_by_region[item.region.region_id],
+                processed_frames=processed_frames,
+            ),
+        )
+        for item in results
+    ]
+
+
 def _save_run_result(
     run_store: RunStore,
     *,
@@ -267,6 +501,7 @@ def _save_run_result(
     frame_records: list[FrameRecord],
     temperature_records: list[TemperatureRecord],
     detection_results: list[DetectionResult],
+    region_detection_results: list[DetectionResult] | None = None,
     start_frame: int,
     frame_limit: int,
     target_fps: float | None,
@@ -280,6 +515,7 @@ def _save_run_result(
         frame_records=frame_records,
         temperature_records=temperature_records,
         detection_results=detection_results,
+        region_detection_results=region_detection_results,
         start_frame=start_frame,
         frame_limit=frame_limit,
         target_fps=target_fps,
@@ -300,6 +536,7 @@ def _build_run_manifest(
     frame_records: list[FrameRecord],
     temperature_records: list[TemperatureRecord],
     detection_results: list[DetectionResult],
+    region_detection_results: list[DetectionResult] | None = None,
     start_frame: int,
     frame_limit: int,
     target_fps: float | None,
@@ -316,6 +553,7 @@ def _build_run_manifest(
         frame_records=frame_records,
         temperature_records=temperature_records,
         detection_results=detection_results,
+        region_detection_results=region_detection_results or detection_results,
         config_snapshot={
             "mode": "live_offline_run",
             "operator_data_source": "offline_dataset",
@@ -453,8 +691,9 @@ def _frame_event(
     curve_points: dict[str, CurvePoint | None],
     afas_preprocessing: dict[str, Any],
     provenance: dict[str, Any],
+    region_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "event": "frame",
         "run_id": run_id,
         "dataset_id": dataset_id,
@@ -480,6 +719,19 @@ def _frame_event(
             temperature_distance_point_count=int(afas_preprocessing.get("temperature_distance_point_count", 0) or 0),
         ),
     }
+    payload["region_results"] = region_results or [
+        {
+            "region_id": detection.region_id,
+            "region_index": detection.region_index,
+            "region_label": detection.region_label,
+            "color": detection.region_color,
+            "detection_result": detection.model_dump(mode="json"),
+            "curve_points": payload["curve_points"],
+            "live_point_status": payload["live_point_status"],
+            "afas_preprocessing": afas_preprocessing,
+        }
+    ]
+    return payload
 
 
 def _curve_points_for_run_event(detection: DetectionResult) -> dict[str, CurvePoint | None]:
