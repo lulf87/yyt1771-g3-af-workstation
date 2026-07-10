@@ -201,6 +201,9 @@ def test_streamed_live_offline_run_omits_filtered_outlier_from_frame_curve_event
     assert frame_events[-1]["curve_points"]["raw_distance_time"] is None
     assert frame_events[-1]["curve_points"]["raw_temperature_distance"] is None
     assert frame_events[0]["live_point_status"] == {
+        "region_id": "region_1",
+        "region_index": 1,
+        "region_label": "位置 1",
         "temperature_distance_present": True,
         "temperature_distance_point_count": 1,
         "reason_if_missing": "",
@@ -210,6 +213,9 @@ def test_streamed_live_offline_run_omits_filtered_outlier_from_frame_curve_event
         "distance_outlier_filtered": False,
     }
     assert frame_events[-1]["live_point_status"] == {
+        "region_id": "region_1",
+        "region_index": 1,
+        "region_label": "位置 1",
         "temperature_distance_present": False,
         "temperature_distance_point_count": 3,
         "reason_if_missing": "distance_outlier_filtered",

@@ -443,6 +443,9 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
         "preview_path": "preview_frames/latest.png",
     }
     assert ok_events[0]["live_point_status"] == {
+        "region_id": "region_1",
+        "region_index": 1,
+        "region_label": "位置 1",
         "temperature_distance_present": True,
         "temperature_distance_point_count": 1,
         "reason_if_missing": "",
@@ -462,6 +465,9 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
     assert stale_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
     assert stale_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_STALE"
     assert stale_events[0]["live_point_status"] == {
+        "region_id": "region_1",
+        "region_index": 1,
+        "region_label": "位置 1",
         "temperature_distance_present": False,
         "temperature_distance_point_count": 0,
         "reason_if_missing": "temperature_sync_not_formal",
