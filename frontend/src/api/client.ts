@@ -1,3 +1,12 @@
+const API_REGION_COLORS = [
+  "#ef4444",
+  "#3b82f6",
+  "#22c55e",
+  "#f59e0b",
+  "#a855f7",
+  "#06b6d4"
+] as const;
+
 export type OfflineDatasetListItem = {
   id: string;
   label: string;
@@ -44,6 +53,15 @@ export type RotatedROI = {
   width: number;
   height: number;
   angle_deg: number;
+};
+
+export type MeasurementRegion = {
+  region_id: string;
+  index: number;
+  label: string;
+  enabled: boolean;
+  roi: RotatedROI;
+  color: string;
 };
 
 export type DetectorConfig = {
@@ -268,6 +286,7 @@ export type MeasurementDefinition = {
   width_mode: "max_width" | "min_width";
   measurement_coordinates: "source_pixel";
   roi: RotatedROI;
+  regions?: MeasurementRegion[];
   detector_config: DetectorConfig;
 };
 
@@ -289,6 +308,10 @@ export type DetectionCandidate = {
 export type DetectionResult = {
   frame_index: number;
   detection_status: string;
+  region_id?: string;
+  region_index?: number;
+  region_label?: string;
+  region_color?: string;
   ab_points: { a: ABPoint; b: ABPoint } | null;
   measurement_segment: ABPoint[] | null;
   distance_px: number | null;
@@ -347,11 +370,13 @@ export type ProbeResponse = {
   frame: FrameSummary & { timestamp_ms: number | null };
   measurement_definition: MeasurementDefinition;
   detection_result: DetectionResult;
+  region_results: RegionResult[];
   overlay: {
     roi: RotatedROI;
     ab_points: { a: ABPoint; b: ABPoint } | null;
     status: string;
   };
+  region_overlays: RegionOverlay[];
   image_data_url?: string;
   provenance?: SourceProvenance;
 };
@@ -385,6 +410,7 @@ export type RunManifest = {
   frame_records: FrameRecord[];
   temperature_records: TemperatureRecord[];
   detection_results: DetectionResult[];
+  region_detection_results?: DetectionResult[];
   export_artifacts: ExportArtifact[];
   created_at: string;
   config_snapshot: Record<string, unknown>;
@@ -399,6 +425,9 @@ export type CurvePoint = {
 };
 
 export type LivePointStatus = {
+  region_id?: string;
+  region_index?: number;
+  region_label?: string;
   temperature_distance_present: boolean;
   temperature_distance_point_count: number;
   reason_if_missing: string;
@@ -406,6 +435,38 @@ export type LivePointStatus = {
   curve_point_status: string;
   temperature_sync_status: string;
   distance_outlier_filtered: boolean;
+};
+
+export type RegionCurvePoints = {
+  distance_time: CurvePoint | null;
+  temperature_time: CurvePoint | null;
+  temperature_distance: CurvePoint | null;
+  raw_distance_time?: CurvePoint | null;
+  raw_temperature_distance?: CurvePoint | null;
+  stabilized_distance_time?: CurvePoint | null;
+  stabilized_temperature_distance?: CurvePoint | null;
+};
+
+export type RegionResult = {
+  region_id: string;
+  region_index: number;
+  region_label: string;
+  color: string;
+  detection_result: DetectionResult;
+  curve_points: RegionCurvePoints;
+  live_point_status?: LivePointStatus;
+  afas_preprocessing?: Record<string, unknown>;
+};
+
+export type RegionOverlay = {
+  region_id: string;
+  region_index: number;
+  region_label: string;
+  color: string;
+  roi: RotatedROI;
+  ab_points: { a: ABPoint; b: ABPoint } | null;
+  measurement_segment?: ABPoint[] | null;
+  status: string;
 };
 
 export type ExportArtifact = {
@@ -434,10 +495,29 @@ export type AnalysisResult = {
   stabilized_temperature_distance: CurvePoint[];
   afas_preprocessing: Record<string, unknown>;
   afas_analysis: Record<string, unknown>;
+  regions?: RegionAnalysisResult[];
   export_artifacts: ExportArtifact[];
   created_at: string;
   sync_config?: SyncConfig;
   config_snapshot?: Record<string, unknown>;
+};
+
+export type RegionAnalysisResult = {
+  region_id: string;
+  region_index: number;
+  region_label: string;
+  color: string;
+  all_frames: DetectionResult[];
+  distance_time: CurvePoint[];
+  raw_distance_time: CurvePoint[];
+  stabilized_distance_time: CurvePoint[];
+  temperature_time: CurvePoint[];
+  temperature_distance: CurvePoint[];
+  raw_temperature_distance: CurvePoint[];
+  stabilized_temperature_distance: CurvePoint[];
+  afas_preprocessing: Record<string, unknown>;
+  afas_analysis: Record<string, unknown>;
+  summary: Record<string, unknown>;
 };
 
 export type SyncConfig = {
@@ -491,6 +571,7 @@ export type LiveOfflineFrameEvent = {
   frame_record: FrameRecord;
   temperature_record: TemperatureRecord;
   detection_result: DetectionResult;
+  region_results: RegionResult[];
   storage?: {
     save_raw_frames?: boolean;
     raw_frame_saved?: boolean;
@@ -529,6 +610,23 @@ export type LiveOfflineProgressEvent = {
   stop_reason?: string;
 };
 
+export type LiveOfflineAnalysisRegionEvent = {
+  event: "analyzing_region" | "analysis_region_complete";
+  run_id: string;
+  dataset_id?: string;
+  operator_data_source?: "real_camera" | "offline_dataset" | string;
+  processed_frames?: number;
+  frame_count?: number;
+  total_frames?: number;
+  current: number;
+  total: number;
+  region_id: string;
+  region_index: number;
+  region_label: string;
+  color: string;
+  region_analysis?: RegionAnalysisResult;
+};
+
 export type LiveOfflineErrorEvent = {
   event: "error";
   message: string;
@@ -538,6 +636,7 @@ export type LiveOfflineErrorEvent = {
 export type LiveOfflineRunStreamEvent =
   | LiveOfflineFrameEvent
   | LiveOfflineProgressEvent
+  | LiveOfflineAnalysisRegionEvent
   | LiveOfflineCompleteEvent
   | LiveOfflineErrorEvent;
 
@@ -852,7 +951,7 @@ export async function probeFrame(
     const body = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
-  return response.json() as Promise<ProbeResponse>;
+  return normalizeProbeResponse(await response.json() as ProbeResponse);
 }
 
 export async function probeRealCameraSetupFrame(
@@ -880,7 +979,7 @@ export async function probeRealCameraSetupFrame(
   if (!response.ok) {
     throw await apiErrorFromResponse(response);
   }
-  return response.json() as Promise<RealCameraSetupProbeResponse>;
+  return normalizeProbeResponse(await response.json() as RealCameraSetupProbeResponse);
 }
 
 export async function createLiveOfflineRun(
@@ -903,7 +1002,7 @@ export async function createLiveOfflineRun(
     const body = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
-  return response.json() as Promise<RunResponse>;
+  return normalizeRunResponse(await response.json() as RunResponse);
 }
 
 export async function streamLiveOfflineRun(
@@ -945,7 +1044,7 @@ export async function streamLiveOfflineRun(
 
     for (const line of lines) {
       if (!line.trim()) continue;
-      const event = JSON.parse(line) as LiveOfflineRunStreamEvent;
+      const event = normalizeStreamEvent(JSON.parse(line) as LiveOfflineRunStreamEvent);
       onEvent(event);
       if (event.event === "error") {
         throw new Error(event.message);
@@ -962,7 +1061,7 @@ export async function streamLiveOfflineRun(
   }
 
   if (buffered.trim()) {
-    const event = JSON.parse(buffered) as LiveOfflineRunStreamEvent;
+    const event = normalizeStreamEvent(JSON.parse(buffered) as LiveOfflineRunStreamEvent);
     onEvent(event);
     if (event.event === "error") {
       throw new Error(event.message);
@@ -1102,7 +1201,7 @@ export async function createRealCameraRun(
     const body = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
-  return response.json() as Promise<RunResponse>;
+  return normalizeRunResponse(await response.json() as RunResponse);
 }
 
 export async function streamRealCameraRun(
@@ -1151,7 +1250,7 @@ export async function streamRealCameraRun(
 
     for (const line of lines) {
       if (!line.trim()) continue;
-      const event = JSON.parse(line) as RealCameraRunStreamEvent;
+      const event = normalizeStreamEvent(JSON.parse(line) as RealCameraRunStreamEvent);
       onEvent(event);
       if (event.event === "error") {
         throw new Error(event.message);
@@ -1168,7 +1267,7 @@ export async function streamRealCameraRun(
   }
 
   if (buffered.trim()) {
-    const event = JSON.parse(buffered) as RealCameraRunStreamEvent;
+    const event = normalizeStreamEvent(JSON.parse(buffered) as RealCameraRunStreamEvent);
     onEvent(event);
     if (event.event === "error") {
       throw new Error(event.message);
@@ -1200,12 +1299,264 @@ export async function stopRealCameraRun(runId: string): Promise<RealCameraStopRe
 function backendMeasurementDefinition(
   measurementDefinition: MeasurementDefinition
 ): BackendMeasurementDefinition {
-  const { source: _source, ...backendDefinition } = measurementDefinition;
+  const normalized = normalizeApiMeasurementDefinition(measurementDefinition);
+  const { source: _source, ...backendDefinition } = normalized;
   return backendDefinition;
 }
 
+function normalizeApiMeasurementDefinition(
+  measurement: MeasurementDefinition
+): MeasurementDefinition & { regions: MeasurementRegion[] } {
+  const regions = measurement.regions?.length
+    ? measurement.regions.map((region) => ({ ...region, roi: { ...region.roi } }))
+    : [{
+        region_id: "region_1",
+        index: 1,
+        label: "位置 1",
+        enabled: true,
+        roi: { ...measurement.roi },
+        color: API_REGION_COLORS[0]
+      }];
+  if (regions.length > API_REGION_COLORS.length) {
+    throw new Error("Up to six measurement positions are supported");
+  }
+  const firstEnabled = [...regions]
+    .filter((region) => region.enabled)
+    .sort((left, right) => left.index - right.index)[0];
+  if (!firstEnabled) {
+    throw new Error("At least one enabled measurement position is required");
+  }
+  return {
+    ...measurement,
+    roi: { ...firstEnabled.roi },
+    regions
+  };
+}
+
+export function regionResultsFromEvent(event: {
+  region_results?: RegionResult[];
+  detection_result: DetectionResult;
+  curve_points: RegionCurvePoints;
+  live_point_status?: LivePointStatus;
+  afas_preprocessing?: Record<string, unknown>;
+}): RegionResult[] {
+  if (event.region_results?.length) {
+    return event.region_results.map(normalizeRegionResult);
+  }
+  const detection = withRegionMetadata(event.detection_result, {
+    region_id: "region_1",
+    region_index: 1,
+    region_label: "位置 1",
+    color: API_REGION_COLORS[0]
+  });
+  return [{
+    region_id: "region_1",
+    region_index: 1,
+    region_label: "位置 1",
+    color: API_REGION_COLORS[0],
+    detection_result: detection,
+    curve_points: event.curve_points,
+    live_point_status: event.live_point_status,
+    afas_preprocessing: event.afas_preprocessing
+  }];
+}
+
+export function normalizeAnalysisRegions(
+  analysis: AnalysisResult
+): AnalysisResult & { regions: RegionAnalysisResult[] } {
+  const regions = analysis.regions?.length
+    ? analysis.regions.map(normalizeRegionAnalysis)
+    : [normalizeRegionAnalysis({
+        region_id: "region_1",
+        region_index: 1,
+        region_label: "位置 1",
+        color: API_REGION_COLORS[0],
+        all_frames: analysis.all_frames ?? [],
+        distance_time: analysis.distance_time ?? [],
+        raw_distance_time: analysis.raw_distance_time ?? [],
+        stabilized_distance_time: analysis.stabilized_distance_time ?? [],
+        temperature_time: analysis.temperature_time ?? [],
+        temperature_distance: analysis.temperature_distance ?? [],
+        raw_temperature_distance: analysis.raw_temperature_distance ?? [],
+        stabilized_temperature_distance: analysis.stabilized_temperature_distance ?? [],
+        afas_preprocessing: analysis.afas_preprocessing ?? {},
+        afas_analysis: analysis.afas_analysis ?? {},
+        summary: {}
+      })];
+  const first = [...regions].sort((left, right) => left.region_index - right.region_index)[0];
+  return {
+    ...analysis,
+    all_frames: first.all_frames,
+    distance_time: first.distance_time,
+    raw_distance_time: first.raw_distance_time,
+    stabilized_distance_time: first.stabilized_distance_time,
+    temperature_time: first.temperature_time,
+    temperature_distance: first.temperature_distance,
+    raw_temperature_distance: first.raw_temperature_distance,
+    stabilized_temperature_distance: first.stabilized_temperature_distance,
+    afas_preprocessing: first.afas_preprocessing,
+    afas_analysis: first.afas_analysis,
+    regions
+  };
+}
+
+function normalizeProbeResponse<T extends ProbeResponse>(response: T): T {
+  const measurement = normalizeApiMeasurementDefinition(response.measurement_definition);
+  const curvePoints = emptyRegionCurvePoints();
+  const regionResults = regionResultsFromEvent({
+    region_results: response.region_results,
+    detection_result: response.detection_result,
+    curve_points: curvePoints
+  });
+  const first = regionResults[0];
+  const regionOverlays = response.region_overlays?.length
+    ? response.region_overlays
+    : [{
+        region_id: first.region_id,
+        region_index: first.region_index,
+        region_label: first.region_label,
+        color: first.color,
+        roi: measurement.roi,
+        ab_points: response.overlay.ab_points,
+        status: response.overlay.status
+      }];
+  return {
+    ...response,
+    measurement_definition: measurement,
+    detection_result: first.detection_result,
+    region_results: regionResults,
+    region_overlays: regionOverlays
+  };
+}
+
+function normalizeRunManifest(manifest: RunManifest): RunManifest {
+  const legacyResults = manifest.detection_results.map((result) => withDefaultRegionMetadata(result));
+  const allRegionResults = (manifest.region_detection_results?.length
+    ? manifest.region_detection_results
+    : legacyResults).map((result) => withDefaultRegionMetadata(result));
+  return {
+    ...manifest,
+    measurement_definition: normalizeApiMeasurementDefinition(manifest.measurement_definition),
+    detection_results: legacyResults,
+    region_detection_results: allRegionResults
+  };
+}
+
+function normalizeRunResponse(response: RunResponse): RunResponse {
+  return {
+    run_manifest: normalizeRunManifest(response.run_manifest),
+    analysis_result: normalizeAnalysisRegions(response.analysis_result)
+  };
+}
+
+function normalizeStreamEvent(
+  event: LiveOfflineRunStreamEvent
+): LiveOfflineRunStreamEvent {
+  if (event.event === "frame") {
+    const regionResults = regionResultsFromEvent(event);
+    return {
+      ...event,
+      detection_result: regionResults[0].detection_result,
+      region_results: regionResults
+    };
+  }
+  if (event.event === "complete") {
+    return {
+      ...event,
+      run_manifest: normalizeRunManifest(event.run_manifest),
+      analysis_result: normalizeAnalysisRegions(event.analysis_result)
+    };
+  }
+  if (event.event === "analysis_region_complete" && event.region_analysis) {
+    return {
+      ...event,
+      region_analysis: normalizeRegionAnalysis(event.region_analysis)
+    };
+  }
+  return event;
+}
+
+function normalizeImportedRunView(view: ImportedRunView): ImportedRunView {
+  return {
+    ...view,
+    run_manifest: view.run_manifest ? normalizeRunManifest(view.run_manifest) : null,
+    measurement_definition: view.measurement_definition
+      ? normalizeApiMeasurementDefinition(view.measurement_definition)
+      : null,
+    analysis_result: view.analysis_result ? normalizeAnalysisRegions(view.analysis_result) : null
+  };
+}
+
+function normalizeRegionResult(result: RegionResult): RegionResult {
+  const metadata = {
+    region_id: result.region_id || result.detection_result.region_id || "region_1",
+    region_index: result.region_index || result.detection_result.region_index || 1,
+    region_label: result.region_label || result.detection_result.region_label || "位置 1",
+    color: result.color || result.detection_result.region_color || API_REGION_COLORS[0]
+  };
+  return {
+    ...result,
+    ...metadata,
+    detection_result: withRegionMetadata(result.detection_result, metadata)
+  };
+}
+
+function normalizeRegionAnalysis(region: RegionAnalysisResult): RegionAnalysisResult {
+  const metadata = {
+    region_id: region.region_id || "region_1",
+    region_index: region.region_index || 1,
+    region_label: region.region_label || "位置 1",
+    color: region.color || API_REGION_COLORS[0]
+  };
+  return {
+    ...region,
+    ...metadata,
+    all_frames: (region.all_frames ?? []).map((result) => withRegionMetadata(result, metadata)),
+    distance_time: region.distance_time ?? [],
+    raw_distance_time: region.raw_distance_time ?? [],
+    stabilized_distance_time: region.stabilized_distance_time ?? [],
+    temperature_time: region.temperature_time ?? [],
+    temperature_distance: region.temperature_distance ?? [],
+    raw_temperature_distance: region.raw_temperature_distance ?? [],
+    stabilized_temperature_distance: region.stabilized_temperature_distance ?? [],
+    afas_preprocessing: region.afas_preprocessing ?? {},
+    afas_analysis: region.afas_analysis ?? {},
+    summary: region.summary ?? {}
+  };
+}
+
+function withDefaultRegionMetadata(result: DetectionResult): DetectionResult {
+  return withRegionMetadata(result, {
+    region_id: result.region_id || "region_1",
+    region_index: result.region_index || 1,
+    region_label: result.region_label || "位置 1",
+    color: result.region_color || API_REGION_COLORS[0]
+  });
+}
+
+function withRegionMetadata(
+  result: DetectionResult,
+  metadata: { region_id: string; region_index: number; region_label: string; color: string }
+): DetectionResult {
+  return {
+    ...result,
+    region_id: metadata.region_id,
+    region_index: metadata.region_index,
+    region_label: metadata.region_label,
+    region_color: metadata.color
+  };
+}
+
+function emptyRegionCurvePoints(): RegionCurvePoints {
+  return {
+    distance_time: null,
+    temperature_time: null,
+    temperature_distance: null
+  };
+}
+
 export async function getRun(runId: string): Promise<RunResponse> {
-  return requestJson<RunResponse>(`/api/runs/${runId}`);
+  return normalizeRunResponse(await requestJson<RunResponse>(`/api/runs/${runId}`));
 }
 
 export async function getRunAvailability(runId: string): Promise<RunAvailability> {
@@ -1229,7 +1580,7 @@ export async function recomputeRunAnalysis(
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
   const payload = await response.json() as { analysis_result: AnalysisResult };
-  return payload.analysis_result;
+  return normalizeAnalysisRegions(payload.analysis_result);
 }
 
 export async function createRunExports(runId: string): Promise<ExportArtifact[]> {
@@ -1278,7 +1629,7 @@ export async function importRunExportFile(file: File): Promise<ImportedRunView> 
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response, `导入失败：后端返回 ${response.status}`));
   }
-  return response.json() as Promise<ImportedRunView>;
+  return normalizeImportedRunView(await response.json() as ImportedRunView);
 }
 
 export function parseContentDispositionFilename(value: string | null): string | null {
