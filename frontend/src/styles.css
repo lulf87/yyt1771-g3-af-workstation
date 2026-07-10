@@ -538,6 +538,122 @@ input {
   gap: 12px;
 }
 
+.operatorMeasurementPositions {
+  gap: 12px;
+}
+
+.operatorPositionHeader,
+.operatorPositionTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.operatorPositionHeader h3 {
+  margin: 0;
+}
+
+.operatorPositionHeader span,
+.operatorPositionLimit,
+.operatorPositionEmpty {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.operatorPositionList {
+  display: grid;
+  gap: 10px;
+}
+
+.operatorPositionCard {
+  display: grid;
+  gap: 9px;
+  border: 1px solid #d7dee6;
+  border-left: 4px solid var(--region-color);
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.operatorPositionCard.active {
+  border-color: var(--region-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--region-color) 18%, transparent);
+}
+
+.operatorPositionSelect {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 0;
+  color: #1f2937;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.operatorPositionSelect:disabled {
+  opacity: 0.75;
+}
+
+.regionColorSwatch {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.14);
+}
+
+.operatorPositionEnabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.operatorPositionMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.operatorPositionMetrics > div {
+  min-width: 0;
+}
+
+.operatorPositionMetrics dt {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.operatorPositionMetrics dd {
+  margin: 2px 0 0;
+  color: #1f2937;
+  font-size: 11px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.operatorPositionActions {
+  gap: 8px;
+}
+
+.dangerButton {
+  color: #b42318;
+}
+
+.compactField input {
+  min-height: 32px;
+}
+
 .operatorRunActions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1024,6 +1140,20 @@ input {
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   cursor: move;
+}
+
+.frameRegionOverlay:not(.active) .roiPolygon {
+  cursor: default;
+  stroke-dasharray: 6 4;
+}
+
+.frameRegionLabel {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 3px;
+  paint-order: stroke;
+  font-size: 12px;
+  font-weight: 850;
+  pointer-events: none;
 }
 
 .roiHandle {

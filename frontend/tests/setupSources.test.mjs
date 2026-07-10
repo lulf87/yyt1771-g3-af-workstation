@@ -89,6 +89,42 @@ test("real camera measurement is derived from preview shape without changing det
   assert.equal(measurement.roi.angle_deg, -1.5);
 });
 
+test("real camera frame refresh preserves all configured measurement positions", async () => {
+  const { createRealCameraMeasurementFromShape } = await loadSetupSourcesModule();
+  const firstRoi = {
+    type: "rotated_rect",
+    center_x: 480,
+    center_y: 320,
+    width: 300,
+    height: 100,
+    angle_deg: 0
+  };
+  const secondRoi = { ...firstRoi, center_x: 980, angle_deg: 4 };
+  const previous = {
+    measurement_id: "real_camera-preview",
+    source: "real_camera",
+    object_class: "C_BUNDLE_ENVELOPE",
+    detector: "BundleEnvelopeDetector",
+    detector_mode: "contrast_widest_span",
+    width_mode: "max_width",
+    measurement_coordinates: "source_pixel",
+    roi: firstRoi,
+    regions: [
+      { region_id: "region_1", index: 1, label: "位置 1", enabled: true, roi: firstRoi, color: "#ef4444" },
+      { region_id: "region_2", index: 2, label: "位置 2", enabled: true, roi: secondRoi, color: "#3b82f6" }
+    ],
+    detector_config: { contrast_threshold: 30 }
+  };
+
+  const next = createRealCameraMeasurementFromShape(previous, [1364, 2048]);
+
+  assert.equal(next.regions.length, 2);
+  assert.deepEqual(next.regions.map((region) => region.region_id), ["region_1", "region_2"]);
+  assert.deepEqual(next.regions.map((region) => region.color), ["#ef4444", "#3b82f6"]);
+  assert.deepEqual(next.regions[1].roi, secondRoi);
+  assert.deepEqual(next.roi, next.regions[0].roi);
+});
+
 test("real camera frame status labels do not expose preview semantics", async () => {
   const { previewRefreshStatusLabel } = await loadSetupSourcesModule();
 

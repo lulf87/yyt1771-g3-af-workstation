@@ -244,9 +244,26 @@ export function createRealCameraMeasurementFromShape(
 ): MeasurementDefinition {
   const height = positiveDimension(shape[0]);
   const width = positiveDimension(shape[1]);
-  const roi = previous?.roi
-    ? fitRoiToShape(previous.roi, width, height, previous.measurement_id !== "real_camera-preview")
+  const resetSize = previous?.measurement_id !== "real_camera-preview";
+  const fallbackRoi = previous?.roi
+    ? fitRoiToShape(previous.roi, width, height, resetSize)
     : createDefaultRoiForShape(shape);
+  const regions = previous?.regions?.length
+    ? previous.regions.map((region) => ({
+        ...region,
+        roi: fitRoiToShape(region.roi, width, height, resetSize)
+      }))
+    : [{
+        region_id: "region_1",
+        index: 1,
+        label: "位置 1",
+        enabled: true,
+        roi: fallbackRoi,
+        color: "#ef4444"
+      }];
+  const roi = [...regions]
+    .filter((region) => region.enabled)
+    .sort((left, right) => left.index - right.index)[0]?.roi ?? fallbackRoi;
 
   return {
     measurement_id: "real_camera-preview",
@@ -257,6 +274,7 @@ export function createRealCameraMeasurementFromShape(
     width_mode: previous?.width_mode ?? "max_width",
     measurement_coordinates: "source_pixel",
     roi,
+    regions,
     detector_config: previous?.detector_config ?? DEFAULT_REAL_CAMERA_CONFIG
   };
 }

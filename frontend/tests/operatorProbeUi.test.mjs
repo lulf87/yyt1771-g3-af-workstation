@@ -97,9 +97,10 @@ test("operator current-frame probe result drives image overlay without engineeri
   assert.match(operatorPage, /const setupProbeDetection = canShowCurrentSourceData && !operatorRunActive && probe \? probe\.detection_result : null;/);
   assert.match(operatorPage, /\(canShowCurrentSourceData \? liveRun\?\.detectionResult : null\) \?\?\s+setupProbeDetection/s);
   assert.match(operatorPage, /probe\?\.image_data_url \?\? cameraPreviewUrl/);
-  assert.match(operatorPage, /abPoints=\{latestDetection\?\.ab_points \?\? null\}/);
-  assert.match(operatorPage, /measurementSegment=\{latestDetection\?\.measurement_segment \?\? null\}/);
-  assert.match(operatorPage, /debugArtifacts=\{latestDetection\?\.debug_artifacts \?\? null\}/);
+  assert.match(operatorPage, /probe\?\.region_results/);
+  assert.match(operatorPage, /regions=\{frameRegionOverlays\}/);
+  assert.match(operatorPage, /activeRegionId=\{activeRegionId\}/);
+  assert.match(operatorPage, /detection: regionResultsById\[region\.region_id\]\?\.detection_result \?\? null/);
   assert.match(operatorPage, /operatorProbeSummary\(setupProbeDetection, language\)/);
   assert.doesNotMatch(operatorPage, /<SourceProvenanceBadge provenance=\{sourceProvenance\}/);
   assert.doesNotMatch(operatorPage, /warning=\{sourceWarning\}/);
