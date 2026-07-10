@@ -186,6 +186,11 @@ def test_streamed_live_offline_run_filters_each_region_independently(tmp_path: P
     complete = events[-1]
     assert len(complete["run_manifest"]["detection_results"]) == 2
     assert len(complete["run_manifest"]["region_detection_results"]) == 4
+    assert [event["current"] for event in events if event["event"] == "analyzing_region"] == [1, 2]
+    assert [event["region_id"] for event in events if event["event"] == "analysis_region_complete"] == [
+        "region_1",
+        "region_2",
+    ]
 
 
 def test_live_offline_run_filters_distance_jump_outliers_before_analysis(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001

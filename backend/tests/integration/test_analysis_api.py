@@ -94,3 +94,86 @@ def test_analysis_api_recomputes_and_persists_afas_parameters(tmp_path, monkeypa
 
     stored = json.loads((tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text())
     assert stored["afas_analysis"]["parameters"]["tangent_offset"] == 1
+
+
+def test_analysis_api_applies_global_afas_parameters_to_every_region(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    run_store = RunStore()
+    roi = RotatedROI(center_x=10.0, center_y=10.0, width=12.0, height=8.0)
+    measurement = MeasurementDefinition.model_validate(
+        {
+            "measurement_id": "m-analysis-api-regions",
+            "object_class": "A_BALLOON_ENVELOPE",
+            "detector": "BalloonEnvelopeDetector",
+            "width_mode": "max_width",
+            "roi": roi.model_dump(mode="json"),
+            "regions": [
+                {
+                    "region_id": "region_1",
+                    "index": 1,
+                    "label": "位置 1",
+                    "enabled": True,
+                    "roi": roi.model_dump(mode="json"),
+                    "color": "#ef4444",
+                },
+                {
+                    "region_id": "region_2",
+                    "index": 2,
+                    "label": "位置 2",
+                    "enabled": True,
+                    "roi": roi.model_dump(mode="json"),
+                    "color": "#3b82f6",
+                },
+            ],
+        }
+    )
+    by_region: dict[str, list[DetectionResult]] = {"region_1": [], "region_2": []}
+    for region_index in (1, 2):
+        for index in range(63):
+            temperature = 20.0 + index * 0.5
+            transition = 1.0 / (1.0 + 2.718281828 ** (-(temperature - 36.0) / 2.2))
+            detection = _valid_detection(
+                index + 1,
+                temperature,
+                100.0 + region_index * 8.0 + transition * 55.0,
+            ).model_copy(
+                update={
+                    "region_id": f"region_{region_index}",
+                    "region_index": region_index,
+                    "region_label": f"位置 {region_index}",
+                    "region_color": ["#ef4444", "#3b82f6"][region_index - 1],
+                }
+            )
+            by_region[f"region_{region_index}"].append(detection)
+    manifest = RunManifest(
+        run_id="run-analysis-api-regions",
+        dataset_id="golden_a_20260522_dev_lab",
+        measurement_definition=measurement,
+        detection_results=by_region["region_1"],
+        region_detection_results=by_region["region_1"] + by_region["region_2"],
+    )
+    run_store.write_run_manifest(manifest)
+
+    from yyt1771_g3.api.main import app
+
+    response = TestClient(app).post(
+        f"/api/runs/{manifest.run_id}/analysis",
+        json={
+            "afas_preprocessing_parameters": {
+                "group_by_temperature": False,
+                "savgol_window_length": 9,
+                "savgol_polyorder": 2,
+            },
+            "afas_analysis_parameters": {
+                "low_range_celsius": [20.0, 26.0],
+                "high_range_celsius": [45.0, 51.0],
+                "tangent_offset": 1,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    regions = response.json()["analysis_result"]["regions"]
+    assert [region["region_id"] for region in regions] == ["region_1", "region_2"]
+    assert [region["afas_preprocessing"]["parameters"]["savgol_window_length"] for region in regions] == [9, 9]
+    assert [region["afas_analysis"]["parameters"]["tangent_offset"] for region in regions] == [1, 1]

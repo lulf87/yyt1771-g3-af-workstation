@@ -270,6 +270,12 @@ def test_real_camera_multi_region_frame_reads_camera_and_temperature_once(tmp_pa
     assert frame_event["detection_result"] == frame_event["region_results"][0]["detection_result"]
     assert len(complete["run_manifest"]["detection_results"]) == 1
     assert len(complete["run_manifest"]["region_detection_results"]) == 3
+    assert [event["current"] for event in events if event["event"] == "analyzing_region"] == [1, 2, 3]
+    assert [event["region_id"] for event in events if event["event"] == "analysis_region_complete"] == [
+        "region_1",
+        "region_2",
+        "region_3",
+    ]
 
 
 def test_real_camera_run_defaults_to_preview_without_saving_raw_frames(tmp_path: Path) -> None:
@@ -562,6 +568,8 @@ def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) 
         "stopping",
         "saving_manifest",
         "building_analysis",
+        "analyzing_region",
+        "analysis_region_complete",
         "complete",
     ]
     assert events[1]["run_id"] == events[0]["run_id"]
@@ -661,6 +669,8 @@ def test_real_camera_stream_stops_when_target_temperature_reached(tmp_path: Path
         "stopping",
         "saving_manifest",
         "building_analysis",
+        "analyzing_region",
+        "analysis_region_complete",
         "complete",
     ]
     assert events[0]["total_frames"] == 0

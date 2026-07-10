@@ -17,7 +17,13 @@ from yyt1771_g3.core.models import (
     TemperatureRecord,
 )
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
-from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
+from yyt1771_g3.services.analysis_service import (
+    build_analysis_result,
+    build_analysis_result_from_regions,
+    build_region_analysis_result,
+    curve_points_for_detection,
+    detection_results_by_region,
+)
 from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter, filter_detection_sequence
 from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.offline_dataset import OfflineDatasetError, OfflineDatasetRegistry
@@ -259,7 +265,44 @@ def iter_live_offline_run_events(
             frame_limit=window.frame_limit,
             stop_reason=stop_reason,
         )
-        analysis = build_analysis_result(manifest)
+        detections_by_region = detection_results_by_region(manifest)
+        region_analyses = []
+        enabled_regions = manifest.measurement_definition.enabled_regions
+        for current, region in enumerate(enabled_regions, start=1):
+            yield {
+                "event": "analyzing_region",
+                "run_id": run_id,
+                "dataset_id": dataset_id,
+                "operator_data_source": "offline_dataset",
+                "processed_frames": len(frame_records),
+                "frame_count": resolved.frame_count,
+                "total_frames": window.frame_limit,
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+            }
+            region_analysis = build_region_analysis_result(
+                region,
+                detections_by_region.get(region.region_id, []),
+            )
+            region_analyses.append(region_analysis)
+            yield {
+                "event": "analysis_region_complete",
+                "run_id": run_id,
+                "dataset_id": dataset_id,
+                "operator_data_source": "offline_dataset",
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+                "region_analysis": region_analysis.model_dump(mode="json"),
+            }
+        analysis = build_analysis_result_from_regions(manifest, region_analyses)
         run_store.write_analysis_result(analysis)
         saved_result = LiveOfflineRunResult(manifest=manifest, analysis=analysis)
         yield {
@@ -447,7 +490,44 @@ def _iter_live_offline_run_events_multi(
             frame_limit=window.frame_limit,
             stop_reason=stop_reason,
         )
-        analysis = build_analysis_result(manifest)
+        detections_by_region = detection_results_by_region(manifest)
+        region_analyses = []
+        enabled_regions = manifest.measurement_definition.enabled_regions
+        for current, region in enumerate(enabled_regions, start=1):
+            yield {
+                "event": "analyzing_region",
+                "run_id": run_id,
+                "dataset_id": dataset_id,
+                "operator_data_source": "offline_dataset",
+                "processed_frames": len(frame_records),
+                "frame_count": resolved.frame_count,
+                "total_frames": window.frame_limit,
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+            }
+            region_analysis = build_region_analysis_result(
+                region,
+                detections_by_region.get(region.region_id, []),
+            )
+            region_analyses.append(region_analysis)
+            yield {
+                "event": "analysis_region_complete",
+                "run_id": run_id,
+                "dataset_id": dataset_id,
+                "operator_data_source": "offline_dataset",
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+                "region_analysis": region_analysis.model_dump(mode="json"),
+            }
+        analysis = build_analysis_result_from_regions(manifest, region_analyses)
         run_store.write_analysis_result(analysis)
         saved_result = LiveOfflineRunResult(manifest=manifest, analysis=analysis)
         yield {

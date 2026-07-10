@@ -22,7 +22,13 @@ from yyt1771_g3.core.models import (
     TemperatureRecord,
 )
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
-from yyt1771_g3.services.analysis_service import build_analysis_result, curve_points_for_detection
+from yyt1771_g3.services.analysis_service import (
+    build_analysis_result,
+    build_analysis_result_from_regions,
+    build_region_analysis_result,
+    curve_points_for_detection,
+    detection_results_by_region,
+)
 from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter
 from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.region_detection_service import (
@@ -314,7 +320,44 @@ def iter_real_camera_run_events(
             frame_count=frame_limit,
             stop_reason=final_stop_reason,
         )
-        analysis = build_analysis_result(manifest)
+        detections_by_region = detection_results_by_region(manifest)
+        region_analyses = []
+        enabled_regions = manifest.measurement_definition.enabled_regions
+        for current, region in enumerate(enabled_regions, start=1):
+            yield {
+                "event": "analyzing_region",
+                "run_id": run_id,
+                "dataset_id": "real_camera",
+                "operator_data_source": "real_camera",
+                "processed_frames": len(frame_records),
+                "frame_count": frame_limit or 0,
+                "total_frames": frame_limit or 0,
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+            }
+            region_analysis = build_region_analysis_result(
+                region,
+                detections_by_region.get(region.region_id, []),
+            )
+            region_analyses.append(region_analysis)
+            yield {
+                "event": "analysis_region_complete",
+                "run_id": run_id,
+                "dataset_id": "real_camera",
+                "operator_data_source": "real_camera",
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+                "region_analysis": region_analysis.model_dump(mode="json"),
+            }
+        analysis = build_analysis_result_from_regions(manifest, region_analyses)
         run_store.write_analysis_result(analysis)
         saved_result = RealCameraRunResult(manifest=manifest, analysis=analysis)
         yield {
@@ -540,7 +583,44 @@ def _iter_real_camera_run_events_multi(
             frame_count=frame_limit,
             stop_reason=final_stop_reason,
         )
-        analysis = build_analysis_result(manifest)
+        detections_by_region = detection_results_by_region(manifest)
+        region_analyses = []
+        enabled_regions = manifest.measurement_definition.enabled_regions
+        for current, region in enumerate(enabled_regions, start=1):
+            yield {
+                "event": "analyzing_region",
+                "run_id": run_id,
+                "dataset_id": "real_camera",
+                "operator_data_source": "real_camera",
+                "processed_frames": len(frame_records),
+                "frame_count": frame_limit or 0,
+                "total_frames": frame_limit or 0,
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+            }
+            region_analysis = build_region_analysis_result(
+                region,
+                detections_by_region.get(region.region_id, []),
+            )
+            region_analyses.append(region_analysis)
+            yield {
+                "event": "analysis_region_complete",
+                "run_id": run_id,
+                "dataset_id": "real_camera",
+                "operator_data_source": "real_camera",
+                "current": current,
+                "total": len(enabled_regions),
+                "region_id": region.region_id,
+                "region_index": region.index,
+                "region_label": region.label,
+                "color": region.color,
+                "region_analysis": region_analysis.model_dump(mode="json"),
+            }
+        analysis = build_analysis_result_from_regions(manifest, region_analyses)
         run_store.write_analysis_result(analysis)
         saved_result = RealCameraRunResult(manifest=manifest, analysis=analysis)
         yield {
