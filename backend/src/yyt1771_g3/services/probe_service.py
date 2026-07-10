@@ -6,11 +6,11 @@ from typing import Any
 import numpy as np
 
 from yyt1771_g3.core.image_io import array_to_png_bytes
-from yyt1771_g3.core.models import DetectionResult, MeasurementDefinition
+from yyt1771_g3.core.models import CurvePoint, DetectionResult, MeasurementDefinition
 from yyt1771_g3.services.offline_dataset import OfflineDatasetRegistry
+from yyt1771_g3.services.region_detection_service import RegionFrameResult, detect_regions_for_frame
 from yyt1771_g3.services.source_provenance import offline_dataset_provenance
 from yyt1771_g3.temperature.sync import sync_temperature_for_frame
-from yyt1771_g3.vision.detectors import detect_frame
 
 
 def probe_offline_frame(
@@ -25,8 +25,13 @@ def probe_offline_frame(
     frame_meta = _frame_meta(manifest, frame_index)
     frame_timestamp_ms = _int_or_none(frame_meta.get("timestamp_ms"))
     synced = sync_temperature_for_frame(frame_index, frame_timestamp_ms, temperatures)
-    detection = detect_frame(frame.array, measurement, frame_index=frame_index)
-    detection = _attach_temperature(detection, frame_timestamp_ms, synced)
+    region_results, _ = detect_regions_for_frame(
+        frame.array,
+        measurement,
+        frame_index=frame_index,
+        detection_transform=lambda detection: _attach_temperature(detection, frame_timestamp_ms, synced),
+    )
+    first = region_results[0]
     return {
         "dataset_id": dataset_id,
         "frame": {
@@ -36,14 +41,10 @@ def probe_offline_frame(
             "timestamp_ms": frame_timestamp_ms,
         },
         "measurement_definition": measurement.model_dump(mode="json"),
-        "detection_result": detection.model_dump(mode="json"),
-        "overlay": {
-            "roi": measurement.roi.model_dump(mode="json"),
-            "ab_points": detection.ab_points.model_dump(mode="json")
-            if detection.ab_points is not None
-            else None,
-            "status": detection.detection_status.value,
-        },
+        "detection_result": first.detection.model_dump(mode="json"),
+        "region_results": [_region_result_payload(item) for item in region_results],
+        "overlay": _region_overlay_payload(first),
+        "region_overlays": [_region_overlay_payload(item) for item in region_results],
         "image_data_url": _array_to_png_data_url(frame.array),
         "provenance": offline_dataset_provenance(dataset_id),
     }
@@ -58,8 +59,13 @@ def probe_setup_frame(
     frame_timestamp_ms: int | None = None,
     camera_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    detection = detect_frame(frame_array, measurement, frame_index=frame_index)
-    detection = _attach_frame_timestamp(detection, frame_timestamp_ms)
+    region_results, _ = detect_regions_for_frame(
+        frame_array,
+        measurement,
+        frame_index=frame_index,
+        detection_transform=lambda detection: _attach_frame_timestamp(detection, frame_timestamp_ms),
+    )
+    first = region_results[0]
     return {
         "dataset_id": dataset_id,
         "frame": {
@@ -69,14 +75,10 @@ def probe_setup_frame(
             "timestamp_ms": frame_timestamp_ms,
         },
         "measurement_definition": measurement.model_dump(mode="json"),
-        "detection_result": detection.model_dump(mode="json"),
-        "overlay": {
-            "roi": measurement.roi.model_dump(mode="json"),
-            "ab_points": detection.ab_points.model_dump(mode="json")
-            if detection.ab_points is not None
-            else None,
-            "status": detection.detection_status.value,
-        },
+        "detection_result": first.detection.model_dump(mode="json"),
+        "region_results": [_region_result_payload(item) for item in region_results],
+        "overlay": _region_overlay_payload(first),
+        "region_overlays": [_region_overlay_payload(item) for item in region_results],
         "camera_meta": camera_meta or {},
     }
 
@@ -101,6 +103,43 @@ def _attach_frame_timestamp(detection: DetectionResult, frame_timestamp_ms: int 
     payload = detection.model_dump()
     payload.update({"frame_timestamp_ms": frame_timestamp_ms})
     return DetectionResult.model_validate(payload)
+
+
+def _region_result_payload(item: RegionFrameResult) -> dict[str, Any]:
+    return {
+        "region_id": item.region.region_id,
+        "region_index": item.region.index,
+        "region_label": item.region.label,
+        "color": item.region.color,
+        "detection_result": item.detection.model_dump(mode="json"),
+        "curve_points": {
+            key: _curve_point_payload(point)
+            for key, point in item.curve_points.items()
+        },
+        "live_point_status": item.live_point_status,
+    }
+
+
+def _region_overlay_payload(item: RegionFrameResult) -> dict[str, Any]:
+    detection = item.detection
+    return {
+        "region_id": item.region.region_id,
+        "region_index": item.region.index,
+        "region_label": item.region.label,
+        "color": item.region.color,
+        "roi": item.region.roi.model_dump(mode="json"),
+        "ab_points": detection.ab_points.model_dump(mode="json")
+        if detection.ab_points is not None
+        else None,
+        "measurement_segment": [point.model_dump(mode="json") for point in detection.measurement_segment]
+        if detection.measurement_segment is not None
+        else None,
+        "status": detection.detection_status.value,
+    }
+
+
+def _curve_point_payload(point: CurvePoint | None) -> dict[str, Any] | None:
+    return point.model_dump(mode="json") if point is not None else None
 
 
 def _frame_meta(manifest: dict[str, Any], frame_index: int) -> dict[str, Any]:

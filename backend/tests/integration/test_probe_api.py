@@ -225,6 +225,30 @@ def test_real_camera_setup_probe_live_captures_latest_camera_frame(
     assert calls == {"preview": 1, "close": 1}
 
 
+def test_real_camera_setup_probe_returns_all_regions_from_one_image() -> None:
+    client = TestClient(__import__("yyt1771_g3.api.main", fromlist=["app"]).app)
+    response = client.post(
+        "/api/camera/setup-probe",
+        json={
+            "frame_png_data_url": _probe_frame_data_url(),
+            "frame_timestamp_ms": 1779448000999,
+            "camera_meta": {"model": "multi-region-fixture", "pixel_format": "mono8"},
+            "measurement_definition": _multi_region_probe_measurement(),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["image_data_url"].startswith("data:image/png;base64,")
+    assert [item["region_id"] for item in payload["region_results"]] == [
+        "region_1",
+        "region_2",
+        "region_3",
+    ]
+    assert payload["detection_result"] == payload["region_results"][0]["detection_result"]
+    assert len(payload["region_overlays"]) == 3
+
+
 def _probe_measurement() -> dict[str, object]:
     return {
         "measurement_id": "real-camera-setup-probe",
@@ -243,6 +267,24 @@ def _probe_measurement() -> dict[str, object]:
         },
         "detector_config": {"min_component_area_px": 20},
     }
+
+
+def _multi_region_probe_measurement() -> dict[str, object]:
+    measurement = _probe_measurement()
+    roi = measurement["roi"]
+    colors = ["#ef4444", "#3b82f6", "#22c55e"]
+    measurement["regions"] = [
+        {
+            "region_id": f"region_{index}",
+            "index": index,
+            "label": f"位置 {index}",
+            "enabled": True,
+            "roi": roi,
+            "color": colors[index - 1],
+        }
+        for index in range(1, 4)
+    ]
+    return measurement
 
 
 def _probe_frame_data_url() -> str:
