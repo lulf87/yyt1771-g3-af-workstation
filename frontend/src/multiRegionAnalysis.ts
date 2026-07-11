@@ -34,6 +34,7 @@ export type RegionTrendSource = {
   displayTemperatureDistance?: CurvePoint[];
   all_frames?: DetectionResult[];
   allFrames?: DetectionResult[];
+  afas_preprocessing?: Record<string, unknown>;
 };
 
 export type MultiRegionTrendPoint = {
@@ -52,7 +53,10 @@ export type MultiRegionTrendSeries = {
   regionLabel: string;
   color: string;
   points: MultiRegionTrendPoint[];
+  rawPoints: MultiRegionTrendPoint[];
+  afasPoints: MultiRegionTrendPoint[];
   path: string;
+  afasPath: string;
   latestPoint: MultiRegionTrendPoint | null;
   xRange: { min: number; max: number };
   yRange: { min: number; max: number };
@@ -85,6 +89,11 @@ export type MultiRegionTrendOptions = {
   visibleRegionIds?: Set<string>;
   displaySmoothing?: { enabled?: boolean; windowSize?: number };
   maxPointsPerRegion?: number;
+  layers?: {
+    formalPoints: boolean;
+    displayTrend: boolean;
+    afasSmoothed: boolean;
+  };
 };
 
 export function emptyRegionLiveState(
@@ -184,16 +193,23 @@ export function buildMultiRegionTrendModel(
         source,
         rawPoints,
         displayPoints: downsampleDisplayPoints(displayPoints, maxPoints),
+        afasPoints: downsampleDisplayPoints(readAfasSmoothedPoints(source), maxPoints),
         frames: source.allFrames ?? source.all_frames ?? []
       };
     });
-  const xValues = prepared.flatMap(({ displayPoints }) => displayPoints.map((point) => point.x));
-  const yValues = prepared.flatMap(({ displayPoints }) => displayPoints.map((point) => point.y));
+  const layers = options.layers ?? { formalPoints: true, displayTrend: true, afasSmoothed: true };
+  const domainPoints = prepared.flatMap(({ rawPoints, displayPoints, afasPoints }) => [
+    ...(layers.formalPoints ? rawPoints : []),
+    ...(layers.displayTrend ? displayPoints : []),
+    ...(layers.afasSmoothed ? afasPoints : [])
+  ]);
+  const xValues = domainPoints.map((point) => point.x);
+  const yValues = domainPoints.map((point) => point.y);
   const xRange = paddedRange(xValues, 1);
   const yRange = paddedRange(yValues, 10);
-  const series = prepared.map(({ source, displayPoints, frames }) => {
+  const series = prepared.map(({ source, rawPoints, displayPoints, afasPoints, frames }) => {
     const frameMap = new Map(frames.map((frame) => [frame.frame_index, frame]));
-    const points = displayPoints.flatMap((point) => {
+    const scalePoints = (input: CurvePoint[]) => input.flatMap((point) => {
       if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return [];
       const frame = frameMap.get(point.frame_index);
       return [{
@@ -206,13 +222,19 @@ export function buildMultiRegionTrendModel(
         y: scale(point.y, yRange, plot.bottom, plot.top)
       }];
     });
+    const points = scalePoints(displayPoints);
+    const scaledRawPoints = scalePoints(rawPoints);
+    const scaledAfasPoints = scalePoints(afasPoints);
     return {
       regionId: source.region_id,
       regionIndex: source.region_index,
       regionLabel: source.region_label,
       color: source.color,
       points,
+      rawPoints: scaledRawPoints,
+      afasPoints: scaledAfasPoints,
       path: points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "),
+      afasPath: scaledAfasPoints.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "),
       latestPoint: points[points.length - 1] ?? null,
       xRange,
       yRange
@@ -238,7 +260,11 @@ export function buildMultiRegionTrendModel(
         visible: visibleRegionIds.has(source.region_id),
         pointCount: (source.temperatureDistance ?? source.temperature_distance ?? []).length
       })),
-    hasPoints: series.some((item) => item.points.length > 0)
+    hasPoints: series.some((item) =>
+      (layers.formalPoints && item.rawPoints.length > 0) ||
+      (layers.displayTrend && item.points.length > 0) ||
+      (layers.afasSmoothed && item.afasPoints.length > 0)
+    )
   };
 }
 
@@ -308,6 +334,27 @@ function downsampleDisplayPoints(points: CurvePoint[], limit: number): CurvePoin
     result.push({ ...points[Math.round(index * step)] });
   }
   return result;
+}
+
+function readAfasSmoothedPoints(source: RegionTrendSource): CurvePoint[] {
+  const preprocessing = source.afas_preprocessing;
+  if (!preprocessing || typeof preprocessing !== "object") return [];
+  const smoothed = preprocessing.smoothed;
+  if (!smoothed || typeof smoothed !== "object" || Array.isArray(smoothed)) return [];
+  const temperatures = (smoothed as Record<string, unknown>).temperature_celsius;
+  const values = (smoothed as Record<string, unknown>).values;
+  if (!Array.isArray(temperatures) || !Array.isArray(values)) return [];
+  return temperatures.flatMap((temperature, index) => {
+    const distance = values[index];
+    if (typeof temperature !== "number" || typeof distance !== "number") return [];
+    if (!Number.isFinite(temperature) || !Number.isFinite(distance)) return [];
+    return [{
+      x: temperature,
+      y: distance,
+      frame_index: source.temperature_distance?.[index]?.frame_index ?? index + 1,
+      sync_status: source.temperature_distance?.[index]?.sync_status ?? null
+    }];
+  });
 }
 
 function paddedRange(values: number[], minimumSpan: number): { min: number; max: number } {

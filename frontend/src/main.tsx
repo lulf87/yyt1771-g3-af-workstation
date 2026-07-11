@@ -74,6 +74,7 @@ import {
   type HardwareSetupEnvironment,
   type HardwareTemperatureTestResponse,
   type ImportedRunView,
+  type LiveOfflineAnalysisRegionEvent,
   type LiveOfflineFrameEvent,
   type LiveOfflineProgressEvent,
   type OfflineDatasetListItem,
@@ -81,6 +82,7 @@ import {
   type OperatorSourceStatus,
   type ProbeResponse,
   type RealCameraSetupProbeResponse,
+  type RegionAnalysisResult,
   type RunResponse,
   type RotatedROI,
   type SerialPortInfo,
@@ -262,6 +264,12 @@ type LiveRunState = {
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
   regionLiveStateById: RegionLiveStateById;
+  analysisProgress: {
+    current: number;
+    total: number;
+    regionId: string;
+    regionLabel: string;
+  } | null;
   diagnostics: LiveRunDiagnostics;
 };
 
@@ -1113,12 +1121,15 @@ function App() {
                   operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   statusMessage: "",
+                  analysisProgress: null,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length
                 }
               : current
           );
+        } else if (event.event === "analyzing_region" || event.event === "analysis_region_complete") {
+          setLiveRun((current) => updateLiveRunFromRegionAnalysis(current, event));
         } else if (isLiveProgressEvent(event)) {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
@@ -1126,7 +1137,7 @@ function App() {
       setRunResult(response);
     } catch (err) {
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1168,6 +1179,7 @@ function App() {
               ...current,
               status: "stopped",
               statusMessage: "",
+              analysisProgress: null,
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -1515,6 +1527,7 @@ function App() {
                   operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   statusMessage: "",
+                  analysisProgress: null,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length,
@@ -1524,6 +1537,8 @@ function App() {
                 }
               : current
           );
+        } else if (event.event === "analyzing_region" || event.event === "analysis_region_complete") {
+          setLiveRun((current) => updateLiveRunFromRegionAnalysis(current, event));
         } else if (isLiveProgressEvent(event)) {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
@@ -1531,7 +1546,7 @@ function App() {
       setRunResult(response);
     } catch (err) {
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1559,6 +1574,7 @@ function App() {
               ...current,
               status: "stopped",
               statusMessage: "",
+              analysisProgress: null,
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -2330,16 +2346,9 @@ function OperatorRunPage({
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
   const startDisabled = operatorRunActive || !realHardwareAvailable;
   const sourceBadgeLabel = realHardwareAvailable ? "Real hardware ready" : "Real hardware unavailable";
-  const analysisRegionTrendSources: RegionTrendSource[] = latestAnalysis?.regions?.map((region) => ({
-    region_id: region.region_id,
-    region_index: region.region_index,
-    region_label: region.region_label,
-    color: region.color,
-    temperature_distance: region.temperature_distance,
-    all_frames: region.all_frames
-  })) ?? [];
+  const completedRegionTrendSources = analysisRegionTrendSources(latestAnalysis);
   const liveRegionTrendSources = regionTrendSourcesFromLiveState(liveRun?.regionLiveStateById ?? {});
-  const multiRegionTrendSources = liveRun ? liveRegionTrendSources : analysisRegionTrendSources;
+  const multiRegionTrendSources = liveRun ? liveRegionTrendSources : completedRegionTrendSources;
 
   function changeRegionRoi(regionId: string, roi: RotatedROI) {
     if (operatorRunActive) return;
@@ -2420,6 +2429,11 @@ function OperatorRunPage({
           onRefreshSerialPorts={onRefreshSerialPorts}
         />
         {operatorStartMessage ? <div className="inlineWarning">{operatorStartMessage}</div> : null}
+        {liveRun?.analysisProgress ? (
+          <div className="statusBlock operatorAnalysisProgress">
+            {analysisProgressLabel(liveRun.analysisProgress, language)}
+          </div>
+        ) : null}
         <div className="operatorRunActions">
           <button
             className="primaryButton"
@@ -3610,7 +3624,7 @@ function OperatorResultsPage({
           <Metric label="Formal temp-distance points" value={analysis?.temperature_distance.length ?? importedRun?.frame_summary.temperature_distance_points ?? 0} />
           <Metric label="Source" value={resultProvenance ? provenanceLabel(resultProvenance, language) : isImported ? "Imported file" : "Current run so far"} />
         </dl>
-        {analysis ? <OperatorAfasSummary analysis={analysis} /> : null}
+        {analysis ? <OperatorRegionResults analysis={analysis} /> : null}
         <button
           className="primaryButton spaced"
           disabled={!currentRunId}
@@ -3640,9 +3654,14 @@ function OperatorResultsPage({
         ) : null}
       </section>
       <section className="toolPanel operatorResultChart">
-        <h2>{t("AFAS temperature-distance review")}</h2>
+        <h2>{t("Combined curves")}</h2>
         {analysis ? (
-          <AnalysisAfasChart analysis={analysisForResultSource(analysis, "stabilized")} />
+          <MultiRegionTrendChart
+            sources={analysisRegionTrendSources(analysis)}
+            isRunning={false}
+            targetTemperature={null}
+            variant="result"
+          />
         ) : importedRun?.temperature_distance_image_data_url ? (
           <figure className="importedPngFigure">
             <img src={importedRun.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
@@ -3830,7 +3849,7 @@ function ImportedRunSummary({ view }: { view: ImportedRunView }) {
         <Metric label="Temp-distance points" value={view.frame_summary.temperature_distance_points.toLocaleString()} />
         <Metric label="AFAS status" value={readAfasStatus(analysis)} />
       </dl>
-      <OperatorAfasSummary analysis={analysis} />
+      {analysis ? <OperatorRegionResults analysis={analysis} /> : null}
       {Object.keys(view.frame_summary.invalid_reason_counts).length ? (
         <details className="operatorDetailsDisclosure">
           <summary>{uiText(language, "Invalid reason statistics")}</summary>
@@ -3848,7 +3867,12 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
     <div className="operatorImportedChart">
       <h3>{t("Temperature-distance curve")}</h3>
       {analysis ? (
-        <AnalysisAfasChart analysis={analysisForResultSource(analysis, "stabilized")} />
+        <MultiRegionTrendChart
+          sources={analysisRegionTrendSources(analysis)}
+          isRunning={false}
+          targetTemperature={null}
+          variant="result"
+        />
       ) : view.temperature_distance_image_data_url ? (
         <figure className="importedPngFigure">
           <img src={view.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
@@ -3858,6 +3882,47 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
         <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
       )}
     </div>
+  );
+}
+
+function OperatorRegionResults({ analysis }: { analysis: AnalysisResult }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  if (!analysis.regions?.length) return <OperatorAfasSummary analysis={analysis} />;
+  return (
+    <section className="operatorRegionResults">
+      <h3>{t("Position results")}</h3>
+      <div className="operatorRegionResultGrid">
+        {analysis.regions?.map((region) => {
+          const summary = readRecord(region.summary);
+          const status = String(summary.status ?? readAfasStatusForRegion(region));
+          const failureReason = String(summary.failure_reason ?? "");
+          return (
+            <article
+              className={status === "ok" ? "operatorRegionResultCard ok" : "operatorRegionResultCard warning"}
+              key={region.region_id}
+              style={{ "--region-color": region.color } as React.CSSProperties}
+            >
+              <header>
+                <span className="regionColorSwatch" style={{ backgroundColor: region.color }} />
+                <strong>{measurementRegionDisplayLabel(regionAnalysisMeasurementRegion(region), language)}</strong>
+                <small>{uiStatus(language, status)}</small>
+              </header>
+              <dl>
+                <Metric label="Raw points" value={formatOptionalInteger(summary.raw_point_count ?? region.temperature_distance.length)} />
+                <Metric label="Smoothed points" value={formatOptionalInteger(summary.smoothed_point_count)} />
+                <Metric label="AS" value={formatOptionalNumber(summary.As, " °C", language)} />
+                <Metric label="AF" value={formatOptionalNumber(summary.Af, " °C", language)} />
+                <Metric label="ΔT" value={formatOptionalNumber(summary.delta_t, " °C", language)} />
+                <Metric label="Max slope" value={formatOptionalNumber(summary.max_slope_temperature, " °C", language)} />
+                <Metric label="Status" value={uiStatus(language, status)} />
+              </dl>
+              {failureReason ? <div className="operatorRegionFailure">{failureReason}</div> : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -6585,11 +6650,13 @@ function smoothedLabelY(model: AnalysisAfasModel): number {
 function MultiRegionTrendChart({
   sources,
   isRunning,
-  targetTemperature
+  targetTemperature,
+  variant = "live"
 }: {
   sources: RegionTrendSource[];
   isRunning: boolean;
   targetTemperature: number | null;
+  variant?: "live" | "result";
 }) {
   const language = useUiLanguage();
   const t = useUiText();
@@ -6601,6 +6668,9 @@ function MultiRegionTrendChart({
   const [visibleRegionIds, setVisibleRegionIds] = useState<Set<string>>(
     () => new Set(sourceIds)
   );
+  const [showFormalPoints, setShowFormalPoints] = useState(true);
+  const [showDisplayTrend, setShowDisplayTrend] = useState(true);
+  const [showAfasSmoothed, setShowAfasSmoothed] = useState(variant === "result");
   const [hoverTarget, setHoverTarget] = useState<{
     series: MultiRegionTrendModel["series"][number];
     point: MultiRegionTrendPoint;
@@ -6624,9 +6694,14 @@ function MultiRegionTrendChart({
       height,
       visibleRegionIds,
       displaySmoothing: { enabled: true, windowSize: 5 },
-      maxPointsPerRegion: 1200
+      maxPointsPerRegion: 1200,
+      layers: {
+        formalPoints: showFormalPoints,
+        displayTrend: showDisplayTrend,
+        afasSmoothed: showAfasSmoothed
+      }
     }),
-    [sources, visibleRegionIds]
+    [sources, visibleRegionIds, showFormalPoints, showDisplayTrend, showAfasSmoothed]
   );
   const targetX = targetTemperature !== null &&
     Number.isFinite(targetTemperature) &&
@@ -6695,6 +6770,22 @@ function MultiRegionTrendChart({
           </label>
         ))}
       </div>
+      {variant === "result" ? (
+        <div className="multiRegionLayerToggles" aria-label={t("AFAS chart layers")}>
+          <label>
+            <input checked={showFormalPoints} onChange={(event) => setShowFormalPoints(event.target.checked)} type="checkbox" />
+            {t("Formal points")}
+          </label>
+          <label>
+            <input checked={showDisplayTrend} onChange={(event) => setShowDisplayTrend(event.target.checked)} type="checkbox" />
+            {t("Live smoothed trend")}
+          </label>
+          <label>
+            <input checked={showAfasSmoothed} onChange={(event) => setShowAfasSmoothed(event.target.checked)} type="checkbox" />
+            {t("Smoothed curve")}
+          </label>
+        </div>
+      ) : null}
       <svg
         aria-label={t("Run temperature-distance trend chart")}
         className="multiRegionTrendSvg"
@@ -6742,20 +6833,24 @@ function MultiRegionTrendChart({
         ) : null}
         {model.series.map((series) => (
           <g className="multiRegionSeries" key={series.regionId} style={{ color: series.color }}>
-            {series.path && series.points.length > 1 ? (
+            {showDisplayTrend && series.path && series.points.length > 1 ? (
               <polyline points={series.path} style={{ stroke: series.color }} />
             ) : null}
-            {series.points.map((point) => (
+            {showFormalPoints ? series.rawPoints.map((point) => (
               <circle
+                className="multiRegionFormalPoint"
                 cx={point.x}
                 cy={point.y}
                 fill={series.color}
-                key={`${series.regionId}-${point.frameIndex}-${point.temperature}`}
-                r={series.points.length === 1 ? 4 : 2.3}
+                key={`${series.regionId}-formal-${point.frameIndex}-${point.temperature}`}
+                r={series.rawPoints.length === 1 ? 4 : 2.3}
                 style={{ fill: series.color }}
               />
-            ))}
-            {series.latestPoint ? (
+            )) : null}
+            {showAfasSmoothed && series.afasPath && series.afasPoints.length > 1 ? (
+              <polyline className="multiRegionAfasLine" points={series.afasPath} style={{ stroke: series.color }} />
+            ) : null}
+            {showDisplayTrend && series.latestPoint ? (
               <circle
                 className="multiRegionLatestPoint"
                 cx={series.latestPoint.x}
@@ -7712,6 +7807,7 @@ function createInitialLiveRun(
     detectionResult: null,
     analysis: emptyAnalysis(runId),
     regionLiveStateById: emptyRegionLiveState(measurement),
+    analysisProgress: null,
     diagnostics: emptyLiveRunDiagnostics()
   };
 }
@@ -7734,6 +7830,7 @@ function createInitialRealCameraLiveRun(measurement: MeasurementDefinition): Liv
     detectionResult: null,
     analysis: emptyAnalysis(runId),
     regionLiveStateById: emptyRegionLiveState(measurement),
+    analysisProgress: null,
     diagnostics: emptyLiveRunDiagnostics()
   };
 }
@@ -7761,6 +7858,7 @@ function updateLiveRunFromFrame(
     detectionResult: null,
     analysis: emptyAnalysis(runId),
     regionLiveStateById: {},
+    analysisProgress: null,
     diagnostics: emptyLiveRunDiagnostics()
   };
   const detection = detectionWithSyncConfig(event.detection_result, event.sync_config);
@@ -7794,7 +7892,38 @@ function updateLiveRunFromFrame(
     detectionResult: detection,
     analysis,
     regionLiveStateById,
+    analysisProgress: null,
     diagnostics
+  };
+}
+
+function updateLiveRunFromRegionAnalysis(
+  current: LiveRunState | null,
+  event: LiveOfflineAnalysisRegionEvent
+): LiveRunState | null {
+  if (!current) return current;
+  let analysis = current.analysis;
+  if (event.event === "analysis_region_complete" && event.region_analysis) {
+    const regions = [...(analysis.regions ?? [])];
+    const existingIndex = regions.findIndex((region) => region.region_id === event.region_id);
+    if (existingIndex >= 0) regions[existingIndex] = event.region_analysis;
+    else regions.push(event.region_analysis);
+    analysis = {
+      ...analysis,
+      regions: regions.sort((left, right) => left.region_index - right.region_index)
+    };
+  }
+  return {
+    ...current,
+    status: "running",
+    statusMessage: "Building result analysis",
+    analysis,
+    analysisProgress: {
+      current: event.current,
+      total: event.total,
+      regionId: event.region_id,
+      regionLabel: event.region_label
+    }
   };
 }
 
@@ -7898,6 +8027,43 @@ function distanceForResultSource(result: DetectionResult | null, source: Detecti
 function measurementRegionDisplayLabel(region: MeasurementRegion, language: UiLanguage): string {
   const match = /^(?:位置|Position)\s+(\d+)$/i.exec(region.label.trim());
   return match ? `${uiText(language, "Position")} ${match[1]}` : region.label;
+}
+
+function regionAnalysisMeasurementRegion(region: RegionAnalysisResult): MeasurementRegion {
+  return {
+    region_id: region.region_id,
+    index: region.region_index,
+    label: region.region_label,
+    enabled: true,
+    roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 },
+    color: region.color
+  };
+}
+
+function analysisRegionTrendSources(analysis: AnalysisResult | null): RegionTrendSource[] {
+  return analysis?.regions?.map((region) => ({
+    region_id: region.region_id,
+    region_index: region.region_index,
+    region_label: region.region_label,
+    color: region.color,
+    temperature_distance: region.temperature_distance,
+    all_frames: region.all_frames,
+    afas_preprocessing: region.afas_preprocessing
+  })) ?? [];
+}
+
+function readAfasStatusForRegion(region: RegionAnalysisResult): string {
+  const status = region.afas_analysis.result_status;
+  return typeof status === "string" ? status : "unavailable";
+}
+
+function analysisProgressLabel(
+  progress: NonNullable<LiveRunState["analysisProgress"]>,
+  language: UiLanguage
+): string {
+  return uiText(language, "Analyzing position {current}/{total}")
+    .replace("{current}", String(progress.current))
+    .replace("{total}", String(progress.total));
 }
 
 function updatePrimaryMeasurementRoi(
