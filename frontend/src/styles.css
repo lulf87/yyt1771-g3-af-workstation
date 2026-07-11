@@ -1411,6 +1411,130 @@ input {
   font-weight: 700;
 }
 
+.multiRegionTrendFigure {
+  min-width: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.multiRegionTrendFigure figcaption {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #536170;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.multiRegionLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.multiRegionLegend label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid #d8e0e7;
+  border-left: 3px solid var(--region-color);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: #334155;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.multiRegionLegend label:has(input:not(:checked)) {
+  opacity: 0.55;
+}
+
+.multiRegionLegend small {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.multiRegionTrendSvg {
+  display: block;
+  width: 100%;
+  height: 420px;
+  min-height: 360px;
+}
+
+.multiRegionPlotBackground {
+  fill: #fbfcfd;
+  stroke: #d8e0e7;
+}
+
+.multiRegionGridTick line {
+  stroke: #e5ebf1;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.multiRegionGridTick text {
+  fill: #536170;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.multiRegionAxisLabel {
+  fill: #293746;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.multiRegionSeries polyline {
+  fill: none;
+  stroke-width: 2.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.multiRegionSeries circle {
+  stroke: #ffffff;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.multiRegionSeries .multiRegionLatestPoint {
+  fill-opacity: 0.2;
+  stroke-width: 3;
+}
+
+.multiRegionTargetMarker line {
+  stroke: #a16207;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.multiRegionTargetMarker text {
+  fill: #854d0e;
+  stroke: #ffffff;
+  stroke-width: 3px;
+  paint-order: stroke;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.multiRegionTooltip rect {
+  fill: rgba(255, 255, 255, 0.97);
+  stroke: #b8c4cf;
+}
+
+.multiRegionTooltip text {
+  fill: #1f2933;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .runTrendSvg {
   display: block;
   width: 100%;
