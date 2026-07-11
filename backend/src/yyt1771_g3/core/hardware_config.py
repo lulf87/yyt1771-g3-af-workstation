@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -134,9 +134,16 @@ class HardwareConfig:
 def load_hardware_config(path: str | Path | None = None) -> HardwareConfig:
     config_path = hardware_config_path(path)
     if not config_path.exists():
-        return HardwareConfig()
+        return _apply_environment_overrides(HardwareConfig())
     payload = _load_yaml_mapping(config_path)
-    return hardware_config_from_mapping(payload)
+    return _apply_environment_overrides(hardware_config_from_mapping(payload))
+
+
+def _apply_environment_overrides(config: HardwareConfig) -> HardwareConfig:
+    dataset_id = str(os.environ.get("YYT1771_G3_SIMULATED_DATASET_ID", "") or "").strip()
+    if not dataset_id:
+        return config
+    return replace(config, camera=replace(config.camera, simulated_dataset_id=dataset_id))
 
 
 def hardware_config_path(path: str | Path | None = None) -> Path:

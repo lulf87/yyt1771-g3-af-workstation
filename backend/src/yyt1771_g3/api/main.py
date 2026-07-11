@@ -23,7 +23,7 @@ from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableE
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import HARDWARE_CONFIG_ENV, HardwareConfig, load_hardware_config
-from yyt1771_g3.core.runtime_policy import RuntimePolicy, load_runtime_policy, runtime_policy_payload
+from yyt1771_g3.core.runtime_policy import RUNTIME_SOURCE_ENV, RuntimePolicy, load_runtime_policy, runtime_policy_payload
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
 from yyt1771_g3.core.models import MeasurementDefinition
@@ -122,6 +122,25 @@ def _runtime_policy() -> RuntimePolicy:
     if isinstance(policy, RuntimePolicy):
         return policy
     return load_runtime_policy(hardware_config=_hardware_config())
+
+
+def _assert_runtime_source(required_source: str) -> None:
+    if not hasattr(app.state, "runtime_policy") and not str(os.environ.get(RUNTIME_SOURCE_ENV, "")).strip():
+        return
+    policy = _runtime_policy()
+    if policy.runtime_source == required_source:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": (
+                f"This operation requires runtime source {required_source}, "
+                f"but the app was started with {policy.runtime_source}."
+            ),
+            "runtime_source": policy.runtime_source,
+            "required_runtime_source": required_source,
+        },
+    )
 
 
 def _hardware_config_with_temperature_port(config: HardwareConfig, port: str | None) -> HardwareConfig:
@@ -336,6 +355,7 @@ class ProbeRequest(BaseModel):
 
 @app.post("/api/probe")
 def probe_current_frame(request: ProbeRequest) -> dict[str, Any]:
+    _assert_runtime_source("simulated_material")
     registry = _registry()
     try:
         return probe_offline_frame(
@@ -510,6 +530,7 @@ def get_operator_source_status() -> dict[str, Any]:
 
 @app.post("/api/live-offline-runs")
 def create_live_offline_run(request: LiveOfflineRunRequest) -> dict[str, Any]:
+    _assert_runtime_source("simulated_material")
     try:
         result = run_live_offline_dataset(
             _registry(),
@@ -537,6 +558,7 @@ def create_live_offline_run(request: LiveOfflineRunRequest) -> dict[str, Any]:
 
 @app.post("/api/live-offline-runs/stream")
 def stream_live_offline_run(request: LiveOfflineRunRequest) -> StreamingResponse:
+    _assert_runtime_source("simulated_material")
     def event_lines():
         events = None
         try:
@@ -741,6 +763,7 @@ def release_real_camera_preview() -> dict[str, str]:
 
 @app.post("/api/camera/setup-probe")
 def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[str, Any]:
+    _assert_runtime_source("real_hardware")
     try:
         config = _hardware_config()
         run_config = _hardware_config_with_temperature_port(
@@ -958,6 +981,7 @@ def get_temperature_status(port: str | None = None) -> dict[str, Any]:
 
 @app.post("/api/real-camera-runs")
 def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
+    _assert_runtime_source("real_hardware")
     try:
         config = _hardware_config()
         camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
@@ -1001,6 +1025,7 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
 
 @app.post("/api/real-camera-runs/stream")
 def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
+    _assert_runtime_source("real_hardware")
     config = _hardware_config()
     camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
     run_config = _hardware_config_with_temperature_port(

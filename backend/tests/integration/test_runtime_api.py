@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -73,3 +75,49 @@ def test_operator_source_status_includes_runtime_policy(monkeypatch) -> None:  #
     assert payload["camera_is_simulated"] is True
     assert payload["temperature_is_simulated"] is True
     assert payload["configuration_valid"] is True
+
+
+def test_runtime_source_guard_rejects_cross_source_acquisition(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
+    monkeypatch.setenv(
+        "YYT1771_G3_HARDWARE_CONFIG",
+        str(PROJECT_ROOT / "configs" / "local" / "realcamera_temp.local.yaml"),
+    )
+    with pytest.raises(HTTPException, match="runtime source") as real_error:
+        api_main._assert_runtime_source("simulated_material")
+    assert real_error.value.status_code == 409
+
+    monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "simulated_material")
+    monkeypatch.setenv(
+        "YYT1771_G3_HARDWARE_CONFIG",
+        str(PROJECT_ROOT / "configs" / "local" / "simcamera_simtemp.local.yaml"),
+    )
+    with pytest.raises(HTTPException, match="runtime source") as simulated_error:
+        api_main._assert_runtime_source("real_hardware")
+    assert simulated_error.value.status_code == 409
+
+
+def test_real_runtime_reports_simulated_backend_as_configuration_error(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig
+
+    monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(backend="simulated"),
+            temp=TempConfig(backend="simulated"),
+        ),
+    )
+
+    response = TestClient(api_main.app).get("/api/operator/source-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["configuration_valid"] is False
+    assert payload["real_hardware_available"] is False
+    assert "当前以真实硬件模式启动" in payload["configuration_error_zh"]
+    assert "camera or temperature backend is simulated" in payload["configuration_error_en"]

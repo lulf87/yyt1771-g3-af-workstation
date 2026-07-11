@@ -2277,7 +2277,12 @@ function OperatorRunPage({
   const temperatureHardwareUnavailable = Boolean(temperatureHardwareMessage);
   const realHardwareAvailable = operatorSourceStatus?.real_hardware_available === true && !temperatureHardwareUnavailable;
   const sourceAvailable = simulatedMode || realHardwareAvailable;
-  const realHardwareError = operatorSourceStatusError || temperatureHardwareMessage;
+  const runtimeConfigurationError = operatorSourceStatus?.configuration_valid === false
+    ? language === "zh"
+      ? operatorSourceStatus.configuration_error_zh
+      : operatorSourceStatus.configuration_error_en
+    : "";
+  const realHardwareError = runtimeConfigurationError || operatorSourceStatusError || temperatureHardwareMessage;
   const canShowCurrentSourceData = sourceAvailable;
   useEffect(() => {
     if (normalizedMeasurement.regions.some((region) => region.region_id === activeRegionId)) return;
