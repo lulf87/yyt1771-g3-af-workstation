@@ -387,6 +387,8 @@ PY
 
 log "Mode: $MODE ($MODE_LABEL)"
 log "Hardware config: $HARDWARE_CONFIG"
+log "Runtime source: ${YYT1771_G3_RUNTIME_SOURCE:-legacy-default}"
+log "Product mode: ${YYT1771_G3_PRODUCT_MODE:-development}"
 ensure_backend
 ensure_frontend
 
