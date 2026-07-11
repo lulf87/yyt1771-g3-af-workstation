@@ -23,6 +23,7 @@ from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableE
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import HARDWARE_CONFIG_ENV, HardwareConfig, load_hardware_config
+from yyt1771_g3.core.runtime_policy import RuntimePolicy, load_runtime_policy, runtime_policy_payload
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
 from yyt1771_g3.core.models import MeasurementDefinition
@@ -58,6 +59,11 @@ from yyt1771_g3.temperature.simulated import SimulatedTemperatureController
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):  # noqa: ANN202, ARG001
+    policy = load_runtime_policy(hardware_config=load_hardware_config())
+    app.state.runtime_policy = policy
+    logger.info("Runtime source: %s", policy.runtime_source)
+    logger.info("Product mode: %s", policy.product_mode)
+    logger.info("Simulation allowed: %s", str(policy.simulation_allowed).lower())
     try:
         yield
     finally:
@@ -109,6 +115,13 @@ def _registry():
 
 def _hardware_config() -> HardwareConfig:
     return load_hardware_config()
+
+
+def _runtime_policy() -> RuntimePolicy:
+    policy = getattr(app.state, "runtime_policy", None)
+    if isinstance(policy, RuntimePolicy):
+        return policy
+    return load_runtime_policy(hardware_config=_hardware_config())
 
 
 def _hardware_config_with_temperature_port(config: HardwareConfig, port: str | None) -> HardwareConfig:
@@ -220,6 +233,11 @@ def _camera_operation(purpose: str, *, blocking: bool = True, timeout: float | N
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/app/runtime")
+def get_app_runtime() -> dict[str, object]:
+    return runtime_policy_payload(_runtime_policy())
 
 
 @app.get("/api/offline-datasets")
@@ -418,7 +436,7 @@ def _operator_source_status_payload(
         except OfflineDatasetError as exc:
             offline_datasets_available = False
             offline_dataset_error = str(exc)
-    return operator_source_status(
+    status = operator_source_status(
         camera_profile=camera_profile or config.camera.to_profile(),
         camera_meta=camera_meta,
         temperature_backend=_temperature_backend(config),
@@ -426,6 +444,34 @@ def _operator_source_status_payload(
         offline_datasets_available=offline_datasets_available,
         offline_dataset_error=offline_dataset_error,
     )
+    policy = _runtime_policy()
+    configuration_valid = (
+        status["camera_is_simulated"] and status["temperature_is_simulated"]
+        if policy.runtime_source == "simulated_material"
+        else not status["camera_is_simulated"] and not status["temperature_is_simulated"]
+    )
+    configuration_error_zh = ""
+    configuration_error_en = ""
+    if not configuration_valid and policy.runtime_source == "real_hardware":
+        configuration_error_zh = "当前以真实硬件模式启动，但相机或温控配置为模拟设备。请检查启动命令和硬件配置。"
+        configuration_error_en = (
+            "The app was started in real-hardware mode, but camera or temperature backend is simulated. "
+            "Check the startup command and hardware configuration."
+        )
+    status.update(
+        {
+            "runtime_source": policy.runtime_source,
+            "product_mode": policy.product_mode,
+            "configuration_valid": configuration_valid,
+            "configuration_error_zh": configuration_error_zh,
+            "configuration_error_en": configuration_error_en,
+        }
+    )
+    if policy.runtime_source == "simulated_material":
+        status["real_hardware_available"] = False
+    elif not configuration_valid:
+        status["real_hardware_available"] = False
+    return status
 
 
 def _assert_operator_real_camera_available(
