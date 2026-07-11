@@ -9267,6 +9267,61 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
+### P-0084 — 产品界面仍可切换工程模式且运行来源由浏览器选择
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/core/runtime_policy.py`, `backend/src/yyt1771_g3/api/main.py`, `scripts/g3_start.sh`
+- Found date: 2026-07-11
+- Last update: 2026-07-11
+- Owner/tool: Codex
+
+#### Problem
+
+生产实际使用界面仍保留 Operator/Engineering 模式状态和历史入口，真实硬件与离线/模拟来源也仍可由浏览器状态决定，无法保证交付机器只运行启动命令指定的来源。
+
+#### Expected
+
+正常入口始终显示实际使用流程；运行来源只由启动环境或 `scripts/g3_start.sh real|sim` 决定；真实模式绝不 fallback 到模拟设备；模拟模式保留 1–6 ROI、检测、实时曲线和导出，但必须显著标为非真实数据。
+
+#### Actual
+
+修复前 `?mode=engineering` 和 localStorage 可恢复工程模式，前端保存 Operator 数据来源，后端没有统一的启动期 runtime policy。
+
+#### Fix summary
+
+- 新增启动期 `RuntimePolicy`、`/api/app/runtime` 和扩展 source-status。
+- 正常前端入口锁定 Operator，忽略旧 query/localStorage 模式，来源只读。
+- 新增真实/模拟跨源 acquisition guard、运行/导出来源字段和 `g3_start.sh real|sim`。
+- 浏览器复测完成后补充证据与最终状态。
+
+#### Tests run
+
+```bash
+Pending final verification.
+```
+
+#### Browser retest log
+
+- Retest date:
+- Browser:
+- OS:
+- Frontend URL:
+- Backend URL:
+- Dataset:
+- Page:
+- Steps:
+- Expected:
+- Actual:
+- Result: PASS / FAIL
+- Evidence:
+
+#### Final status
+
+IN_PROGRESS
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。

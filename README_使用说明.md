@@ -124,7 +124,29 @@ python3 -m pip check
 
 说明：`pip check` 可能报告该 base 环境里其他历史包的冲突；只要上面的 `import cv2` 检查通过，归档 OpenCV 导入问题就已经解决。G3 项目本身仍建议使用 `.venv`，因为 `.venv/bin/python -m pip check` 当前应为干净状态。
 
-### 3.2 启动 backend
+### 3.2 产品运行来源启动命令
+
+正常交付界面始终为“实际使用”流程，不再提供工程模式或数据来源切换。启动命令决定整个进程使用真实硬件还是模拟素材：
+
+```bash
+# 开发验证：模拟素材 + 模拟温控
+scripts/g3_start.sh sim
+
+# 实际测试：真实相机 + 真实温控
+scripts/g3_start.sh real
+```
+
+生产部署建议显式设置：
+
+```bash
+YYT1771_G3_RUNTIME_SOURCE=real_hardware \
+YYT1771_G3_PRODUCT_MODE=production \
+scripts/g3_start.sh real
+```
+
+模拟素材可通过 `YYT1771_G3_SIMULATED_DATASET_ID` 指定注册表中的 dataset id。`production` 模式拒绝 `simulated_material`。真实模式下相机或温控不可用时，界面只显示真实硬件不可用和设备设置入口，不会显示或 fallback 到模拟画面。
+
+### 3.3 启动 backend（手工排查）
 
 推荐固定使用 `8022` 端口：
 
@@ -169,7 +191,7 @@ golden_a_20260522_dev_lab
 golden_c_20260529_dev_lab
 ```
 
-### 3.3 启动 frontend
+### 3.4 启动 frontend
 
 另开一个终端，在仓库根目录执行：
 
@@ -193,7 +215,7 @@ http://127.0.0.1:5176
 3. 如果 5176 被占用，可以改成其他端口，例如 --port 5177。
 ```
 
-### 3.4 启动前后检查
+### 3.5 启动前后检查
 
 启动前先检查端口是否已有服务：
 
@@ -216,7 +238,7 @@ curl -I -sS http://127.0.0.1:5176/
 open http://127.0.0.1:5176/
 ```
 
-### 3.5 常用检查命令
+### 3.6 常用检查命令
 
 ```bash
 # backend 测试

@@ -197,3 +197,16 @@ temperature_distance_combined.png
 temperature_distance_<region_id>.png
 roi_ab_overlay_combined.png
 ```
+
+新 run、analysis、`run_export.json` 和 `parameters.json` 同时保存：
+
+```json
+{
+  "runtime_source": "real_hardware 或 simulated_material",
+  "product_mode": "production 或 development",
+  "operator_data_source": "real_hardware 或 simulated_material",
+  "provenance": {}
+}
+```
+
+旧数据缺少字段时继续根据 `operator_data_source`、run mode 和 provenance 推断；无法可靠判断时保持 unknown，不得把模拟/离线数据显示为真实测试。
