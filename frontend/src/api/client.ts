@@ -421,6 +421,8 @@ export type RunManifest = {
   run_id: string;
   dataset_id: string;
   measurement_definition: MeasurementDefinition;
+  runtime_source?: "real_hardware" | "simulated_material" | string;
+  product_mode?: "production" | "development" | string;
   operator_data_source?: "real_camera" | "offline_dataset" | string;
   provenance?: SourceProvenance;
   frame_records: FrameRecord[];
@@ -499,6 +501,8 @@ export type ExportArtifact = {
 export type AnalysisResult = {
   analysis_id: string;
   run_id: string;
+  runtime_source?: "real_hardware" | "simulated_material" | string;
+  product_mode?: "production" | "development" | string;
   operator_data_source?: "real_camera" | "offline_dataset" | string;
   provenance?: SourceProvenance;
   all_frames: DetectionResult[];
@@ -704,6 +708,8 @@ export type ImportedFrameSummary = {
 export type ImportedRunView = {
   filename: string;
   warnings: string[];
+  runtime_source?: "real_hardware" | "simulated_material" | string;
+  product_mode?: "production" | "development" | string;
   operator_data_source?: "real_camera" | "offline_dataset" | string;
   provenance?: SourceProvenance;
   run_manifest: RunManifest | null;

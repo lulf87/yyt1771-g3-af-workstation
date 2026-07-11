@@ -32,6 +32,8 @@ class ImportedFrameSummary(BaseModel):
 class ImportedRunView(BaseModel):
     filename: str
     warnings: list[str] = Field(default_factory=list)
+    runtime_source: str = ""
+    product_mode: str = ""
     operator_data_source: str = ""
     provenance: dict[str, Any] = Field(default_factory=dict)
     run_manifest: dict[str, Any] | None = None
@@ -126,6 +128,8 @@ def _view_from_payload(
     return ImportedRunView(
         filename=filename,
         warnings=warnings,
+        runtime_source=_source_metadata_value(payload, "runtime_source"),
+        product_mode=_source_metadata_value(payload, "product_mode"),
         operator_data_source=operator_data_source,
         provenance=imported_file_provenance(source_provenance),
         run_manifest=run_manifest,
@@ -164,9 +168,24 @@ def _merge_parameters_payload(
         merged["measurement_definition"] = measurement
     if "operator_data_source" not in merged and isinstance(parameters_payload.get("operator_data_source"), str):
         merged["operator_data_source"] = parameters_payload["operator_data_source"]
+    for key in ("runtime_source", "product_mode"):
+        if key not in merged and isinstance(parameters_payload.get(key), str):
+            merged[key] = parameters_payload[key]
     if "provenance" not in merged and isinstance(parameters_payload.get("provenance"), dict):
         merged["provenance"] = parameters_payload["provenance"]
     return merged
+
+
+def _source_metadata_value(payload: dict[str, Any], key: str) -> str:
+    direct = payload.get(key)
+    if isinstance(direct, str) and direct:
+        return direct
+    for container_key in ("run_manifest", "analysis_result", "analysis"):
+        container = _dict_or_none(payload.get(container_key))
+        value = (container or {}).get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _operator_data_source_from_payload(

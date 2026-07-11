@@ -220,6 +220,8 @@ def _all_region_results(manifest: RunManifest) -> list[DetectionResult]:
 def _write_json(export_dir: Path, manifest: RunManifest, analysis: AnalysisResult) -> ExportArtifact:
     path = export_dir / "run_export.json"
     payload = {
+        "runtime_source": manifest.runtime_source,
+        "product_mode": manifest.product_mode,
         "operator_data_source": manifest.operator_data_source,
         "provenance": manifest.provenance,
         "run_manifest": manifest.model_dump(mode="json"),
@@ -417,6 +419,8 @@ def _write_parameters_json(
     path = export_dir / "parameters.json"
     payload = {
         "measurement_definition": manifest.measurement_definition.model_dump(mode="json"),
+        "runtime_source": manifest.runtime_source,
+        "product_mode": manifest.product_mode,
         "operator_data_source": manifest.operator_data_source,
         "provenance": manifest.provenance,
         "afas_parameters_by_region": [

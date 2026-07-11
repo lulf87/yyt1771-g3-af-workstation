@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig
-from yyt1771_g3.core.runtime_policy import RuntimePolicyError, load_runtime_policy, runtime_policy_payload
+from yyt1771_g3.core.runtime_policy import (
+    RuntimePolicyError,
+    load_runtime_policy,
+    run_runtime_metadata,
+    runtime_policy_payload,
+)
 
 
 def _hardware(camera_backend: str, temperature_backend: str, dataset_id: str = "") -> HardwareConfig:
@@ -104,3 +109,26 @@ def test_real_hardware_policy_stays_reportable_when_profile_is_simulated() -> No
     )
 
     assert policy.runtime_source == "real_hardware"
+
+
+def test_run_runtime_metadata_uses_explicit_source_as_operator_source() -> None:
+    assert run_runtime_metadata(
+        environ={
+            "YYT1771_G3_RUNTIME_SOURCE": "simulated_material",
+            "YYT1771_G3_PRODUCT_MODE": "development",
+        },
+        default_runtime_source="real_hardware",
+        legacy_operator_data_source="real_camera",
+    ) == {
+        "runtime_source": "simulated_material",
+        "product_mode": "development",
+        "operator_data_source": "simulated_material",
+    }
+
+
+def test_run_runtime_metadata_preserves_legacy_operator_source_without_explicit_runtime() -> None:
+    assert run_runtime_metadata(
+        environ={},
+        default_runtime_source="simulated_material",
+        legacy_operator_data_source="offline_dataset",
+    )["operator_data_source"] == "offline_dataset"

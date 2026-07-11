@@ -468,6 +468,8 @@ class RunManifest(G3Model):
     run_id: str
     dataset_id: str
     measurement_definition: MeasurementDefinition
+    runtime_source: str = ""
+    product_mode: str = ""
     operator_data_source: str = ""
     provenance: dict[str, Any] = Field(default_factory=dict)
     frame_records: list[FrameRecord] = Field(default_factory=list)
@@ -514,6 +516,8 @@ class RegionAnalysisResult(G3Model):
 class AnalysisResult(G3Model):
     analysis_id: str
     run_id: str
+    runtime_source: str = ""
+    product_mode: str = ""
     operator_data_source: str = ""
     provenance: dict[str, Any] = Field(default_factory=dict)
     all_frames: list[DetectionResult] = Field(default_factory=list)

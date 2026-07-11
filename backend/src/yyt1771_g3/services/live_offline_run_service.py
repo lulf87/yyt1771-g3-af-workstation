@@ -16,6 +16,7 @@ from yyt1771_g3.core.models import (
     RunManifest,
     TemperatureRecord,
 )
+from yyt1771_g3.core.runtime_policy import run_runtime_metadata
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import (
     build_analysis_result,
@@ -624,11 +625,17 @@ def _build_run_manifest(
     provenance: dict[str, Any] | None = None,
 ) -> RunManifest:
     resolved_provenance = provenance or offline_dataset_provenance(dataset_id)
+    runtime_metadata = run_runtime_metadata(
+        default_runtime_source="simulated_material",
+        legacy_operator_data_source="offline_dataset",
+    )
     manifest = RunManifest(
         run_id=run_id,
         dataset_id=dataset_id,
         measurement_definition=measurement,
-        operator_data_source="offline_dataset",
+        runtime_source=runtime_metadata["runtime_source"],
+        product_mode=runtime_metadata["product_mode"],
+        operator_data_source=runtime_metadata["operator_data_source"],
         provenance=resolved_provenance,
         frame_records=frame_records,
         temperature_records=temperature_records,
@@ -636,7 +643,9 @@ def _build_run_manifest(
         region_detection_results=region_detection_results or detection_results,
         config_snapshot={
             "mode": "live_offline_run",
-            "operator_data_source": "offline_dataset",
+            "runtime_source": runtime_metadata["runtime_source"],
+            "product_mode": runtime_metadata["product_mode"],
+            "operator_data_source": runtime_metadata["operator_data_source"],
             "provenance": resolved_provenance,
             "detector_mode": measurement.detector_mode,
             "contrast_threshold": measurement.detector_config.contrast_threshold,

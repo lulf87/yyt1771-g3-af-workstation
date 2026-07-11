@@ -95,6 +95,33 @@ def runtime_policy_payload(policy: RuntimePolicy) -> dict[str, object]:
     }
 
 
+def run_runtime_metadata(
+    *,
+    default_runtime_source: str,
+    legacy_operator_data_source: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    environment = os.environ if environ is None else environ
+    explicit_source = str(environment.get(RUNTIME_SOURCE_ENV, "") or "").strip()
+    runtime_source = _enum_value(
+        explicit_source,
+        default=default_runtime_source,
+        allowed={"real_hardware", "simulated_material"},
+        label="runtime source",
+    )
+    product_mode = _enum_value(
+        environment.get(PRODUCT_MODE_ENV),
+        default=DEFAULT_PRODUCT_MODE,
+        allowed={"production", "development"},
+        label="product mode",
+    )
+    return {
+        "runtime_source": runtime_source,
+        "product_mode": product_mode,
+        "operator_data_source": runtime_source if explicit_source else legacy_operator_data_source,
+    }
+
+
 def _validate_runtime_policy(policy: RuntimePolicy, hardware: HardwareConfig) -> None:
     camera_backend = _normalized(hardware.camera.backend)
     temperature_backend = _normalized(hardware.temp.backend)
@@ -136,5 +163,6 @@ __all__ = [
     "RuntimePolicyError",
     "SIMULATED_DATASET_ID_ENV",
     "load_runtime_policy",
+    "run_runtime_metadata",
     "runtime_policy_payload",
 ]

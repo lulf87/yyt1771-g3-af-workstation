@@ -21,6 +21,7 @@ from yyt1771_g3.core.models import (
     RunManifest,
     TemperatureRecord,
 )
+from yyt1771_g3.core.runtime_policy import run_runtime_metadata
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import (
     build_analysis_result,
@@ -742,11 +743,17 @@ def _build_real_camera_run_manifest(
         temperature_backend=temperature_backend,
         temperature_source=first_temperature.source if first_temperature is not None else "",
     )
+    runtime_metadata = run_runtime_metadata(
+        default_runtime_source="real_hardware",
+        legacy_operator_data_source="real_camera",
+    )
     manifest = RunManifest(
         run_id=run_id,
         dataset_id="real_camera",
         measurement_definition=measurement,
-        operator_data_source="real_camera",
+        runtime_source=runtime_metadata["runtime_source"],
+        product_mode=runtime_metadata["product_mode"],
+        operator_data_source=runtime_metadata["operator_data_source"],
         provenance=provenance,
         frame_records=frame_records,
         temperature_records=temperature_records,
@@ -754,7 +761,9 @@ def _build_real_camera_run_manifest(
         region_detection_results=region_detection_results or detection_results,
         config_snapshot={
             "mode": "real_camera_run",
-            "operator_data_source": "real_camera",
+            "runtime_source": runtime_metadata["runtime_source"],
+            "product_mode": runtime_metadata["product_mode"],
+            "operator_data_source": runtime_metadata["operator_data_source"],
             "provenance": provenance,
             "detector_mode": measurement.detector_mode,
             "contrast_threshold": measurement.detector_config.contrast_threshold,

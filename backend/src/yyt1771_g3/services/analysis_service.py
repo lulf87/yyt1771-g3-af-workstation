@@ -135,6 +135,8 @@ def build_analysis_result_from_regions(
     return AnalysisResult(
         analysis_id=analysis_id or f"{manifest.run_id}-analysis",
         run_id=manifest.run_id,
+        runtime_source=manifest.runtime_source,
+        product_mode=manifest.product_mode,
         operator_data_source=manifest.operator_data_source,
         provenance=manifest.provenance,
         regions=regions,
