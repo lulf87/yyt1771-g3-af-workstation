@@ -104,6 +104,7 @@
 | P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
 | P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
 | P-0088 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / export csv | 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败 | 2026-07-09 | 2026-07-09 | Codex | 后端导出 API、backend integration/unit、frontend test/build 已通过；导出下载浏览器复测待补 |
+| P-0089 | OPEN | P0 | backend / Hik MVS discovery / hardware setup | 后端在相机网卡激活前加载 MVS 后，后接入的真实相机可能持续枚举为空 | 2026-07-10 | 2026-07-10 | Codex | 当前现场通过重启后端恢复；待实现无需重启的 MVS 枚举恢复并复测先启动软件后接相机流程 |
 | P-0090 | FIXED_PENDING_BROWSER_RETEST | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 自动化、配置预设、新旧导入及 Engineering Golden A/C 已通过；现场相机未枚举且温控串口缺失，Operator 真机多位置 Probe/Run 待补 |
 | P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
 
@@ -221,6 +222,40 @@ Operator 实时页和结果页在同一坐标轴显示 1–6 条颜色一致的�
 #### Final status
 
 FIXED_PENDING_BROWSER_RETEST
+
+### P-0089 — 后端在相机网卡激活前加载 MVS 后，后接入的真实相机可能持续枚举为空
+
+- Status: OPEN
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/services/hardware_setup_service.py`
+- Found date: 2026-07-10
+- Last update: 2026-07-10
+
+#### Problem
+
+真机后端已运行且 MVS SDK 已在相机接入前加载时，之后连接 Hik GigE 相机，`GET /api/hardware/cameras` 仍可能持续返回空列表。现场相机 IP 可达、SDK 路径和架构检查均通过，但长驻后端进程无法刷新设备枚举；同一配置在新 x86_64 Python/MVS 进程中可立即发现相机。
+
+#### Investigation and current workaround
+
+- 2026-07-10: 确认 `192.168.3.211` 可经 `en7` 千兆链路访问，SDK Python binding 和 `libMvCameraControl.dylib` 均可加载。
+- 2026-07-10: 旧后端 `GET /api/hardware/cameras` 返回 `[]`；新进程返回 `MV-CA060-11GM / 00J67378626 / 192.168.3.211 / Watch`，确认问题位于长驻 MVS 进程的设备枚举状态。
+- 2026-07-10: 使用 `scripts/g3_fast_start.sh real-real --restart --no-open` 重启后端后，相机扫描恢复，`GET /api/camera/preview` 成功取得 `1364 x 2048` Mono8 帧。
+- 当前现场规避方式：若软件先启动、相机后接入且扫描为空，重启真机后端后重新扫描。
+
+#### Browser validation
+
+- Retest date: 2026-07-10
+- Browser: Codex in-app Chromium browser
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`
+- Backend URL: `http://127.0.0.1:8022`
+- Hardware: Hik `MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`
+- Page: Operator `设备设置` -> `扫描相机`
+- Steps: 重启后端；打开设备设置；进入扫描相机；选择设备；点击测试相机。
+- Expected: 显示型号、序列号、IP，并成功取得预览图。
+- Actual: 相机列表显示目标设备，页面显示“相机测试通过”和预览图。
+- Result: PASS for the restarted runtime; hot-plug recovery without restarting remains OPEN.
+- Evidence: `output/dev/g3-fast-start-backend-8022.log`
 
 ### P-0088 — 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败
 
