@@ -5621,7 +5621,9 @@ function RunPage({
             <button
               className="primaryButton"
               disabled={runMode.kind === "real_camera_run" ? runningCamera : running}
-              onClick={runMode.kind === "real_camera_run" ? onStartRealCameraRun : onStartRun}
+              onClick={() => {
+                runMode.kind === "real_camera_run" ? onStartRealCameraRun() : onStartRun();
+              }}
               type="button"
             >
               <Play size={16} aria-hidden="true" />

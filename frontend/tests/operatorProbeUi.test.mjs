@@ -136,3 +136,17 @@ test("engineering setup probe button remains wired through CameraSetupStatusPane
   assert.match(setupPanel, /onClick=\{onProbe\}/);
   assert.match(setupPanel, /probing \? t\("Probing"\) : t\("Probe current frame"\)/);
 });
+
+test("engineering run button does not forward the React click event as a measurement override", () => {
+  const runPage = sourceSlice(
+    "function RunPage({",
+    "function AnalysisPage({"
+  );
+
+  assert.doesNotMatch(
+    runPage,
+    /onClick=\{runMode\.kind === "real_camera_run" \? onStartRealCameraRun : onStartRun\}/
+  );
+  assert.match(runPage, /onClick=\{\(\) => \{/);
+  assert.match(runPage, /runMode\.kind === "real_camera_run" \? onStartRealCameraRun\(\) : onStartRun\(\);/);
+});

@@ -104,15 +104,67 @@
 | P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
 | P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
 | P-0088 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / export csv | 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败 | 2026-07-09 | 2026-07-09 | Codex | 后端导出 API、backend integration/unit、frontend test/build 已通过；导出下载浏览器复测待补 |
-| P-0090 | IN_PROGRESS | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 增量双层兼容实现与自动化测试进行中；待全量验证和真实浏览器/Golden A/C 复测 |
+| P-0090 | FIXED_PENDING_BROWSER_RETEST | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 自动化、配置预设、新旧导入及 Engineering Golden A/C 已通过；现场相机未枚举且温控串口缺失，Operator 真机多位置 Probe/Run 待补 |
+| P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
 
 ---
 
 ## 3. 问题详情
 
+### P-0091 — Engineering 离线实时测量按钮误传 click event
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, frontend source regression tests
+- Found date: 2026-07-11
+- Last update: 2026-07-11
+- Owner/tool: Codex
+
+#### Problem
+
+Engineering Mode 的 Run 页面把带有可选 `MeasurementDefinition` 参数的 `startLiveOfflineRun` 直接作为按钮 `onClick` 回调。React 在点击时传入 `MouseEvent`，函数将其当作 measurement override，随后读取 `measurementForRun.detector_config.run_preview_fps` 时抛出 TypeError，导致请求未发送、进度停在 0。
+
+#### Evidence
+
+```text
+Dataset: golden_a_20260522_dev_lab
+Page: Engineering -> 实时测量
+Action: 点击“开始完整离线测量”
+Actual: TypeError: Cannot read properties of undefined (reading 'run_preview_fps')
+Console: output/playwright/multi-position-20260711/.playwright-cli/console-2026-07-11T02-32-37-402Z.log
+```
+
+#### Expected
+
+按钮点击只调用零参数 `onStartRun()`；只有 Operator 已确认设置路径才显式传入 measurement override。
+
+#### Fix summary
+
+- Run 页面按钮使用显式零参数回调，根据 source 调用 `onStartRealCameraRun()` 或 `onStartRun()`，不再把 React `MouseEvent` 传入业务函数。
+- 新增源代码回归测试，禁止恢复直接 ternary callback 绑定。
+
+#### Browser validation
+
+- Retest date: 2026-07-11
+- Browser: Playwright HeadlessChrome 150.0.0.0
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=operator`（页面内切换 Engineering Mode）
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Page: Engineering `实时测量` / `结果分析与导出`; Operator `历史导入`
+- Steps: 分别选择 A/C dataset，启动完整离线测量，观察逐帧距离与曲线，停止并等待分析，下载 ZIP，再导入 C ZIP。
+- Expected: 点击启动不抛异常；正式点持续增长；停止后可分析、导出和导入。
+- Actual: A 运行至 197 帧、196 个正式点；C 运行至 202 帧、201 个正式点；两者均停止、生成分析和下载 ZIP，C ZIP 导入显示 Position 1 与组合曲线。
+- Result: PASS
+- Evidence: `output/playwright/multi-position-20260711/.playwright-cli/page-2026-07-11T02-45-10-070Z.png`, `page-2026-07-11T02-46-14-644Z.png`, `page-2026-07-11T02-47-17-069Z.png`, `page-2026-07-11T02-48-58-431Z.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
 ### P-0090 — 单 ROI 链路需要扩展为可配置 1–6 个检测位置
 
-- Status: IN_PROGRESS
+- Status: FIXED_PENDING_BROWSER_RETEST
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/services/region_detection_service.py`, live run / analysis / export / import services, `frontend/src/measurementRegions.ts`, `frontend/src/multiRegionAnalysis.ts`, `frontend/src/main.tsx`
 - Found date: 2026-07-11
@@ -144,29 +196,31 @@ Operator 实时页和结果页在同一坐标轴显示 1–6 条颜色一致的�
 
 ```text
 后端各切片 targeted pytest：PASS（模型、probe、filter、offline/real run、analysis、export/import）。
-前端 npm test：PASS，137 tests。
+完整后端 pytest：PASS，221 tests。
+前端 npm test：PASS，138 tests。
 前端 tsc --noEmit：PASS。
-完整后端 pytest、frontend build、export artifact audit 和真实浏览器复测待执行。
+前端 npm run build：PASS。
+三位置确定性导出审计：PASS；long 6 行、wide 2 行、三个 per-region CSV、regions JSON 与非空 PNG 均符合预期，旧 CSV 前三列顺序保持不变。
 ```
 
 #### Browser retest log
 
-- Retest date: pending
-- Browser: pending
-- OS: macOS
+- Retest date: 2026-07-11
+- Browser: Playwright HeadlessChrome 150.0.0.0
+- OS: macOS 26.1
 - Frontend URL: `http://127.0.0.1:5176/`
 - Backend URL: `http://127.0.0.1:8022`
-- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`, simulated/real run as available
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`, deterministic three-position export
 - Page: Operator Live Test / Results / History Import; Engineering Setup / Run / Analysis
-- Steps: pending
-- Expected: 3-position probe/run/analysis/export/import plus old single-position and Engineering regressions pass.
-- Actual: pending
-- Result: pending
-- Evidence: pending
+- Steps: Operator 将位置从默认 1 个增加到 3 个并独立重命名/修改 ROI，再增加到 6 个并删除回 1 个；导入三位置 ZIP、切换位置 2 图例、导入旧单 ROI JSON；Engineering 对 Golden A/C 分别 Probe、Live Offline、停止、Analysis、Export，并导入 C ZIP；切换 real-real 检查 Operator 真机条件。
+- Expected: 位置数量/编辑边界正确，新旧导入可显示，Engineering 单 ROI 不回归，Golden A/C 流程可完成；真实硬件在线时执行三位置 Operator Probe/Run/Analysis。
+- Actual: 默认/最大/最小位置边界、独立 ROI、三位置结果卡/组合曲线/图例、旧数据包装 Position 1、Engineering Golden A/C 全流程均通过。`real-real` 下 `/api/hardware/cameras` 返回空列表，配置的 `/dev/cu.usbserial-11210` 不存在，Operator 正确显示“真实硬件不可用”并禁用 Probe/Run。
+- Result: PARTIAL PASS；软件与可执行浏览器路径通过，Operator 真机三位置 Probe/Run/运行锁定/逐位置停止分析因现场硬件不可用待补。
+- Evidence: `output/playwright/multi-position-20260711/.playwright-cli/page-2026-07-11T02-33-10-396Z.png`, `page-2026-07-11T02-33-44-799Z.png`, `page-2026-07-11T02-34-22-613Z.png`, `page-2026-07-11T02-35-49-773Z.png`, `page-2026-07-11T02-36-20-143Z.png`, `page-2026-07-11T02-37-20-212Z.png`, `page-2026-07-11T02-37-39-889Z.png`, `page-2026-07-11T02-48-58-431Z.png`; `output/verification/multi-position-export-audit/audit.json`; `output/dev/g3-fast-start-backend-8022.log`
 
 #### Final status
 
-IN_PROGRESS
+FIXED_PENDING_BROWSER_RETEST
 
 ### P-0088 — 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败
 
