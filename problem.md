@@ -104,10 +104,69 @@
 | P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
 | P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
 | P-0088 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / export csv | 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败 | 2026-07-09 | 2026-07-09 | Codex | 后端导出 API、backend integration/unit、frontend test/build 已通过；导出下载浏览器复测待补 |
+| P-0090 | IN_PROGRESS | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 增量双层兼容实现与自动化测试进行中；待全量验证和真实浏览器/Golden A/C 复测 |
 
 ---
 
 ## 3. 问题详情
+
+### P-0090 — 单 ROI 链路需要扩展为可配置 1–6 个检测位置
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/services/region_detection_service.py`, live run / analysis / export / import services, `frontend/src/measurementRegions.ts`, `frontend/src/multiRegionAnalysis.ts`, `frontend/src/main.tsx`
+- Found date: 2026-07-11
+- Last update: 2026-07-11
+- Owner/tool: Codex
+
+#### Problem
+
+系统原有数据模型、逐帧检测、异常过滤、实时曲线、AFAS 结果和导出均只有一套 ROI 数据。实际测试需要在开始前配置 1–6 个检测位置，并在同一相机帧和同一温度读数上分别检测；任一位置失败或异常跳变不得影响其他位置，同时旧单 ROI manifest/API/export/import 和 Engineering Mode 必须继续可用。
+
+#### Expected
+
+```text
+默认 1 个位置，测试前可添加/删除，最少 1 个、最多 6 个；运行中位置列表和 ROI 锁定。
+每帧只采集一次图像、读取一次温度，所有启用位置独立检测、过滤、曲线和 AFAS。
+Operator 实时页和结果页在同一坐标轴显示 1–6 条颜色一致的曲线。
+导出同时包含 legacy CSV/JSON/PNG 与 long/wide/per-region/combined 多位置产物。
+旧单 ROI 数据在边界层自动包装为 region_1。
+```
+
+#### Fix summary
+
+- 采用“增量双层兼容结构”：新路径以 `regions / region_results / region_detection_results / analysis.regions` 为权威，旧顶层字段镜像第一个启用位置。
+- 后端新增按 `region_id` 隔离的检测运行时状态，并在 offline/real run 中复用一次帧采集和一次温度读取。
+- AFAS、导出和导入按位置扩展，同时保留旧单位置文件和字段顺序。
+- Operator 前端新增数组式位置管理、多 ROI/A/B overlay、逐位置状态、多曲线同轴图、逐位置结果卡片、分析进度与新旧历史导入兼容。
+
+#### Tests run
+
+```text
+后端各切片 targeted pytest：PASS（模型、probe、filter、offline/real run、analysis、export/import）。
+前端 npm test：PASS，137 tests。
+前端 tsc --noEmit：PASS。
+完整后端 pytest、frontend build、export artifact audit 和真实浏览器复测待执行。
+```
+
+#### Browser retest log
+
+- Retest date: pending
+- Browser: pending
+- OS: macOS
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`, simulated/real run as available
+- Page: Operator Live Test / Results / History Import; Engineering Setup / Run / Analysis
+- Steps: pending
+- Expected: 3-position probe/run/analysis/export/import plus old single-position and Engineering regressions pass.
+- Actual: pending
+- Result: pending
+- Evidence: pending
+
+#### Final status
+
+IN_PROGRESS
 
 ### P-0088 — 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败
 
