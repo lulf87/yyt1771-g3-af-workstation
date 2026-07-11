@@ -21,6 +21,29 @@ function sourceSlice(startMarker, endMarker) {
   return mainSource.slice(start, end);
 }
 
+test("application root exposes only the actual-use operator workflow", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+
+  assert.doesNotMatch(app, /<UiModeSwitch/);
+  assert.doesNotMatch(app, /uiMode === "engineering"/);
+  assert.doesNotMatch(app, /readInitialUiMode/);
+  assert.doesNotMatch(app, /persistUiMode/);
+  assert.doesNotMatch(app, /setUiMode/);
+  assert.match(app, /navItemsForUiMode\("operator"\)/);
+});
+
+test("operator workflow is driven by backend runtime source without a source switch", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+  const operatorPage = sourceSlice("function OperatorRunPage({", "function OperatorSourceControls({");
+
+  assert.match(app, /getAppRuntime\(\)/);
+  assert.match(app, /appRuntime\?\.runtime_source === "simulated_material"/);
+  assert.match(operatorPage, /Simulated material debug/);
+  assert.match(operatorPage, /Simulated material debug mode is active\. This is not real test data\./);
+  assert.match(operatorPage, /Start simulated test/);
+  assert.doesNotMatch(operatorPage, /<OperatorSourceControls/);
+});
+
 async function loadOperatorTemperaturePollingModule() {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });

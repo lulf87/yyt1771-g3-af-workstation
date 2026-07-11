@@ -30,6 +30,7 @@ import {
   frameImageUrl,
   getHardwareSetupEnvironment,
   getHardwareProfile,
+  getAppRuntime,
   getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
@@ -59,6 +60,7 @@ import {
   type AfasAnalysisParameters,
   type AfasPreprocessingParameters,
   type AnalysisResult,
+  type AppRuntime,
   type CameraPreviewResponse,
   type DetectionResult,
   type DiagnosticImages,
@@ -228,8 +230,6 @@ import {
   navItemsForUiMode,
   normalizePageForUiMode,
   pageForSetupSourceEffects,
-  persistUiMode,
-  readInitialUiMode,
   type AppPage,
   type UiMode
 } from "./uiMode";
@@ -626,15 +626,13 @@ function persistOperatorDataSource(source: OperatorDataSource): void {
 }
 
 function App() {
-  const initialUiMode = useMemo(() => readInitialUiMode(), []);
   const initialOperatorDataSource = useMemo(() => readInitialOperatorDataSource(), []);
-  const [uiMode, setUiMode] = useState<UiMode>(initialUiMode);
-  const [page, setPage] = useState<Page>(() => defaultPageForUiMode(initialUiMode));
+  const uiMode: UiMode = "operator";
+  const [page, setPage] = useState<Page>(() => defaultPageForUiMode("operator"));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
   const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
-  const [setupSource, setSetupSource] = useState<SetupSourceKind>(() =>
-    initialUiMode === "operator" ? initialOperatorDataSource : "offline_dataset"
-  );
+  const [appRuntime, setAppRuntime] = useState<AppRuntime | null>(null);
+  const [setupSource, setSetupSource] = useState<SetupSourceKind>(initialOperatorDataSource);
   const [operatorDataSource, setOperatorDataSource] = useState<OperatorDataSource>(initialOperatorDataSource);
   const [datasets, setDatasets] = useState<OfflineDatasetListItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -689,8 +687,18 @@ function App() {
   const operatorRealHardwareAvailable = operatorSourceRealHardwareAvailable && !operatorTemperatureHardwareUnavailable;
 
   useEffect(() => {
+    void refreshAppRuntime();
     void refreshDatasets();
   }, []);
+
+  useEffect(() => {
+    if (appRuntime?.runtime_source !== "simulated_material") return;
+    setOperatorDataSource("offline_dataset");
+    setSetupSource("offline_dataset");
+    if (appRuntime.simulated_dataset_id) {
+      setSelectedId(appRuntime.simulated_dataset_id);
+    }
+  }, [appRuntime]);
 
   useEffect(() => {
     if (uiMode !== "operator" || operatorDataSource !== "real_camera") {
@@ -976,15 +984,23 @@ function App() {
     await getHardwareProfile();
   }
 
+  async function refreshAppRuntime() {
+    try {
+      const runtime = await getAppRuntime();
+      setAppRuntime(runtime);
+      const source = runtime.runtime_source === "simulated_material" ? "offline_dataset" : "real_camera";
+      setOperatorDataSource(source);
+      setSetupSource(source);
+      if (runtime.simulated_dataset_id) setSelectedId(runtime.simulated_dataset_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function handleDeviceSetupSaved() {
     await refreshHardwareProfile();
     await refreshOperatorSourceStatus({ reason: "saved" });
     await refreshSerialPorts();
-  }
-
-  function changeUiMode(nextMode: UiMode) {
-    setUiMode(nextMode);
-    persistUiMode(window.localStorage, nextMode);
   }
 
   async function runProbe(targetFrame = frameIndex) {
@@ -1065,6 +1081,10 @@ function App() {
   }
 
   async function runOperatorProbeCurrentFrame() {
+    if (appRuntime?.runtime_source === "simulated_material") {
+      await runProbe(frameIndex);
+      return;
+    }
     if (!operatorRealHardwareAvailable) {
       setOperatorStartMessage(t("Real hardware unavailable"));
       setProbe(null);
@@ -1258,6 +1278,10 @@ function App() {
   }
 
   function startOperatorRun() {
+    if (appRuntime?.runtime_source === "simulated_material") {
+      startOperatorOfflineRun();
+      return;
+    }
     startOperatorRealCameraRun();
   }
 
@@ -1627,13 +1651,12 @@ function App() {
           </div>
         </div>
         <nav className="tabs" aria-label={t("Primary")}>
-          {navItemsForUiMode(uiMode).map((item) => (
+          {navItemsForUiMode("operator").map((item) => (
             <TabButton page={item.page} current={page} onSelect={setPage} icon={pageIcon(item.page)} key={item.page}>
               {t(item.label)}
             </TabButton>
           ))}
         </nav>
-        <UiModeSwitch mode={uiMode} onMode={changeUiMode} />
         <label className="languageControl">
           <span>{t("Language")}</span>
           <select onChange={(event) => setLanguage(event.target.value as UiLanguage)} value={language}>
@@ -1644,38 +1667,15 @@ function App() {
             ))}
           </select>
         </label>
-        <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
+        {appRuntime?.runtime_source !== "simulated_material" ? <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
           <Settings size={17} aria-hidden="true" />
-        </button>
+        </button> : null}
         <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
           <RefreshCcw size={17} aria-hidden="true" />
         </button>
       </header>
 
-      <section className={uiMode === "operator" ? "workspace operatorWorkspace" : "workspace"}>
-        {uiMode === "engineering" ? (
-        <aside className="datasetRail" aria-label={t("Offline datasets")}>
-          {datasets.map((dataset) => (
-            <button
-              className={dataset.id === selectedId ? "datasetItem selected" : "datasetItem"}
-              key={dataset.id}
-              onClick={() => {
-                setSetupSource("offline_dataset");
-                setSelectedId(dataset.id);
-              }}
-              type="button"
-            >
-              <span className="datasetId">{uiDatasetLabel(language, dataset)}</span>
-              <span className="datasetMeta">
-                {uiObjectClass(language, dataset.object_class)} · {dataset.frame_count.toLocaleString()} {t("frames")}
-              </span>
-              <span className="datasetMeta">
-                {uiDetector(language, dataset.default_detector)} · {uiWidthMode(language, dataset.default_width_mode)}
-              </span>
-            </button>
-          ))}
-        </aside>
-        ) : null}
+      <section className="workspace operatorWorkspace">
 
         <section className="panelArea">
           {error ? <div className="statusBlock error">{error}</div> : null}
@@ -1695,6 +1695,7 @@ function App() {
               datasets={datasets}
               selectedId={selectedId}
               operatorDataSource={operatorDataSource}
+              appRuntime={appRuntime}
               operatorSourceStatus={operatorSourceStatus}
               operatorSourceStatusError={operatorSourceStatusError}
               loadingOperatorSourceStatus={loadingOperatorSourceStatus}
@@ -1746,11 +1747,11 @@ function App() {
           ) : null}
         </section>
       </section>
-      <DeviceSetupWizard
+      {appRuntime?.runtime_source !== "simulated_material" ? <DeviceSetupWizard
         open={deviceSetupOpen}
         onClose={() => setDeviceSetupOpen(false)}
         onSaved={handleDeviceSetupSaved}
-      />
+      /> : null}
     </main>
     </UiLanguageContext.Provider>
   );
@@ -1820,6 +1821,7 @@ function PageContent({
   datasets,
   selectedId,
   operatorDataSource,
+  appRuntime,
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
@@ -1880,6 +1882,7 @@ function PageContent({
   datasets: OfflineDatasetListItem[];
   selectedId: string;
   operatorDataSource: OperatorDataSource;
+  appRuntime: AppRuntime | null;
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
@@ -2047,6 +2050,7 @@ function PageContent({
   if (isOperatorRun) {
     return (
       <OperatorRunPage
+        appRuntime={appRuntime}
         measurement={measurement}
         onMeasurement={onMeasurement}
         onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
@@ -2183,6 +2187,7 @@ function PageContent({
 }
 
 function OperatorRunPage({
+  appRuntime,
   measurement,
   onMeasurement,
   onPreviewAffectingChange,
@@ -2218,6 +2223,7 @@ function OperatorRunPage({
   onRefreshOperatorSourceStatus,
   onOpenDeviceSetup
 }: {
+  appRuntime: AppRuntime | null;
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
@@ -2264,13 +2270,15 @@ function OperatorRunPage({
   );
   const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
   const operatorRunActive = runningCamera || runningOffline;
+  const simulatedMode = appRuntime?.runtime_source === "simulated_material";
   const temperatureHardwareMessage =
     temperatureError?.message ??
     (temperatureStatus?.temperature_status === "unavailable" ? temperatureStatus.reading.error : "");
   const temperatureHardwareUnavailable = Boolean(temperatureHardwareMessage);
   const realHardwareAvailable = operatorSourceStatus?.real_hardware_available === true && !temperatureHardwareUnavailable;
+  const sourceAvailable = simulatedMode || realHardwareAvailable;
   const realHardwareError = operatorSourceStatusError || temperatureHardwareMessage;
-  const canShowCurrentSourceData = realHardwareAvailable;
+  const canShowCurrentSourceData = sourceAvailable;
   useEffect(() => {
     if (normalizedMeasurement.regions.some((region) => region.region_id === activeRegionId)) return;
     setActiveRegionId(normalizedMeasurement.regions[0].region_id);
@@ -2322,13 +2330,14 @@ function OperatorRunPage({
     (setupProbeDetection ? probe?.frame.shape ?? cameraPreview?.shape ?? activeSourceShape : null) ??
     runResult?.run_manifest.frame_records[runResult.run_manifest.frame_records.length - 1]?.shape ??
     activeSourceShape;
+  const runtimeFrameLabel = simulatedMode ? t("Simulated material debug") : t("Real camera");
   const latestFrameTitle = liveRun?.detectionResult
-    ? `${t("Real camera")} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
+    ? `${runtimeFrameLabel} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
     : setupProbeDetection
       ? `${t("Current frame probe")} · ${t("frame")} ${setupProbeDetection.frame_index}`
     : latestDetection
-        ? `${t("Real camera")} · ${t("frame")} ${latestDetection.frame_index}`
-        : t("Real camera");
+        ? `${runtimeFrameLabel} · ${t("frame")} ${latestDetection.frame_index}`
+        : runtimeFrameLabel;
   const serialPortOptions = uniqueStrings([
     operatorSettings.serialPort ?? "",
     measurement.detector_config.temperature_serial_port ?? "",
@@ -2342,10 +2351,14 @@ function OperatorRunPage({
     .filter((region) => region.enabled)
     .every((region) => region.roi.width > 0 && region.roi.height > 0);
   const probeCurrentFrameDisabled =
-    probing || operatorRunActive || !hasMeasurementRoi || !realHardwareAvailable;
+    probing || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
-  const startDisabled = operatorRunActive || !realHardwareAvailable;
-  const sourceBadgeLabel = realHardwareAvailable ? "Real hardware ready" : "Real hardware unavailable";
+  const startDisabled = operatorRunActive || !sourceAvailable;
+  const sourceBadgeLabel = simulatedMode
+    ? "Simulated material debug"
+    : realHardwareAvailable
+      ? "Real hardware ready"
+      : "Real hardware unavailable";
   const completedRegionTrendSources = analysisRegionTrendSources(latestAnalysis);
   const liveRegionTrendSources = regionTrendSourcesFromLiveState(liveRun?.regionLiveStateById ?? {});
   const multiRegionTrendSources = liveRun ? liveRegionTrendSources : completedRegionTrendSources;
@@ -2359,12 +2372,17 @@ function OperatorRunPage({
     <div className="operatorRunGrid">
       <section className="toolPanel operatorControlPanel">
         <div className="operatorModeHeader">
-          <h2>{t("Real camera test")}</h2>
-          <span className={realHardwareAvailable ? "operatorSourceBadge" : "operatorSourceBadge warning"}>
+          <h2>{simulatedMode ? t("Simulated test") : t("Real camera test")}</h2>
+          <span className={sourceAvailable ? "operatorSourceBadge" : "operatorSourceBadge warning"}>
             {t(sourceBadgeLabel)}
           </span>
         </div>
-        {!realHardwareAvailable ? (
+        {simulatedMode ? (
+          <div className="statusBlock warning">
+            {t("Simulated material debug mode is active. This is not real test data.")}
+          </div>
+        ) : null}
+        {!simulatedMode && !realHardwareAvailable ? (
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
@@ -2401,7 +2419,7 @@ function OperatorRunPage({
             className="primaryButton"
             disabled={probeCurrentFrameDisabled}
             onClick={onProbeRealCameraSetup}
-            title={!realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            title={!sourceAvailable ? t("Real hardware unavailable") : undefined}
             type="button"
           >
             <SquareDashedMousePointer size={16} aria-hidden="true" />
@@ -2423,7 +2441,7 @@ function OperatorRunPage({
           checkingTemperature={checkingTemperature}
           loadingSerialPorts={loadingSerialPorts}
           operatorRunActive={operatorRunActive}
-          mode={realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
+          mode={simulatedMode ? "offline_dataset" : realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
           onPatch={onOperatorSettingsPatch}
           onConfirm={onOperatorSettingsConfirm}
           onRefreshSerialPorts={onRefreshSerialPorts}
@@ -2439,11 +2457,11 @@ function OperatorRunPage({
             className="primaryButton"
             disabled={startDisabled}
             onClick={onOperatorStartRun}
-            title={!realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            title={!sourceAvailable ? t("Real hardware unavailable") : undefined}
             type="button"
           >
             <Play size={16} aria-hidden="true" />
-            {operatorRunActive ? t("Running") : t("Start live test")}
+            {operatorRunActive ? t("Running") : simulatedMode ? t("Start simulated test") : t("Start live test")}
           </button>
           <button className="secondaryButton" disabled={!operatorRunActive} onClick={onStopRun} type="button">
             <Square size={16} aria-hidden="true" />
@@ -2452,7 +2470,7 @@ function OperatorRunPage({
         </div>
       </section>
       <section className="operatorVisualStack">
-        {!realHardwareAvailable ? (
+        {!simulatedMode && !realHardwareAvailable ? (
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
@@ -2480,13 +2498,13 @@ function OperatorRunPage({
             readOnly={operatorRunActive}
           />
         ) : (
-          <PreviewPlaceholder
-            title={t("Real camera")}
+              <PreviewPlaceholder
+                title={runtimeFrameLabel}
             refreshStatus={cameraPreviewRefreshStatus}
             previewError={cameraPreviewError}
           />
         )}
-        {!realHardwareAvailable ? null : (
+        {!sourceAvailable ? null : (
         <section className="toolPanel operatorTrendPanel">
           <div className="runTrendHeader">
             <div>

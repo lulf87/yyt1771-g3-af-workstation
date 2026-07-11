@@ -173,6 +173,11 @@ export type SourceProvenance = {
 };
 
 export type OperatorSourceStatus = {
+  runtime_source: "real_hardware" | "simulated_material";
+  product_mode: "production" | "development";
+  configuration_valid: boolean;
+  configuration_error_zh: string;
+  configuration_error_en: string;
   real_hardware_available: boolean;
   real_camera_available: boolean;
   real_temperature_available: boolean;
@@ -187,6 +192,17 @@ export type OperatorSourceStatus = {
   errors: string[];
   warnings: string[];
   provenance?: SourceProvenance;
+};
+
+export type AppRuntime = {
+  runtime_source: "real_hardware" | "simulated_material";
+  display_label_zh: string;
+  display_label_en: string;
+  simulation_enabled: boolean;
+  simulation_allowed: boolean;
+  product_mode: "production" | "development";
+  production_mode: boolean;
+  simulated_dataset_id: string;
 };
 
 export type HardwareSetupCheckStatus = "passed" | "failed" | "warning" | string;
@@ -1086,6 +1102,10 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
 
 export async function getOperatorSourceStatus(options: { signal?: AbortSignal } = {}): Promise<OperatorSourceStatus> {
   return requestJson<OperatorSourceStatus>("/api/operator/source-status", { signal: options.signal });
+}
+
+export async function getAppRuntime(): Promise<AppRuntime> {
+  return requestJson<AppRuntime>("/api/app/runtime");
 }
 
 export async function getHardwareProfile(): Promise<Record<string, unknown>> {

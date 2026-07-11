@@ -37,6 +37,32 @@ async function loadApiClientModule() {
   return import(`${pathToFileURL(resolve(outDir, "client.js")).href}?${Date.now()}`);
 }
 
+test("application runtime uses the immutable backend runtime endpoint", async () => {
+  const { getAppRuntime } = await loadApiClientModule();
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return Response.json({
+      runtime_source: "simulated_material",
+      display_label_zh: "模拟素材调试",
+      display_label_en: "Simulated material debug",
+      simulation_enabled: true,
+      simulation_allowed: true,
+      product_mode: "development",
+      production_mode: false,
+      simulated_dataset_id: "golden_a_20260522_dev_lab"
+    });
+  };
+  try {
+    const runtime = await getAppRuntime();
+    assert.equal(runtime.runtime_source, "simulated_material");
+    assert.match(calls[0], /\/api\/app\/runtime$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("run frame image URL targets run raw frame endpoint", async () => {
   const { buildRunFrameImageUrl } = await loadApiClientModule();
 

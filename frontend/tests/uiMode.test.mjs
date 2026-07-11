@@ -49,7 +49,7 @@ function memoryStorage(entries = {}) {
   };
 }
 
-test("UI mode defaults to operator, honors saved engineering, and query overrides both", async () => {
+test("UI mode is locked to operator regardless of query or legacy storage", async () => {
   const { UI_MODE_STORAGE_KEY, readInitialUiMode } = await loadUiModeModule();
 
   assert.equal(readInitialUiMode({ search: "", storage: memoryStorage() }), "operator");
@@ -58,7 +58,7 @@ test("UI mode defaults to operator, honors saved engineering, and query override
       search: "",
       storage: memoryStorage({ [UI_MODE_STORAGE_KEY]: "engineering" })
     }),
-    "engineering"
+    "operator"
   );
   assert.equal(
     readInitialUiMode({
@@ -72,35 +72,35 @@ test("UI mode defaults to operator, honors saved engineering, and query override
       search: "?mode=engineering",
       storage: memoryStorage()
     }),
-    "engineering"
+    "operator"
   );
 });
 
-test("persisted UI mode only accepts operator and engineering", async () => {
+test("legacy UI mode persistence is disabled", async () => {
   const { UI_MODE_STORAGE_KEY, coerceUiMode, persistUiMode } = await loadUiModeModule();
   const storage = memoryStorage();
 
   assert.equal(coerceUiMode("operator"), "operator");
-  assert.equal(coerceUiMode("engineering"), "engineering");
+  assert.equal(coerceUiMode("engineering"), null);
   assert.equal(coerceUiMode("debug"), null);
 
   persistUiMode(storage, "engineering");
-  assert.equal(storage.getItem(UI_MODE_STORAGE_KEY), "engineering");
+  assert.equal(storage.getItem(UI_MODE_STORAGE_KEY), null);
 });
 
-test("operator and engineering modes use distinct default pages and nav", async () => {
+test("all legacy mode helpers resolve to operator pages and navigation", async () => {
   const { defaultPageForUiMode, normalizePageForUiMode, navItemsForUiMode } = await loadUiModeModule();
 
   assert.equal(defaultPageForUiMode("operator"), "operatorRun");
-  assert.equal(defaultPageForUiMode("engineering"), "setup");
+  assert.equal(defaultPageForUiMode("engineering"), "operatorRun");
   assert.equal(normalizePageForUiMode("operator", "setup"), "operatorRun");
-  assert.equal(normalizePageForUiMode("engineering", "operatorImport"), "setup");
+  assert.equal(normalizePageForUiMode("engineering", "setup"), "operatorRun");
   assert.deepEqual(
     navItemsForUiMode("operator").map((item) => item.label),
     ["Live Test", "History Import", "Results / Export"]
   );
   assert.deepEqual(
     navItemsForUiMode("engineering").map((item) => item.label),
-    ["Setup", "Run", "Playback", "Analysis / Export"]
+    ["Live Test", "History Import", "Results / Export"]
   );
 });
