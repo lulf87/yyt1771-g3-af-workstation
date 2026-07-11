@@ -1189,3 +1189,13 @@ test("industrial curve frame model exposes shared Run and Analysis variants with
   assert.equal(runFrame.axisLayout.xAxisLabelY, baseFrame.height - 16);
   assert.equal(analysisFrame.axisLayout.xAxisLabelY, 540 - 18);
 });
+
+test("operator source renders a shared-axis multi-position trend with legend toggles", () => {
+  const source = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
+  assert.match(source, /function MultiRegionTrendChart\(/);
+  assert.match(source, /buildMultiRegionTrendModel\(/);
+  assert.match(source, /visibleRegionIds/);
+  assert.match(source, /multiRegionLegend/);
+  assert.match(source, /series\.map/);
+  assert.match(source, /region\.color|series\.color/);
+});

@@ -19,6 +19,9 @@ def build_live_point_status(
 ) -> dict[str, Any]:
     present = curve_points.get("temperature_distance") is not None
     return {
+        "region_id": detection.region_id,
+        "region_index": detection.region_index,
+        "region_label": detection.region_label,
         "temperature_distance_present": present,
         "temperature_distance_point_count": temperature_distance_point_count,
         "reason_if_missing": "" if present else _reason_if_temperature_distance_missing(detection),

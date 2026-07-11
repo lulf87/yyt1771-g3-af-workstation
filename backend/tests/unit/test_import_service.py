@@ -97,6 +97,61 @@ def test_import_run_export_zip_reads_project_export_bundle(tmp_path: Path) -> No
     assert view.warnings == []
 
 
+def test_import_multi_region_zip_preserves_region_analysis_and_curves(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    base = _manifest()
+    measurement_payload = base.measurement_definition.model_dump(mode="json")
+    roi = measurement_payload["roi"]
+    measurement_payload["regions"] = [
+        {
+            "region_id": "region_1",
+            "index": 1,
+            "label": "位置 1",
+            "enabled": True,
+            "roi": roi,
+            "color": "#ef4444",
+        },
+        {
+            "region_id": "region_2",
+            "index": 2,
+            "label": "位置 2",
+            "enabled": True,
+            "roi": roi,
+            "color": "#3b82f6",
+        },
+    ]
+    region_one = base.detection_results
+    region_two = [
+        result.model_copy(
+            update={
+                "region_id": "region_2",
+                "region_index": 2,
+                "region_label": "位置 2",
+                "region_color": "#3b82f6",
+            }
+        )
+        for result in base.detection_results
+    ]
+    manifest = RunManifest(
+        run_id="run-import-regions",
+        dataset_id=base.dataset_id,
+        measurement_definition=MeasurementDefinition.model_validate(measurement_payload),
+        detection_results=region_one,
+        region_detection_results=region_one + region_two,
+    )
+    run_store.write_run_manifest(manifest)
+    bundle_path = export_run_bundle(run_store, manifest.run_id)
+
+    view = import_run_export_bytes(filename=bundle_path.name, content=bundle_path.read_bytes())
+
+    assert view.measurement_definition is not None
+    assert len(view.measurement_definition["regions"]) == 2
+    assert view.analysis_result is not None
+    assert [region["region_id"] for region in view.analysis_result["regions"]] == ["region_1", "region_2"]
+    assert view.temperature_distance_image_data_url is not None
+    assert view.frame_summary.total_frames == 2
+
+
 def test_import_run_export_json_reads_structured_export_payload(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     manifest = _manifest()
@@ -114,6 +169,41 @@ def test_import_run_export_json_reads_structured_export_payload(tmp_path: Path) 
     assert view.provenance["overall_kind"] == "imported"
     assert "file does not include frame_results.csv" in view.warnings
     assert "file does not include temperature_distance.png" in view.warnings
+
+
+def test_import_legacy_single_region_json_normalizes_regions() -> None:
+    manifest = _manifest().model_dump(mode="json")
+    manifest["measurement_definition"].pop("regions", None)
+    manifest.pop("region_detection_results", None)
+    analysis = {
+        "analysis_id": "legacy-analysis",
+        "run_id": manifest["run_id"],
+        "all_frames": manifest["detection_results"],
+        "distance_time": [],
+        "raw_distance_time": [],
+        "stabilized_distance_time": [],
+        "temperature_time": [],
+        "temperature_distance": [],
+        "raw_temperature_distance": [],
+        "stabilized_temperature_distance": [],
+        "afas_preprocessing": {},
+        "afas_analysis": {},
+        "export_artifacts": [],
+        "created_at": "2026-07-11T00:00:00+00:00",
+    }
+    payload = {"run_manifest": manifest, "analysis_result": analysis}
+
+    view = import_run_export_bytes(
+        filename="legacy-run-export.json",
+        content=json.dumps(payload).encode("utf-8"),
+    )
+
+    assert view.measurement_definition is not None
+    assert view.measurement_definition["regions"][0]["region_id"] == "region_1"
+    assert view.run_manifest is not None
+    assert view.run_manifest["region_detection_results"] == view.run_manifest["detection_results"]
+    assert view.analysis_result is not None
+    assert view.analysis_result["regions"][0]["region_id"] == "region_1"
 
 
 def test_import_run_export_zip_tolerates_missing_optional_files(tmp_path: Path) -> None:

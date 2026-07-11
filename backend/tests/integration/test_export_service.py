@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from zipfile import ZipFile
@@ -85,6 +86,63 @@ def _manifest() -> RunManifest:
     )
 
 
+def _multi_region_manifest() -> RunManifest:
+    base = _manifest()
+    payload = base.measurement_definition.model_dump(mode="json")
+    roi = payload["roi"]
+    payload["regions"] = [
+        {
+            "region_id": "region_1",
+            "index": 1,
+            "label": "位置 1",
+            "enabled": True,
+            "roi": roi,
+            "color": "#ef4444",
+        },
+        {
+            "region_id": "region_2",
+            "index": 2,
+            "label": "位置 2",
+            "enabled": True,
+            "roi": roi,
+            "color": "#3b82f6",
+        },
+    ]
+    measurement = MeasurementDefinition.model_validate(payload)
+    region_one = [
+        result.model_copy(
+            update={
+                "region_id": "region_1",
+                "region_index": 1,
+                "region_label": "位置 1",
+                "region_color": "#ef4444",
+            }
+        )
+        for result in base.detection_results
+    ]
+    region_two = [
+        result.model_copy(
+            update={
+                "region_id": "region_2",
+                "region_index": 2,
+                "region_label": "位置 2",
+                "region_color": "#3b82f6",
+                "distance_px": result.distance_px + 10.0 if result.distance_px is not None else None,
+                "raw_distance_px": result.raw_distance_px + 10.0 if result.raw_distance_px is not None else None,
+            }
+        )
+        for result in base.detection_results
+    ]
+    return RunManifest(
+        run_id="run-export-regions",
+        dataset_id=base.dataset_id,
+        measurement_definition=measurement,
+        detection_results=region_one,
+        region_detection_results=region_one + region_two,
+        config_snapshot={"mode": "test-export-regions"},
+    )
+
+
 def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     manifest = _manifest()
@@ -136,6 +194,55 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
         with Image.open(run_dir / "exports" / filename) as image:
             assert image.size[0] > 10
             assert image.size[1] > 10
+
+
+def test_multi_region_export_writes_long_wide_region_json_and_images(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    manifest = _multi_region_manifest()
+    run_store.write_run_manifest(manifest)
+
+    bundle_path = export_run_bundle(run_store, manifest.run_id)
+
+    with ZipFile(bundle_path) as archive:
+        names = set(archive.namelist())
+        assert {
+            "frame_results.csv",
+            "frame_results_long.csv",
+            "frame_results_wide.csv",
+            "regions/region_1_frame_results.csv",
+            "regions/region_2_frame_results.csv",
+            "analysis_by_region.json",
+            "run_export.json",
+            "parameters.json",
+            "temperature_distance.png",
+            "temperature_distance_combined.png",
+            "temperature_distance_region_1.png",
+            "temperature_distance_region_2.png",
+            "roi_ab_overlay.png",
+            "roi_ab_overlay_combined.png",
+        }.issubset(names)
+        long_rows = list(csv.DictReader(archive.read("frame_results_long.csv").decode("utf-8").splitlines()))
+        wide_rows = list(csv.DictReader(archive.read("frame_results_wide.csv").decode("utf-8").splitlines()))
+        assert len(long_rows) == 4
+        assert {row["region_id"] for row in long_rows} == {"region_1", "region_2"}
+        assert len(wide_rows) == 2
+        assert "region_1_distance_px" in wide_rows[0]
+        assert "region_2_status" in wide_rows[0]
+        payload = json.loads(archive.read("run_export.json"))
+        assert len(payload["run_manifest"]["measurement_definition"]["regions"]) == 2
+        assert len(payload["run_manifest"]["region_detection_results"]) == 4
+        assert len(payload["analysis_result"]["regions"]) == 2
+        analysis_by_region = json.loads(archive.read("analysis_by_region.json"))
+        assert [region["region_id"] for region in analysis_by_region["regions"]] == ["region_1", "region_2"]
+        parameters = json.loads(archive.read("parameters.json"))
+        assert len(parameters["measurement_definition"]["regions"]) == 2
+        for image_name in [
+            "temperature_distance_combined.png",
+            "temperature_distance_region_1.png",
+            "temperature_distance_region_2.png",
+            "roi_ab_overlay_combined.png",
+        ]:
+            assert len(archive.read(image_name)) > 100
 
 
 def test_export_bundle_does_not_depend_on_or_include_raw_frames(tmp_path: Path) -> None:

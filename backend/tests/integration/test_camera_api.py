@@ -956,6 +956,8 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
         "stopping",
         "saving_manifest",
         "building_analysis",
+        "analyzing_region",
+        "analysis_region_complete",
         "complete",
     ]
     assert events[0]["dataset_id"] == "real_camera"
@@ -969,6 +971,10 @@ def test_real_camera_run_stream_endpoint_emits_frames_and_saves_run(monkeypatch,
     assert events[2]["processed_frames"] == 2
     assert events[3]["processed_frames"] == 2
     assert events[4]["processed_frames"] == 2
+    assert events[5]["region_id"] == "region_1"
+    assert events[5]["current"] == 1
+    assert events[5]["total"] == 1
+    assert events[6]["region_id"] == "region_1"
     assert events[-1]["run_manifest"]["config_snapshot"]["max_frames"] == 2
     assert events[-1]["run_manifest"]["config_snapshot"]["save_raw_frames"] is False
     assert events[-1]["run_manifest"]["config_snapshot"]["raw_frame_count"] == 0

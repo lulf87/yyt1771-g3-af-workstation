@@ -31,6 +31,48 @@ from yyt1771_g3.core.enums import (
 from yyt1771_g3.storage.manifest_io import read_json_model, write_json_model
 
 
+def _legacy_measurement_payload() -> dict[str, object]:
+    return {
+        "measurement_id": "legacy-region-measurement",
+        "object_class": "C_BUNDLE_ENVELOPE",
+        "detector": "BundleEnvelopeDetector",
+        "width_mode": "max_width",
+        "measurement_coordinates": "source_pixel",
+        "roi": {
+            "type": "rotated_rect",
+            "center_x": 60.0,
+            "center_y": 40.0,
+            "width": 30.0,
+            "height": 12.0,
+            "angle_deg": 0.0,
+        },
+    }
+
+
+def _region_payload(
+    index: int,
+    *,
+    region_id: str | None = None,
+    enabled: bool = True,
+    color: str | None = None,
+) -> dict[str, object]:
+    return {
+        "region_id": region_id or f"region_{index}",
+        "index": index,
+        "label": f"位置 {index}",
+        "enabled": enabled,
+        "color": color or ("#ef4444" if index == 1 else "#3b82f6"),
+        "roi": {
+            "type": "rotated_rect",
+            "center_x": float(index * 40),
+            "center_y": 40.0,
+            "width": 30.0,
+            "height": 12.0,
+            "angle_deg": 0.0,
+        },
+    }
+
+
 def test_measurement_definition_json_round_trip() -> None:
     measurement = MeasurementDefinition(
         measurement_id="golden-a-default",
@@ -73,6 +115,72 @@ def test_measurement_definition_defaults_missing_detector_mode_for_legacy_payloa
     assert measurement.detector_mode == "default"
     assert measurement.object_class == ObjectClass.C_BUNDLE_ENVELOPE
     assert measurement.detector == DetectorType.BUNDLE_ENVELOPE
+
+
+def test_measurement_definition_normalizes_legacy_roi_to_region_one() -> None:
+    measurement = MeasurementDefinition.model_validate(_legacy_measurement_payload())
+
+    assert len(measurement.regions) == 1
+    assert measurement.regions[0].region_id == "region_1"
+    assert measurement.regions[0].index == 1
+    assert measurement.regions[0].label == "位置 1"
+    assert measurement.regions[0].enabled is True
+    assert measurement.regions[0].color == "#ef4444"
+    assert measurement.regions[0].roi == measurement.roi
+    assert measurement.enabled_regions == measurement.regions
+
+
+def test_measurement_definition_uses_regions_and_mirrors_first_enabled_roi() -> None:
+    payload = _legacy_measurement_payload()
+    payload["regions"] = [
+        _region_payload(1, enabled=False),
+        _region_payload(2, enabled=True),
+    ]
+
+    measurement = MeasurementDefinition.model_validate(payload)
+
+    assert [region.region_id for region in measurement.enabled_regions] == ["region_2"]
+    assert measurement.roi == measurement.regions[1].roi
+
+
+@pytest.mark.parametrize("count", [0, 7])
+def test_measurement_definition_rejects_region_count_outside_one_to_six(count: int) -> None:
+    payload = _legacy_measurement_payload()
+    payload["roi"] = None
+    payload["regions"] = [_region_payload(index) for index in range(1, count + 1)]
+
+    with pytest.raises(ValueError, match="between 1 and 6"):
+        MeasurementDefinition.model_validate(payload)
+
+
+def test_measurement_definition_requires_one_enabled_region() -> None:
+    payload = _legacy_measurement_payload()
+    payload["regions"] = [
+        _region_payload(1, enabled=False),
+        _region_payload(2, enabled=False),
+    ]
+
+    with pytest.raises(ValueError, match="at least one enabled"):
+        MeasurementDefinition.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("regions", "message"),
+    [
+        ([_region_payload(1), _region_payload(2, region_id="region_1")], "region_id"),
+        ([_region_payload(1), {**_region_payload(2), "index": 1}], "index"),
+        ([_region_payload(1, color="red")], "color"),
+    ],
+)
+def test_measurement_definition_rejects_duplicate_identity_and_invalid_color(
+    regions: list[dict[str, object]],
+    message: str,
+) -> None:
+    payload = _legacy_measurement_payload()
+    payload["regions"] = regions
+
+    with pytest.raises(ValueError, match=message):
+        MeasurementDefinition.model_validate(payload)
 
 
 def test_detector_config_exposes_basic_contour_and_temporal_controls() -> None:
@@ -148,6 +256,10 @@ def test_detection_result_valid_and_invalid_contracts() -> None:
     assert valid.measurement_segment == [candidate.a, candidate.b]
     assert valid.curve_point_status == CurvePointStatus.VALID
     assert valid.raw_detected_distance_px == 42.0
+    assert valid.region_id == "region_1"
+    assert valid.region_index == 1
+    assert valid.region_label == "位置 1"
+    assert valid.region_color == "#ef4444"
 
     invalid = DetectionResult(
         frame_index=2,
@@ -216,6 +328,7 @@ def test_run_manifest_analysis_and_export_artifact_can_round_trip(tmp_path: Path
     assert restored == manifest
     assert restored.frame_records[0].raw_frame_saved is False
     assert restored.frame_records[0].preview_path == ""
+    assert restored.region_detection_results == restored.detection_results
 
     analysis = AnalysisResult(
         analysis_id="analysis-test",
@@ -235,3 +348,7 @@ def test_run_manifest_analysis_and_export_artifact_can_round_trip(tmp_path: Path
     )
 
     assert analysis.model_dump(mode="json")["export_artifacts"][0]["artifact_type"] == "csv"
+    assert len(analysis.regions) == 1
+    assert analysis.regions[0].region_id == "region_1"
+    assert analysis.regions[0].all_frames == analysis.all_frames
+    assert analysis.regions[0].distance_time == analysis.distance_time

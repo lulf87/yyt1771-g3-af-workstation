@@ -251,9 +251,68 @@ test("run export import uploads a selected export file to the import endpoint", 
     assert.match(calls[0].url, /\/api\/imports\/run-export$/);
     assert.equal(view.filename, "run_export.json");
     assert.equal(view.analysis_result.run_id, "run-imported");
+    assert.equal(view.analysis_result.regions.length, 1);
+    assert.equal(view.analysis_result.regions[0].region_id, "region_1");
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("legacy frame events and analyses normalize to position one", async () => {
+  const { normalizeAnalysisRegions, regionResultsFromEvent } = await loadApiClientModule();
+  const detection = {
+    frame_index: 12,
+    detection_status: "INVALID",
+    distance_px: null,
+    temperature_sync_status: "TEMP_SYNC_MISSING"
+  };
+  const curvePoints = {
+    distance_time: null,
+    temperature_time: null,
+    temperature_distance: null
+  };
+  const livePointStatus = {
+    temperature_distance_present: false,
+    temperature_distance_point_count: 0,
+    reason_if_missing: "invalid_detection",
+    detection_status: "INVALID",
+    curve_point_status: "INVALID_DETECTION",
+    temperature_sync_status: "TEMP_SYNC_MISSING",
+    distance_outlier_filtered: false
+  };
+
+  const regionResults = regionResultsFromEvent({
+    detection_result: detection,
+    curve_points: curvePoints,
+    live_point_status: livePointStatus
+  });
+  assert.equal(regionResults.length, 1);
+  assert.equal(regionResults[0].region_id, "region_1");
+  assert.equal(regionResults[0].color, "#ef4444");
+  assert.equal(regionResults[0].detection_result.region_id, "region_1");
+  assert.equal(regionResults[0].curve_points, curvePoints);
+
+  const legacyAnalysis = {
+    analysis_id: "analysis-legacy",
+    run_id: "run-legacy",
+    all_frames: [detection],
+    distance_time: [],
+    raw_distance_time: [],
+    stabilized_distance_time: [],
+    temperature_time: [],
+    temperature_distance: [],
+    raw_temperature_distance: [],
+    stabilized_temperature_distance: [],
+    afas_preprocessing: { temperature_distance_point_count: 0 },
+    afas_analysis: { result_status: "unavailable" },
+    export_artifacts: [],
+    created_at: "2026-07-11T00:00:00Z"
+  };
+  const normalized = normalizeAnalysisRegions(legacyAnalysis);
+  assert.equal(normalized.regions.length, 1);
+  assert.equal(normalized.regions[0].region_id, "region_1");
+  assert.equal(normalized.regions[0].region_label, "位置 1");
+  assert.equal(normalized.regions[0].afas_analysis.result_status, "unavailable");
 });
 
 test("operator source status uses the dedicated endpoint", async () => {
@@ -531,10 +590,15 @@ test("real camera setup probe posts measurement definition and optional frozen f
     assert.equal(body.measurement_definition.measurement_id, measurement.measurement_id);
     assert.equal(body.measurement_definition.detector_mode, "default");
     assert.deepEqual(body.measurement_definition.roi, measurement.roi);
+    assert.equal(body.measurement_definition.regions.length, 1);
+    assert.equal(body.measurement_definition.regions[0].region_id, "region_1");
+    assert.deepEqual(body.measurement_definition.regions[0].roi, measurement.roi);
     assert.deepEqual(body.measurement_definition.detector_config, measurement.detector_config);
     assert.equal(body.frame_png_data_url, "data:image/png;base64,frozen");
     assert.equal(body.frame_timestamp_ms, 1779448000123);
     assert.deepEqual(body.camera_meta, { model: "fixture" });
+    assert.equal(response.region_results.length, 1);
+    assert.equal(response.region_results[0].region_id, "region_1");
   } finally {
     globalThis.fetch = originalFetch;
   }

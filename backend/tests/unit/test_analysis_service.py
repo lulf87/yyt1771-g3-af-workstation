@@ -84,6 +84,87 @@ def test_temperature_distance_curve_uses_only_ok_or_interpolated_points() -> Non
     assert analysis.all_frames == manifest.detection_results
 
 
+def test_analysis_builds_independent_results_for_every_enabled_region() -> None:
+    roi = RotatedROI(center_x=10.0, center_y=10.0, width=12.0, height=8.0)
+    regions = [
+        {
+            "region_id": f"region_{index}",
+            "index": index,
+            "label": f"位置 {index}",
+            "enabled": True,
+            "roi": roi.model_dump(mode="json"),
+            "color": ["#ef4444", "#3b82f6", "#22c55e"][index - 1],
+        }
+        for index in range(1, 4)
+    ]
+    measurement = MeasurementDefinition.model_validate(
+        {
+            "measurement_id": "multi-region-analysis",
+            "object_class": "C_BUNDLE_ENVELOPE",
+            "detector": "BundleEnvelopeDetector",
+            "width_mode": "max_width",
+            "roi": roi.model_dump(mode="json"),
+            "regions": regions,
+        }
+    )
+    all_region_detections: list[DetectionResult] = []
+    by_region: dict[str, list[DetectionResult]] = {region["region_id"]: [] for region in regions}
+    for region_index in (1, 2):
+        for index in range(63):
+            temperature = 20.0 + index * 0.5
+            transition = 1.0 / (1.0 + 2.718281828 ** (-(temperature - 36.0) / 2.2))
+            detection = _valid_detection(
+                index + 1,
+                100.0 + region_index * 10.0 + transition * 55.0,
+                TemperatureSyncStatus.TEMP_SYNC_OK,
+                temperature,
+            ).model_copy(
+                update={
+                    "region_id": f"region_{region_index}",
+                    "region_index": region_index,
+                    "region_label": f"位置 {region_index}",
+                    "region_color": regions[region_index - 1]["color"],
+                }
+            )
+            by_region[f"region_{region_index}"].append(detection)
+            all_region_detections.append(detection)
+    for index in range(2):
+        detection = _valid_detection(
+            index + 1,
+            300.0 + index,
+            TemperatureSyncStatus.TEMP_SYNC_OK,
+            20.0 + index,
+        ).model_copy(
+            update={
+                "region_id": "region_3",
+                "region_index": 3,
+                "region_label": "位置 3",
+                "region_color": "#22c55e",
+            }
+        )
+        by_region["region_3"].append(detection)
+        all_region_detections.append(detection)
+    manifest = RunManifest(
+        run_id="run-multi-region-analysis",
+        dataset_id="golden_c_20260529_dev_lab",
+        measurement_definition=measurement,
+        detection_results=by_region["region_1"],
+        region_detection_results=all_region_detections,
+    )
+
+    analysis = build_analysis_result(manifest)
+
+    assert [region.region_id for region in analysis.regions] == ["region_1", "region_2", "region_3"]
+    assert [len(region.temperature_distance) for region in analysis.regions] == [63, 63, 2]
+    assert analysis.regions[0].afas_analysis["result_status"] == "ok"
+    assert analysis.regions[1].afas_analysis["result_status"] == "ok"
+    assert analysis.regions[2].afas_analysis["result_status"] == "unavailable"
+    assert analysis.regions[2].summary["failure_reason"]
+    assert analysis.regions[0].summary["raw_point_count"] == 63
+    assert analysis.temperature_distance == analysis.regions[0].temperature_distance
+    assert analysis.afas_analysis == analysis.regions[0].afas_analysis
+
+
 def test_curve_points_for_detection_excludes_stale_temperature_from_formal_curve() -> None:
     ok_detection = _valid_detection(1, 20.0, TemperatureSyncStatus.TEMP_SYNC_OK, 10.0)
     stale_detection = _valid_detection(2, 21.0, TemperatureSyncStatus.TEMP_SYNC_STALE, 11.0)

@@ -63,6 +63,8 @@ import {
   type DetectionResult,
   type DiagnosticImages,
   type MeasurementDefinition,
+  type MeasurementRegion,
+  type RegionResult,
   type ExportArtifact,
   type HardwareBinding,
   type HardwareBindingSaveResponse,
@@ -72,6 +74,7 @@ import {
   type HardwareSetupEnvironment,
   type HardwareTemperatureTestResponse,
   type ImportedRunView,
+  type LiveOfflineAnalysisRegionEvent,
   type LiveOfflineFrameEvent,
   type LiveOfflineProgressEvent,
   type OfflineDatasetListItem,
@@ -79,12 +82,22 @@ import {
   type OperatorSourceStatus,
   type ProbeResponse,
   type RealCameraSetupProbeResponse,
+  type RegionAnalysisResult,
   type RunResponse,
   type RotatedROI,
   type SerialPortInfo,
   type SourceProvenance,
   type TemperatureStatusResponse
 } from "./api/client";
+import {
+  MAX_MEASUREMENT_REGIONS,
+  addRegion,
+  normalizeMeasurementRegions,
+  removeRegion,
+  renameRegion,
+  toggleRegionEnabled,
+  updateRegionRoi
+} from "./measurementRegions";
 import {
   appendLiveAnalysis,
   buildLiveRunDiagnostics,
@@ -94,6 +107,16 @@ import {
   livePointStatusMessage,
   type LiveRunDiagnostics
 } from "./liveRunAnalysis";
+import {
+  appendRegionFrameEvent,
+  buildMultiRegionTrendModel,
+  emptyRegionLiveState,
+  regionTrendSourcesFromLiveState,
+  type MultiRegionTrendModel,
+  type MultiRegionTrendPoint,
+  type RegionLiveStateById,
+  type RegionTrendSource
+} from "./multiRegionAnalysis";
 import {
   SourceProvenanceBadge,
   provenanceLabel,
@@ -240,6 +263,13 @@ type LiveRunState = {
   frameShape: number[] | null;
   detectionResult: DetectionResult | null;
   analysis: AnalysisResult;
+  regionLiveStateById: RegionLiveStateById;
+  analysisProgress: {
+    current: number;
+    total: number;
+    regionId: string;
+    regionLabel: string;
+  } | null;
   diagnostics: LiveRunDiagnostics;
 };
 
@@ -1054,7 +1084,12 @@ function App() {
     setProbe(null);
     liveRunIdRef.current = null;
     liveRunProcessedFramesRef.current = 0;
-    setLiveRun(createInitialLiveRun(selectedId, frameIndex, selectedDataset?.frame_count ?? frameIndex));
+    setLiveRun(createInitialLiveRun(
+      selectedId,
+      frameIndex,
+      selectedDataset?.frame_count ?? frameIndex,
+      measurementForRun
+    ));
     const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
     const previewIntervalMs = 1000 / runPreviewFps;
     let lastPreviewUpdateMs = 0;
@@ -1086,12 +1121,15 @@ function App() {
                   operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   statusMessage: "",
+                  analysisProgress: null,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length
                 }
               : current
           );
+        } else if (event.event === "analyzing_region" || event.event === "analysis_region_complete") {
+          setLiveRun((current) => updateLiveRunFromRegionAnalysis(current, event));
         } else if (isLiveProgressEvent(event)) {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
@@ -1099,7 +1137,7 @@ function App() {
       setRunResult(response);
     } catch (err) {
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1141,6 +1179,7 @@ function App() {
               ...current,
               status: "stopped",
               statusMessage: "",
+              analysisProgress: null,
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -1453,7 +1492,7 @@ function App() {
     setProbe(null);
     liveRunIdRef.current = null;
     liveRunProcessedFramesRef.current = 0;
-    setLiveRun(createInitialRealCameraLiveRun());
+    setLiveRun(createInitialRealCameraLiveRun(measurementForRun));
     const runPreviewFps = Math.round(clamp(Number(measurementForRun.detector_config.run_preview_fps ?? 5), 1, 30));
     const previewIntervalMs = 1000 / runPreviewFps;
     let lastPreviewUpdateMs = 0;
@@ -1488,6 +1527,7 @@ function App() {
                   operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
                   provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   statusMessage: "",
+                  analysisProgress: null,
                   analysis: event.analysis_result,
                   processedFrames: event.run_manifest.frame_records.length,
                   totalFrames: event.run_manifest.frame_records.length,
@@ -1497,6 +1537,8 @@ function App() {
                 }
               : current
           );
+        } else if (event.event === "analyzing_region" || event.event === "analysis_region_complete") {
+          setLiveRun((current) => updateLiveRunFromRegionAnalysis(current, event));
         } else if (isLiveProgressEvent(event)) {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
@@ -1504,7 +1546,7 @@ function App() {
       setRunResult(response);
     } catch (err) {
       if (controller.signal.aborted) {
-        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "" } : current));
+        setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
         const stoppedRunId = liveRunIdRef.current;
         if (stoppedRunId) {
           try {
@@ -1532,6 +1574,7 @@ function App() {
               ...current,
               status: "stopped",
               statusMessage: "",
+              analysisProgress: null,
               runId: partialResult.run_manifest.run_id,
               operatorDataSource: partialResult.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
               provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
@@ -1981,11 +2024,11 @@ function PageContent({
   }
 
   function updateRoi(roi: RotatedROI) {
-    onMeasurement({ ...measurement, roi });
+    onMeasurement(updatePrimaryMeasurementRoi(measurement, roi));
   }
 
   function commitRoi(roi: RotatedROI) {
-    onMeasurement({ ...measurement, roi });
+    onMeasurement(updatePrimaryMeasurementRoi(measurement, roi));
     if (setupChangeRefreshTimerRef.current !== null) {
       window.clearTimeout(setupChangeRefreshTimerRef.current);
       setupChangeRefreshTimerRef.current = null;
@@ -1997,7 +2040,7 @@ function PageContent({
 
   function resetRoi() {
     const nextRoi = createDefaultRoiForShape(activeSourceShape);
-    onMeasurement({ ...measurement, roi: nextRoi });
+    onMeasurement(updatePrimaryMeasurementRoi(measurement, nextRoi));
     scheduleRealCameraSetupRefresh({ kind: "roi" });
   }
 
@@ -2006,7 +2049,6 @@ function PageContent({
       <OperatorRunPage
         measurement={measurement}
         onMeasurement={onMeasurement}
-        onResetRoi={resetRoi}
         onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
         cameraPreview={cameraPreview}
         cameraPreviewUrl={cameraPreviewUrl}
@@ -2039,8 +2081,6 @@ function PageContent({
         onRefreshSerialPorts={onRefreshSerialPorts}
         onRefreshOperatorSourceStatus={onRefreshOperatorSourceStatus}
         onOpenDeviceSetup={onOpenDeviceSetup}
-        onRoiChange={updateRoi}
-        onRoiCommit={commitRoi}
       />
     );
   }
@@ -2145,7 +2185,6 @@ function PageContent({
 function OperatorRunPage({
   measurement,
   onMeasurement,
-  onResetRoi,
   onPreviewAffectingChange,
   cameraPreview,
   cameraPreviewUrl,
@@ -2177,13 +2216,10 @@ function OperatorRunPage({
   onStopRun,
   onRefreshSerialPorts,
   onRefreshOperatorSourceStatus,
-  onOpenDeviceSetup,
-  onRoiChange,
-  onRoiCommit
+  onOpenDeviceSetup
 }: {
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
-  onResetRoi: () => void;
   onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
   cameraPreview: CameraPreviewResponse | null;
   cameraPreviewUrl: string;
@@ -2216,11 +2252,16 @@ function OperatorRunPage({
   onRefreshSerialPorts: () => void;
   onRefreshOperatorSourceStatus: () => void;
   onOpenDeviceSetup: () => void;
-  onRoiChange: (roi: RotatedROI) => void;
-  onRoiCommit: (roi: RotatedROI) => void;
 }) {
   const language = useUiLanguage();
   const t = useUiText();
+  const normalizedMeasurement = useMemo(
+    () => normalizeMeasurementRegions(measurement),
+    [measurement]
+  );
+  const [activeRegionId, setActiveRegionId] = useState(
+    () => normalizedMeasurement.regions[0].region_id
+  );
   const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
   const operatorRunActive = runningCamera || runningOffline;
   const temperatureHardwareMessage =
@@ -2230,6 +2271,10 @@ function OperatorRunPage({
   const realHardwareAvailable = operatorSourceStatus?.real_hardware_available === true && !temperatureHardwareUnavailable;
   const realHardwareError = operatorSourceStatusError || temperatureHardwareMessage;
   const canShowCurrentSourceData = realHardwareAvailable;
+  useEffect(() => {
+    if (normalizedMeasurement.regions.some((region) => region.region_id === activeRegionId)) return;
+    setActiveRegionId(normalizedMeasurement.regions[0].region_id);
+  }, [activeRegionId, normalizedMeasurement.regions]);
   const setupProbeDetection = canShowCurrentSourceData && !operatorRunActive && probe ? probe.detection_result : null;
   const latestRunResultDetection = canShowCurrentSourceData && runResult?.run_manifest.detection_results.length
     ? runResult.run_manifest.detection_results[runResult.run_manifest.detection_results.length - 1]
@@ -2238,6 +2283,31 @@ function OperatorRunPage({
     (canShowCurrentSourceData ? liveRun?.detectionResult : null) ??
     setupProbeDetection ??
     latestRunResultDetection;
+  const latestRunRegionDetections = runResult?.run_manifest.region_detection_results ?? [];
+  const latestRunRegionResults = normalizedMeasurement.regions.flatMap((region) => {
+    const detection = [...latestRunRegionDetections]
+      .reverse()
+      .find((candidate) => candidate.region_id === region.region_id);
+    return detection ? [regionResultFromDetection(region, detection)] : [];
+  });
+  const liveRegionResults = Object.values(liveRun?.regionLiveStateById ?? {})
+    .flatMap((state) => state.latestResult ? [state.latestResult] : []);
+  const latestRegionResults = canShowCurrentSourceData
+    ? !operatorRunActive && probe?.region_results?.length
+      ? probe.region_results
+      : liveRegionResults.length
+        ? liveRegionResults
+        : latestRunRegionResults
+    : [];
+  const regionResultsById = Object.fromEntries(
+    latestRegionResults.map((result) => [result.region_id, result])
+  ) as Record<string, RegionResult>;
+  const frameRegionOverlays: FrameCanvasRegionOverlay[] = normalizedMeasurement.regions
+    .filter((region) => region.enabled)
+    .map((region) => ({
+      region,
+      detection: regionResultsById[region.region_id]?.detection_result ?? null
+    }));
   const setupProbeFrameUrl = setupProbeDetection ? probe?.image_data_url ?? cameraPreviewUrl : "";
   const latestRunResultFrameUrl = canShowCurrentSourceData && runResult?.run_manifest.run_id && latestRunResultDetection
     ? runFrameImageUrl(runResult.run_manifest.run_id, latestRunResultDetection.frame_index, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH })
@@ -2268,12 +2338,22 @@ function OperatorRunPage({
     ? latestDetection?.temperature_celsius ?? temperatureStatus?.reading.celsius ?? null
     : temperatureStatus?.reading.celsius ?? latestDetection?.temperature_celsius ?? null;
   const cameraOk = realHardwareAvailable && (cameraPreview?.camera_status ?? cameraPreviewState?.cameraStatus ?? "ok") === "ok";
-  const hasMeasurementRoi = measurement.roi.width > 0 && measurement.roi.height > 0;
+  const hasMeasurementRoi = normalizedMeasurement.regions
+    .filter((region) => region.enabled)
+    .every((region) => region.roi.width > 0 && region.roi.height > 0);
   const probeCurrentFrameDisabled =
     probing || operatorRunActive || !hasMeasurementRoi || !realHardwareAvailable;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
   const startDisabled = operatorRunActive || !realHardwareAvailable;
   const sourceBadgeLabel = realHardwareAvailable ? "Real hardware ready" : "Real hardware unavailable";
+  const completedRegionTrendSources = analysisRegionTrendSources(latestAnalysis);
+  const liveRegionTrendSources = regionTrendSourcesFromLiveState(liveRun?.regionLiveStateById ?? {});
+  const multiRegionTrendSources = liveRun ? liveRegionTrendSources : completedRegionTrendSources;
+
+  function changeRegionRoi(regionId: string, roi: RotatedROI) {
+    if (operatorRunActive) return;
+    onMeasurement(updateRegionRoi(normalizedMeasurement, regionId, roi));
+  }
 
   return (
     <div className="operatorRunGrid">
@@ -2296,9 +2376,23 @@ function OperatorRunPage({
         ) : null}
         <OperatorDetectionParameterPanel
           disabled={operatorRunActive}
-          measurement={measurement}
+          measurement={normalizedMeasurement}
           onMeasurement={onMeasurement}
           onPreviewAffectingChange={onPreviewAffectingChange}
+        />
+        <OperatorMeasurementPositionsPanel
+          activeRegionId={activeRegionId}
+          disabled={operatorRunActive}
+          measurement={normalizedMeasurement}
+          regionLiveStateById={liveRun?.regionLiveStateById ?? {}}
+          regionResultsById={regionResultsById}
+          setActiveRegionId={setActiveRegionId}
+          onMeasurement={onMeasurement}
+          onPreviewAffectingChange={onPreviewAffectingChange}
+          onResetActiveRoi={() => {
+            changeRegionRoi(activeRegionId, createDefaultRoiForShape(activeSourceShape));
+            onPreviewAffectingChange({ kind: "roi" });
+          }}
         />
         <div className="controlStack operatorCameraStatus">
           <h3>{t("Camera")}</h3>
@@ -2334,18 +2428,12 @@ function OperatorRunPage({
           onConfirm={onOperatorSettingsConfirm}
           onRefreshSerialPorts={onRefreshSerialPorts}
         />
-        <details className="operatorRoiDisclosure">
-          <summary>
-            {t("Measurement ROI")}: {measurement.roi.width > 0 && measurement.roi.height > 0 ? t("Set") : t("Not set")}
-          </summary>
-          <MeasurementControls
-            measurement={measurement}
-            onMeasurement={onMeasurement}
-            onResetRoi={onResetRoi}
-            onPreviewAffectingChange={onPreviewAffectingChange}
-          />
-        </details>
         {operatorStartMessage ? <div className="inlineWarning">{operatorStartMessage}</div> : null}
+        {liveRun?.analysisProgress ? (
+          <div className="statusBlock operatorAnalysisProgress">
+            {analysisProgressLabel(liveRun.analysisProgress, language)}
+          </div>
+        ) : null}
         <div className="operatorRunActions">
           <button
             className="primaryButton"
@@ -2378,12 +2466,17 @@ function OperatorRunPage({
             title={latestFrameTitle}
             imageUrl={latestFrameUrl}
             sourceShape={latestFrameShape}
-            roi={measurement.roi}
+            roi={normalizedMeasurement.roi}
             abPoints={latestDetection?.ab_points ?? null}
             measurementSegment={latestDetection?.measurement_segment ?? null}
             debugArtifacts={latestDetection?.debug_artifacts ?? null}
-            onRoiChange={operatorRunActive ? undefined : onRoiChange}
-            onRoiCommit={operatorRunActive ? undefined : onRoiCommit}
+            regions={frameRegionOverlays}
+            activeRegionId={activeRegionId}
+            onRegionRoiChange={operatorRunActive ? undefined : changeRegionRoi}
+            onRegionRoiCommit={operatorRunActive ? undefined : (regionId, roi) => {
+              changeRegionRoi(regionId, roi);
+              onPreviewAffectingChange({ kind: "roi" });
+            }}
             readOnly={operatorRunActive}
           />
         ) : (
@@ -2402,15 +2495,11 @@ function OperatorRunPage({
             </div>
             <div className="runTrendStatusLabel">{liveRun?.status === "running" ? t("Current run so far") : t("Full run")}</div>
           </div>
-          {latestAnalysis ? (
-            <RunTrendChart
-              analysis={analysisForResultSource(latestAnalysis, "stabilized")}
-              runId={liveRun?.runId ?? runResult?.run_manifest.run_id ?? null}
+          {multiRegionTrendSources.length ? (
+            <MultiRegionTrendChart
+              sources={multiRegionTrendSources}
               isRunning={liveRun?.status === "running"}
               targetTemperature={measurement.detector_config.target_temperature_celsius ?? null}
-              diagnostics={liveRun?.diagnostics ?? null}
-              displaySmoothing={{ enabled: true, windowSize: 5 }}
-              compact
             />
           ) : (
             <div className="statusBlock">{t("No formal temperature-distance points operator")}</div>
@@ -2418,6 +2507,187 @@ function OperatorRunPage({
         </section>
         )}
       </section>
+    </div>
+  );
+}
+
+function OperatorMeasurementPositionsPanel({
+  activeRegionId,
+  disabled,
+  measurement,
+  regionLiveStateById,
+  regionResultsById,
+  setActiveRegionId,
+  onMeasurement,
+  onPreviewAffectingChange,
+  onResetActiveRoi
+}: {
+  activeRegionId: string;
+  disabled: boolean;
+  measurement: MeasurementDefinition;
+  regionLiveStateById: RegionLiveStateById;
+  regionResultsById: Record<string, RegionResult>;
+  setActiveRegionId: (regionId: string) => void;
+  onMeasurement: (measurement: MeasurementDefinition) => void;
+  onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
+  onResetActiveRoi: () => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const regions = measurement.regions ?? [];
+  const activeRegion = regions.find((region) => region.region_id === activeRegionId) ?? regions[0];
+  const enabledCount = regions.filter((region) => region.enabled).length;
+
+  function selectActiveRegion(regionId: string) {
+    setActiveRegionId(regionId);
+  }
+
+  function addMeasurementPosition() {
+    const next = addRegion(measurement);
+    const nextRegion = next.regions[next.regions.length - 1];
+    onMeasurement(next);
+    setActiveRegionId(nextRegion.region_id);
+  }
+
+  function deleteMeasurementPosition(regionId: string) {
+    const next = removeRegion(measurement, regionId);
+    onMeasurement(next);
+    if (regionId === activeRegionId) {
+      setActiveRegionId(next.regions[0].region_id);
+    }
+  }
+
+  return (
+    <div className="controlStack operatorMeasurementPositions">
+      <div className="operatorPositionHeader">
+        <h3>{t("Measurement positions")}</h3>
+        <span>{t("Enabled positions")}: {enabledCount}</span>
+      </div>
+      {disabled ? <div className="inlineWarning">{t("Test running positions locked")}</div> : null}
+      <div className="operatorPositionList">
+        {regions.map((region) => {
+          const result = regionResultsById[region.region_id];
+          const liveState = regionLiveStateById[region.region_id];
+          const pointCount = liveState?.formalPointCount ??
+            result?.live_point_status?.temperature_distance_point_count ??
+            0;
+          const missingPointMessage = livePointStatusMessage(
+            result?.live_point_status ?? liveState?.latestMissingReason
+          );
+          const isActive = region.region_id === activeRegionId;
+          const cannotDisable = region.enabled && enabledCount <= 1;
+          return (
+            <article
+              className={isActive ? "operatorPositionCard active" : "operatorPositionCard"}
+              key={region.region_id}
+              style={{ "--region-color": region.color } as React.CSSProperties}
+            >
+              <div className="operatorPositionTitleRow">
+                <button
+                  className="operatorPositionSelect"
+                  disabled={disabled}
+                  onClick={() => selectActiveRegion(region.region_id)}
+                  type="button"
+                >
+                  <span className="regionColorSwatch" style={{ backgroundColor: region.color }} />
+                  {isActive ? `${t("Active edit position")}: ` : ""}
+                  {measurementRegionDisplayLabel(region, language)}
+                </button>
+                <label className="operatorPositionEnabled">
+                  <input
+                    checked={region.enabled}
+                    disabled={disabled || cannotDisable}
+                    onChange={(event) =>
+                      onMeasurement(toggleRegionEnabled(measurement, region.region_id, event.target.checked))
+                    }
+                    type="checkbox"
+                  />
+                  {t(region.enabled ? "Enabled" : "Disabled")}
+                </label>
+              </div>
+              <label className="field compactField">
+                <span>{t("Position")}</span>
+                <input
+                  defaultValue={region.label}
+                  disabled={disabled}
+                  key={`${region.region_id}:${region.label}`}
+                  onBlur={(event) => {
+                    const nextLabel = event.currentTarget.value.trim();
+                    if (!nextLabel) {
+                      event.currentTarget.value = region.label;
+                      return;
+                    }
+                    if (nextLabel !== region.label) {
+                      onMeasurement(renameRegion(measurement, region.region_id, nextLabel));
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                  }}
+                />
+              </label>
+              <dl className="operatorPositionMetrics">
+                <Metric label="Current distance" value={formatDistance(result?.detection_result ?? null, "stabilized", language)} />
+                <Metric label="Current status" value={result?.detection_result.detection_status ?? t("No data")} />
+                <Metric label="Formal points" value={pointCount.toLocaleString()} />
+                <Metric
+                  label="Latest formal frame"
+                  value={liveState?.lastFormalFrameIndex ?? result?.curve_points.temperature_distance?.frame_index ?? t("No data")}
+                />
+              </dl>
+              {missingPointMessage ? (
+                <div className="operatorPositionEmpty">{t(missingPointMessage)}</div>
+              ) : !pointCount ? (
+                <div className="operatorPositionEmpty">{t("No formal points for this position")}</div>
+              ) : null}
+              <div className="buttonPair operatorPositionActions">
+                <button
+                  className="secondaryButton compactButton"
+                  disabled={disabled || !region.enabled}
+                  onClick={() => selectActiveRegion(region.region_id)}
+                  type="button"
+                >
+                  {t("Edit ROI")}
+                </button>
+                <button
+                  className="secondaryButton compactButton dangerButton"
+                  disabled={disabled || regions.length <= 1}
+                  onClick={() => deleteMeasurementPosition(region.region_id)}
+                  title={regions.length <= 1 ? t("At least one measurement position is required") : undefined}
+                  type="button"
+                >
+                  {t("Delete position")}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      <button
+        className="secondaryButton"
+        disabled={disabled || regions.length >= MAX_MEASUREMENT_REGIONS}
+        onClick={addMeasurementPosition}
+        title={regions.length >= MAX_MEASUREMENT_REGIONS ? t("Up to 6 measurement positions are supported") : undefined}
+        type="button"
+      >
+        {t("Add position")}
+      </button>
+      {regions.length >= MAX_MEASUREMENT_REGIONS ? (
+        <div className="operatorPositionLimit">{t("Up to 6 measurement positions are supported")}</div>
+      ) : null}
+      {activeRegion ? (
+        <details className="operatorRoiDisclosure" open>
+          <summary>{t("Edit ROI")}: {measurementRegionDisplayLabel(activeRegion, language)}</summary>
+          <MeasurementControls
+            disabled={disabled}
+            measurement={{ ...measurement, roi: activeRegion.roi }}
+            onMeasurement={onMeasurement}
+            onResetRoi={onResetActiveRoi}
+            onPreviewAffectingChange={onPreviewAffectingChange}
+            regionId={activeRegion.region_id}
+          />
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -3354,7 +3624,7 @@ function OperatorResultsPage({
           <Metric label="Formal temp-distance points" value={analysis?.temperature_distance.length ?? importedRun?.frame_summary.temperature_distance_points ?? 0} />
           <Metric label="Source" value={resultProvenance ? provenanceLabel(resultProvenance, language) : isImported ? "Imported file" : "Current run so far"} />
         </dl>
-        {analysis ? <OperatorAfasSummary analysis={analysis} /> : null}
+        {analysis ? <OperatorRegionResults analysis={analysis} /> : null}
         <button
           className="primaryButton spaced"
           disabled={!currentRunId}
@@ -3384,9 +3654,14 @@ function OperatorResultsPage({
         ) : null}
       </section>
       <section className="toolPanel operatorResultChart">
-        <h2>{t("AFAS temperature-distance review")}</h2>
+        <h2>{t("Combined curves")}</h2>
         {analysis ? (
-          <AnalysisAfasChart analysis={analysisForResultSource(analysis, "stabilized")} />
+          <MultiRegionTrendChart
+            sources={analysisRegionTrendSources(analysis)}
+            isRunning={false}
+            targetTemperature={null}
+            variant="result"
+          />
         ) : importedRun?.temperature_distance_image_data_url ? (
           <figure className="importedPngFigure">
             <img src={importedRun.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
@@ -3574,7 +3849,7 @@ function ImportedRunSummary({ view }: { view: ImportedRunView }) {
         <Metric label="Temp-distance points" value={view.frame_summary.temperature_distance_points.toLocaleString()} />
         <Metric label="AFAS status" value={readAfasStatus(analysis)} />
       </dl>
-      <OperatorAfasSummary analysis={analysis} />
+      {analysis ? <OperatorRegionResults analysis={analysis} /> : null}
       {Object.keys(view.frame_summary.invalid_reason_counts).length ? (
         <details className="operatorDetailsDisclosure">
           <summary>{uiText(language, "Invalid reason statistics")}</summary>
@@ -3592,7 +3867,12 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
     <div className="operatorImportedChart">
       <h3>{t("Temperature-distance curve")}</h3>
       {analysis ? (
-        <AnalysisAfasChart analysis={analysisForResultSource(analysis, "stabilized")} />
+        <MultiRegionTrendChart
+          sources={analysisRegionTrendSources(analysis)}
+          isRunning={false}
+          targetTemperature={null}
+          variant="result"
+        />
       ) : view.temperature_distance_image_data_url ? (
         <figure className="importedPngFigure">
           <img src={view.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
@@ -3602,6 +3882,47 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
         <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
       )}
     </div>
+  );
+}
+
+function OperatorRegionResults({ analysis }: { analysis: AnalysisResult }) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  if (!analysis.regions?.length) return <OperatorAfasSummary analysis={analysis} />;
+  return (
+    <section className="operatorRegionResults">
+      <h3>{t("Position results")}</h3>
+      <div className="operatorRegionResultGrid">
+        {analysis.regions?.map((region) => {
+          const summary = readRecord(region.summary);
+          const status = String(summary.status ?? readAfasStatusForRegion(region));
+          const failureReason = String(summary.failure_reason ?? "");
+          return (
+            <article
+              className={status === "ok" ? "operatorRegionResultCard ok" : "operatorRegionResultCard warning"}
+              key={region.region_id}
+              style={{ "--region-color": region.color } as React.CSSProperties}
+            >
+              <header>
+                <span className="regionColorSwatch" style={{ backgroundColor: region.color }} />
+                <strong>{measurementRegionDisplayLabel(regionAnalysisMeasurementRegion(region), language)}</strong>
+                <small>{uiStatus(language, status)}</small>
+              </header>
+              <dl>
+                <Metric label="Raw points" value={formatOptionalInteger(summary.raw_point_count ?? region.temperature_distance.length)} />
+                <Metric label="Smoothed points" value={formatOptionalInteger(summary.smoothed_point_count)} />
+                <Metric label="AS" value={formatOptionalNumber(summary.As, " °C", language)} />
+                <Metric label="AF" value={formatOptionalNumber(summary.Af, " °C", language)} />
+                <Metric label="ΔT" value={formatOptionalNumber(summary.delta_t, " °C", language)} />
+                <Metric label="Max slope" value={formatOptionalNumber(summary.max_slope_temperature, " °C", language)} />
+                <Metric label="Status" value={uiStatus(language, status)} />
+              </dl>
+              {failureReason ? <div className="operatorRegionFailure">{failureReason}</div> : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -3827,17 +4148,32 @@ function MeasurementControls({
   measurement,
   onMeasurement,
   onResetRoi,
-  onPreviewAffectingChange
+  onPreviewAffectingChange,
+  disabled = false,
+  regionId
 }: {
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onResetRoi?: () => void;
   onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
+  disabled?: boolean;
+  regionId?: string;
 }) {
   const language = useUiLanguage();
   const t = useUiText();
   function patchRoi(patch: Partial<RotatedROI>) {
-    onMeasurement({ ...measurement, roi: { ...measurement.roi, ...patch } });
+    const roi = { ...measurement.roi, ...patch };
+    if (measurement.regions?.length) {
+      const targetRegionId = regionId ??
+        [...measurement.regions]
+          .filter((region) => region.enabled)
+          .sort((left, right) => left.index - right.index)[0]?.region_id;
+      if (targetRegionId) {
+        onMeasurement(updateRegionRoi(measurement, targetRegionId, roi));
+        return;
+      }
+    }
+    onMeasurement({ ...measurement, roi });
   }
 
   function commitRoiField() {
@@ -3848,10 +4184,10 @@ function MeasurementControls({
     <div className="controlStack">
       <h3>{t("Measurement ROI")}</h3>
       <div className="twoColumnControls">
-        <NumberField label="Center X" value={measurement.roi.center_x} onChange={(v) => patchRoi({ center_x: v })} onCommit={commitRoiField} />
-        <NumberField label="Center Y" value={measurement.roi.center_y} onChange={(v) => patchRoi({ center_y: v })} onCommit={commitRoiField} />
-        <NumberField label="Width" value={measurement.roi.width} onChange={(v) => patchRoi({ width: Math.max(1, v) })} onCommit={commitRoiField} />
-        <NumberField label="Height" value={measurement.roi.height} onChange={(v) => patchRoi({ height: Math.max(1, v) })} onCommit={commitRoiField} />
+        <NumberField disabled={disabled} label="Center X" value={measurement.roi.center_x} onChange={(v) => patchRoi({ center_x: v })} onCommit={commitRoiField} />
+        <NumberField disabled={disabled} label="Center Y" value={measurement.roi.center_y} onChange={(v) => patchRoi({ center_y: v })} onCommit={commitRoiField} />
+        <NumberField disabled={disabled} label="Width" value={measurement.roi.width} onChange={(v) => patchRoi({ width: Math.max(1, v) })} onCommit={commitRoiField} />
+        <NumberField disabled={disabled} label="Height" value={measurement.roi.height} onChange={(v) => patchRoi({ height: Math.max(1, v) })} onCommit={commitRoiField} />
       </div>
       <label className="field">
         <span>
@@ -3859,6 +4195,7 @@ function MeasurementControls({
           {t("Angle")}
         </span>
         <input
+          disabled={disabled}
           onChange={(event) => patchRoi({ angle_deg: Number(event.target.value) })}
           onBlur={commitRoiField}
           onKeyDown={(event) => {
@@ -3870,7 +4207,7 @@ function MeasurementControls({
         />
       </label>
       {onResetRoi ? (
-        <button className="secondaryButton" onClick={onResetRoi} type="button">
+        <button className="secondaryButton" disabled={disabled} onClick={onResetRoi} type="button">
           <SquareDashedMousePointer size={16} aria-hidden="true" />
           {t("New / reset ROI")}
         </button>
@@ -4645,6 +4982,11 @@ function measurementPointToRoiLocal(point: ABPoint, roi: RotatedROI): ABPoint {
   };
 }
 
+type FrameCanvasRegionOverlay = {
+  region: MeasurementRegion;
+  detection: DetectionResult | null;
+};
+
 function FrameCanvas({
   title,
   imageUrl,
@@ -4653,8 +4995,12 @@ function FrameCanvas({
   abPoints,
   measurementSegment,
   debugArtifacts,
+  regions,
+  activeRegionId,
   onRoiChange,
   onRoiCommit,
+  onRegionRoiChange,
+  onRegionRoiCommit,
   readOnly = false
 }: {
   title: string;
@@ -4664,10 +5010,15 @@ function FrameCanvas({
   abPoints: { a: ABPoint; b: ABPoint } | null;
   measurementSegment?: ABPoint[] | null;
   debugArtifacts?: Record<string, unknown> | null;
+  regions?: FrameCanvasRegionOverlay[];
+  activeRegionId?: string;
   onRoiChange?: (roi: RotatedROI) => void;
   onRoiCommit?: (roi: RotatedROI) => void;
+  onRegionRoiChange?: (regionId: string, roi: RotatedROI) => void;
+  onRegionRoiCommit?: (regionId: string, roi: RotatedROI) => void;
   readOnly?: boolean;
 }) {
+  const language = useUiLanguage();
   const t = useUiText();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -4675,11 +5026,31 @@ function FrameCanvas({
   const [dragInteraction, setDragInteraction] = useState<RoiDragInteraction | null>(null);
   const source = { width: sourceShape[1] ?? 1, height: sourceShape[0] ?? 1 };
   const transform = fitSourceToDisplay(source, rect);
-  const displayRoi = measurementRoiToDisplay(roi, transform);
+  const compatibilityRegion: MeasurementRegion = {
+    region_id: "region_1",
+    index: 1,
+    label: "位置 1",
+    enabled: true,
+    roi,
+    color: "#ef4444"
+  };
+  const regionOverlays = regions?.length
+    ? regions
+    : [{
+        region: compatibilityRegion,
+        detection: abPoints
+          ? ({ ab_points: abPoints, measurement_segment: measurementSegment, debug_artifacts: debugArtifacts } as DetectionResult)
+          : null
+      }];
+  const activeRegionOverlay = regionOverlays.find(
+    ({ region }) => region.region_id === activeRegionId
+  ) ?? regionOverlays[0];
+  const activeRegion = activeRegionOverlay.region;
+  const displayRoi = measurementRoiToDisplay(activeRegion.roi, transform);
   const corners = roiCorners(displayRoi);
   const handles = roiResizeHandles(corners);
   const rotateHandle = roiRotateHandle(corners, displayRoi);
-  const editable = !readOnly && Boolean(onRoiChange);
+  const editable = !readOnly && Boolean(onRegionRoiChange || onRoiChange);
   const stableImage = useStableImageUrl(imageUrl);
   const latestDragRoiRef = useRef<RotatedROI | null>(null);
 
@@ -4707,16 +5078,16 @@ function FrameCanvas({
     if (!editable) return;
     event.stopPropagation();
     svgRef.current?.setPointerCapture(event.pointerId);
-    latestDragRoiRef.current = roi;
+    latestDragRoiRef.current = activeRegion.roi;
     setDragInteraction({
       ...interaction,
-      startRoi: roi,
+      startRoi: activeRegion.roi,
       startPoint: pointerToMeasurement(event)
     });
   }
 
   function updateInteraction(event: React.PointerEvent<SVGSVGElement>) {
-    if (!dragInteraction || !onRoiChange) return;
+    if (!dragInteraction || (!onRegionRoiChange && !onRoiChange)) return;
     const currentPoint = pointerToMeasurement(event);
     let nextRoi: RotatedROI;
     if (dragInteraction.kind === "move") {
@@ -4727,7 +5098,11 @@ function FrameCanvas({
       nextRoi = rotateRoiToPointer(dragInteraction.startRoi, currentPoint);
     }
     latestDragRoiRef.current = nextRoi;
-    onRoiChange(nextRoi);
+    if (onRegionRoiChange) {
+      onRegionRoiChange?.(activeRegion.region_id, nextRoi);
+    } else {
+      onRoiChange?.(nextRoi);
+    }
   }
 
   function finishInteraction(event: React.PointerEvent<SVGSVGElement>) {
@@ -4736,7 +5111,11 @@ function FrameCanvas({
     const committedRoi = latestDragRoiRef.current ?? dragInteraction.startRoi;
     latestDragRoiRef.current = null;
     setDragInteraction(null);
-    onRoiCommit?.(committedRoi);
+    if (onRegionRoiCommit) {
+      onRegionRoiCommit?.(activeRegion.region_id, committedRoi);
+    } else {
+      onRoiCommit?.(committedRoi);
+    }
   }
 
   return (
@@ -4762,17 +5141,50 @@ function FrameCanvas({
           {editable ? (
             <line
               className="roiRotateLine"
+              style={{ stroke: activeRegion.color }}
               x1={(corners[0].x + corners[1].x) / 2}
               y1={(corners[0].y + corners[1].y) / 2}
               x2={rotateHandle.x}
               y2={rotateHandle.y}
             />
           ) : null}
-          <polygon
-            className="roiPolygon"
-            onPointerDown={(event) => beginInteraction(event, { kind: "move" })}
-            points={corners.map((p) => `${p.x},${p.y}`).join(" ")}
-          />
+          {regionOverlays.map(({ region, detection }) => {
+            const regionDisplayRoi = measurementRoiToDisplay(region.roi, transform);
+            const regionCorners = roiCorners(regionDisplayRoi);
+            const isActive = activeRegionId
+              ? region.region_id === activeRegionId
+              : region.region_id === activeRegion.region_id;
+            return (
+              <g className={isActive ? "frameRegionOverlay active" : "frameRegionOverlay"} key={region.region_id}>
+                <polygon
+                  className="roiPolygon"
+                  fill={region.color}
+                  fillOpacity={isActive ? 0.12 : 0.05}
+                  onPointerDown={isActive ? (event) => beginInteraction(event, { kind: "move" }) : undefined}
+                  points={regionCorners.map((point) => `${point.x},${point.y}`).join(" ")}
+                  stroke={region.color}
+                  strokeWidth={isActive ? 3 : 2}
+                  style={{ fill: region.color, stroke: region.color }}
+                />
+                <text
+                  className="frameRegionLabel"
+                  fill={region.color}
+                  x={regionCorners[0].x + 6}
+                  y={regionCorners[0].y - 8}
+                >
+                  {measurementRegionDisplayLabel(region, language)}
+                </text>
+                {detection?.ab_points ? (
+                  <ABOverlay
+                    abPoints={detection.ab_points}
+                    color={region.color}
+                    measurementSegment={detection.measurement_segment}
+                    transform={transform}
+                  />
+                ) : null}
+              </g>
+            );
+          })}
           {editable ? (
             <>
               <circle
@@ -4782,6 +5194,7 @@ function FrameCanvas({
                 data-testid="roi-move-handle"
                 onPointerDown={(event) => beginInteraction(event, { kind: "move" })}
                 r={6}
+                style={{ fill: activeRegion.color, stroke: activeRegion.color }}
               />
               {handles.map((handle) => (
                 <rect
@@ -4790,6 +5203,7 @@ function FrameCanvas({
                   height={10}
                   key={handle.handle}
                   onPointerDown={(event) => beginInteraction(event, { kind: "resize", handle: handle.handle })}
+                  style={{ fill: "#ffffff", stroke: activeRegion.color }}
                   width={10}
                   x={handle.point.x - 5}
                   y={handle.point.y - 5}
@@ -4802,11 +5216,16 @@ function FrameCanvas({
                 data-testid="roi-rotate-handle"
                 onPointerDown={(event) => beginInteraction(event, { kind: "rotate" })}
                 r={7}
+                style={{ fill: activeRegion.color, stroke: activeRegion.color }}
               />
             </>
           ) : null}
-          {debugArtifacts ? <ContourProjectionOverlay debugArtifacts={debugArtifacts} transform={transform} /> : null}
-          {abPoints ? <ABOverlay abPoints={abPoints} measurementSegment={measurementSegment} transform={transform} /> : null}
+          {activeRegionOverlay.detection?.debug_artifacts || debugArtifacts ? (
+            <ContourProjectionOverlay
+              debugArtifacts={activeRegionOverlay.detection?.debug_artifacts ?? debugArtifacts ?? {}}
+              transform={transform}
+            />
+          ) : null}
         </svg>
       </div>
     </figure>
@@ -4987,11 +5406,13 @@ function arrowHeadPath(start: ABPoint, end: ABPoint, size: number, spread: numbe
 function ABOverlay({
   abPoints,
   measurementSegment,
-  transform
+  transform,
+  color
 }: {
   abPoints: { a: ABPoint; b: ABPoint };
   measurementSegment?: ABPoint[] | null;
   transform: FrameDisplayTransform;
+  color?: string;
 }) {
   const segment = measurementSegment ?? [abPoints.a, abPoints.b];
   const segmentStart = segment[0] ?? abPoints.a;
@@ -5001,14 +5422,14 @@ function ABOverlay({
   const lineStart = measurementPointToDisplay(segmentStart, transform);
   const lineEnd = measurementPointToDisplay(segmentEnd, transform);
   return (
-    <g className="abOverlay">
-      <line x1={lineStart.x} y1={lineStart.y} x2={lineEnd.x} y2={lineEnd.y} />
-      <circle cx={a.x} cy={a.y} r={5} />
-      <circle cx={b.x} cy={b.y} r={5} />
-      <text x={a.x + 8} y={a.y - 8}>
+    <g className="abOverlay" style={{ color }}>
+      <line stroke={color} style={{ stroke: color }} x1={lineStart.x} y1={lineStart.y} x2={lineEnd.x} y2={lineEnd.y} />
+      <circle cx={a.x} cy={a.y} fill={color} r={5} style={{ fill: color, stroke: color }} />
+      <circle cx={b.x} cy={b.y} fill={color} r={5} style={{ fill: color, stroke: color }} />
+      <text fill={color} style={{ fill: color }} x={a.x + 8} y={a.y - 8}>
         A
       </text>
-      <text x={b.x + 8} y={b.y + 16}>
+      <text fill={color} style={{ fill: color }} x={b.x + 8} y={b.y + 16}>
         B
       </text>
     </g>
@@ -5200,7 +5621,9 @@ function RunPage({
             <button
               className="primaryButton"
               disabled={runMode.kind === "real_camera_run" ? runningCamera : running}
-              onClick={runMode.kind === "real_camera_run" ? onStartRealCameraRun : onStartRun}
+              onClick={() => {
+                runMode.kind === "real_camera_run" ? onStartRealCameraRun() : onStartRun();
+              }}
               type="button"
             >
               <Play size={16} aria-hidden="true" />
@@ -6226,6 +6649,270 @@ function smoothedLabelY(model: AnalysisAfasModel): number {
   return point ? Math.max(model.plot.top + 28, point.y - 18) : model.plot.top + 28;
 }
 
+function MultiRegionTrendChart({
+  sources,
+  isRunning,
+  targetTemperature,
+  variant = "live"
+}: {
+  sources: RegionTrendSource[];
+  isRunning: boolean;
+  targetTemperature: number | null;
+  variant?: "live" | "result";
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const width = 900;
+  const height = 420;
+  const sourceIds = sources.map((source) => source.region_id);
+  const sourceIdKey = sourceIds.join("|");
+  const previousSourceIdsRef = useRef(new Set(sourceIds));
+  const [visibleRegionIds, setVisibleRegionIds] = useState<Set<string>>(
+    () => new Set(sourceIds)
+  );
+  const [showFormalPoints, setShowFormalPoints] = useState(true);
+  const [showDisplayTrend, setShowDisplayTrend] = useState(true);
+  const [showAfasSmoothed, setShowAfasSmoothed] = useState(variant === "result");
+  const [hoverTarget, setHoverTarget] = useState<{
+    series: MultiRegionTrendModel["series"][number];
+    point: MultiRegionTrendPoint;
+  } | null>(null);
+
+  useEffect(() => {
+    const nextSourceIds = new Set(sourceIds);
+    setVisibleRegionIds((current) => {
+      const next = new Set([...current].filter((regionId) => nextSourceIds.has(regionId)));
+      for (const regionId of nextSourceIds) {
+        if (!previousSourceIdsRef.current.has(regionId)) next.add(regionId);
+      }
+      return next;
+    });
+    previousSourceIdsRef.current = nextSourceIds;
+  }, [sourceIdKey]);
+
+  const model = useMemo(
+    () => buildMultiRegionTrendModel(sources, {
+      width,
+      height,
+      visibleRegionIds,
+      displaySmoothing: { enabled: true, windowSize: 5 },
+      maxPointsPerRegion: 1200,
+      layers: {
+        formalPoints: showFormalPoints,
+        displayTrend: showDisplayTrend,
+        afasSmoothed: showAfasSmoothed
+      }
+    }),
+    [sources, visibleRegionIds, showFormalPoints, showDisplayTrend, showAfasSmoothed]
+  );
+  const targetX = targetTemperature !== null &&
+    Number.isFinite(targetTemperature) &&
+    targetTemperature >= model.xRange.min &&
+    targetTemperature <= model.xRange.max
+      ? scaleValue(targetTemperature, model.xRange.min, model.xRange.max, model.plot.left, model.plot.right)
+      : null;
+
+  function toggleVisibleRegion(regionId: string) {
+    setVisibleRegionIds((current) => {
+      const next = new Set(current);
+      if (next.has(regionId)) next.delete(regionId);
+      else next.add(regionId);
+      return next;
+    });
+  }
+
+  function handleMouseMove(event: React.MouseEvent<SVGSVGElement>) {
+    const candidates = model.series.flatMap((series) =>
+      series.points.map((point) => ({ series, point }))
+    );
+    if (!candidates.length) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const pointer = {
+      x: ((event.clientX - bounds.left) / bounds.width) * model.width,
+      y: ((event.clientY - bounds.top) / bounds.height) * model.height
+    };
+    let nearest = candidates[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const dx = candidate.point.x - pointer.x;
+      const dy = candidate.point.y - pointer.y;
+      const distance = dx * dx + dy * dy;
+      if (distance < nearestDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+      }
+    }
+    setHoverTarget(nearestDistance <= 2500 ? nearest : null);
+  }
+
+  return (
+    <figure className="multiRegionTrendFigure">
+      <figcaption>
+        <span>{t("Combined curves")}</span>
+        <span>{isRunning ? t("Current run so far") : t("Full run")}</span>
+      </figcaption>
+      <div className="multiRegionLegend" aria-label={t("Measurement positions")}>
+        {model.legend.map((region) => (
+          <label key={region.regionId} style={{ "--region-color": region.color } as React.CSSProperties}>
+            <input
+              checked={region.visible}
+              onChange={() => toggleVisibleRegion(region.regionId)}
+              type="checkbox"
+            />
+            <span className="regionColorSwatch" style={{ backgroundColor: region.color }} />
+            {measurementRegionDisplayLabel({
+              region_id: region.regionId,
+              index: 1,
+              label: region.regionLabel,
+              enabled: true,
+              roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 },
+              color: region.color
+            }, language)}
+            <small>{region.pointCount.toLocaleString()}</small>
+          </label>
+        ))}
+      </div>
+      {variant === "result" ? (
+        <div className="multiRegionLayerToggles" aria-label={t("AFAS chart layers")}>
+          <label>
+            <input checked={showFormalPoints} onChange={(event) => setShowFormalPoints(event.target.checked)} type="checkbox" />
+            {t("Formal points")}
+          </label>
+          <label>
+            <input checked={showDisplayTrend} onChange={(event) => setShowDisplayTrend(event.target.checked)} type="checkbox" />
+            {t("Live smoothed trend")}
+          </label>
+          <label>
+            <input checked={showAfasSmoothed} onChange={(event) => setShowAfasSmoothed(event.target.checked)} type="checkbox" />
+            {t("Smoothed curve")}
+          </label>
+        </div>
+      ) : null}
+      <svg
+        aria-label={t("Run temperature-distance trend chart")}
+        className="multiRegionTrendSvg"
+        onMouseLeave={() => setHoverTarget(null)}
+        onMouseMove={handleMouseMove}
+        role="img"
+        viewBox={`0 0 ${model.width} ${model.height}`}
+      >
+        <rect
+          className="multiRegionPlotBackground"
+          height={model.plot.bottom - model.plot.top}
+          width={model.plot.right - model.plot.left}
+          x={model.plot.left}
+          y={model.plot.top}
+        />
+        {model.xTicks.map((tick) => (
+          <g className="multiRegionGridTick" key={`x-${tick.value}`}>
+            <line x1={tick.position} x2={tick.position} y1={model.plot.top} y2={model.plot.bottom} />
+            <text textAnchor="middle" x={tick.position} y={model.plot.bottom + 24}>{tick.label}</text>
+          </g>
+        ))}
+        {model.yTicks.map((tick) => (
+          <g className="multiRegionGridTick" key={`y-${tick.value}`}>
+            <line x1={model.plot.left} x2={model.plot.right} y1={tick.position} y2={tick.position} />
+            <text textAnchor="end" x={model.plot.left - 10} y={tick.position + 4}>{tick.label}</text>
+          </g>
+        ))}
+        <text className="multiRegionAxisLabel" textAnchor="middle" x={(model.plot.left + model.plot.right) / 2} y={model.height - 12}>
+          {t(model.xAxisLabel)}
+        </text>
+        <text
+          className="multiRegionAxisLabel"
+          textAnchor="middle"
+          transform={`rotate(-90 18 ${(model.plot.top + model.plot.bottom) / 2})`}
+          x={18}
+          y={(model.plot.top + model.plot.bottom) / 2}
+        >
+          {t(model.yAxisLabel)}
+        </text>
+        {targetX !== null ? (
+          <g className="multiRegionTargetMarker">
+            <line x1={targetX} x2={targetX} y1={model.plot.top} y2={model.plot.bottom} />
+            <text x={targetX + 8} y={model.plot.top + 16}>{t("Target")} {targetTemperature?.toFixed(2)}°C</text>
+          </g>
+        ) : null}
+        {model.series.map((series) => (
+          <g className="multiRegionSeries" key={series.regionId} style={{ color: series.color }}>
+            {showDisplayTrend && series.path && series.points.length > 1 ? (
+              <polyline points={series.path} style={{ stroke: series.color }} />
+            ) : null}
+            {showFormalPoints ? series.rawPoints.map((point) => (
+              <circle
+                className="multiRegionFormalPoint"
+                cx={point.x}
+                cy={point.y}
+                fill={series.color}
+                key={`${series.regionId}-formal-${point.frameIndex}-${point.temperature}`}
+                r={series.rawPoints.length === 1 ? 4 : 2.3}
+                style={{ fill: series.color }}
+              />
+            )) : null}
+            {showAfasSmoothed && series.afasPath && series.afasPoints.length > 1 ? (
+              <polyline className="multiRegionAfasLine" points={series.afasPath} style={{ stroke: series.color }} />
+            ) : null}
+            {showDisplayTrend && series.latestPoint ? (
+              <circle
+                className="multiRegionLatestPoint"
+                cx={series.latestPoint.x}
+                cy={series.latestPoint.y}
+                r={5.5}
+                style={{ fill: series.color, stroke: series.color }}
+              />
+            ) : null}
+          </g>
+        ))}
+        {!model.hasPoints ? (
+          <text className="curveEmptyText" textAnchor="middle" x={(model.plot.left + model.plot.right) / 2} y={(model.plot.top + model.plot.bottom) / 2}>
+            {t("No formal temperature-distance points")}
+          </text>
+        ) : null}
+        {hoverTarget ? <MultiRegionTrendTooltip target={hoverTarget} model={model} /> : null}
+      </svg>
+    </figure>
+  );
+}
+
+function MultiRegionTrendTooltip({
+  target,
+  model
+}: {
+  target: { series: MultiRegionTrendModel["series"][number]; point: MultiRegionTrendPoint };
+  model: MultiRegionTrendModel;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const { point, series } = target;
+  const lines = language === "zh"
+    ? [
+        `位置：${measurementRegionDisplayLabel({ region_id: series.regionId, index: series.regionIndex, label: series.regionLabel, enabled: true, roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 }, color: series.color }, language)}`,
+        `温度：${point.temperature.toFixed(2)} °C`,
+        `距离：${point.distance.toFixed(2)} 像素`,
+        `帧号：${point.frameIndex ?? t("No data")}`,
+        `检测：${point.detectionStatus ?? t("No data")} · 同步：${point.syncStatus ?? t("No data")}`
+      ]
+    : [
+        `position: ${measurementRegionDisplayLabel({ region_id: series.regionId, index: series.regionIndex, label: series.regionLabel, enabled: true, roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 }, color: series.color }, language)}`,
+        `temperature: ${point.temperature.toFixed(2)} °C`,
+        `distance: ${point.distance.toFixed(2)} px`,
+        `frame: ${point.frameIndex ?? "None"}`,
+        `detection: ${point.detectionStatus ?? "None"} · sync: ${point.syncStatus ?? "None"}`
+      ];
+  const boxWidth = 280;
+  const boxHeight = 92;
+  const x = point.x > model.plot.right - boxWidth - 12 ? point.x - boxWidth - 12 : point.x + 12;
+  const y = point.y > model.plot.bottom - boxHeight - 12 ? point.y - boxHeight - 12 : point.y + 12;
+  return (
+    <g className="multiRegionTooltip">
+      <rect height={boxHeight} rx={6} width={boxWidth} x={x} y={y} />
+      {lines.map((line, index) => (
+        <text key={line} x={x + 10} y={y + 18 + index * 16}>{line}</text>
+      ))}
+    </g>
+  );
+}
+
 function RunTrendChart({
   analysis,
   runId,
@@ -6935,7 +7622,7 @@ function createDefaultMeasurement(
 }
 
 function toOperatorActualUseMeasurement(measurement: MeasurementDefinition): MeasurementDefinition {
-  return {
+  return normalizeMeasurementRegions({
     ...measurement,
     source: "real_camera",
     object_class: "C_BUNDLE_ENVELOPE",
@@ -6947,7 +7634,7 @@ function toOperatorActualUseMeasurement(measurement: MeasurementDefinition): Mea
       ...measurement.detector_config,
       distance_outlier_filter_enabled: true
     }
-  };
+  });
 }
 
 function currentSourceProvenance({
@@ -7098,7 +7785,12 @@ function formatOperatorLastCheckedAt(timestampMs: number | null, language: UiLan
   });
 }
 
-function createInitialLiveRun(datasetId: string, startFrame: number, frameCount: number): LiveRunState {
+function createInitialLiveRun(
+  datasetId: string,
+  startFrame: number,
+  frameCount: number,
+  measurement: MeasurementDefinition
+): LiveRunState {
   const totalFrames = Math.max(1, frameCount - startFrame + 1);
   const runId = `pending-${datasetId}-${Date.now()}`;
   return {
@@ -7116,11 +7808,13 @@ function createInitialLiveRun(datasetId: string, startFrame: number, frameCount:
     frameShape: null,
     detectionResult: null,
     analysis: emptyAnalysis(runId),
+    regionLiveStateById: emptyRegionLiveState(measurement),
+    analysisProgress: null,
     diagnostics: emptyLiveRunDiagnostics()
   };
 }
 
-function createInitialRealCameraLiveRun(): LiveRunState {
+function createInitialRealCameraLiveRun(measurement: MeasurementDefinition): LiveRunState {
   const runId = `pending-real_camera-${Date.now()}`;
   return {
     runId,
@@ -7137,6 +7831,8 @@ function createInitialRealCameraLiveRun(): LiveRunState {
     frameShape: null,
     detectionResult: null,
     analysis: emptyAnalysis(runId),
+    regionLiveStateById: emptyRegionLiveState(measurement),
+    analysisProgress: null,
     diagnostics: emptyLiveRunDiagnostics()
   };
 }
@@ -7163,6 +7859,8 @@ function updateLiveRunFromFrame(
     frameShape: event.frame_record.shape,
     detectionResult: null,
     analysis: emptyAnalysis(runId),
+    regionLiveStateById: {},
+    analysisProgress: null,
     diagnostics: emptyLiveRunDiagnostics()
   };
   const detection = detectionWithSyncConfig(event.detection_result, event.sync_config);
@@ -7176,6 +7874,9 @@ function updateLiveRunFromFrame(
     event.sync_config
   );
   const diagnostics = buildLiveRunDiagnostics(previous.diagnostics, event, analysis, detection);
+  const regionLiveStateById = appendRegionFrameEvent(previous.regionLiveStateById, event, {
+    smoothingWindowSize: 5
+  });
   return {
     ...previous,
     runId,
@@ -7192,7 +7893,39 @@ function updateLiveRunFromFrame(
     frameShape: refreshPreview ? event.frame_record.shape : previous.frameShape,
     detectionResult: detection,
     analysis,
+    regionLiveStateById,
+    analysisProgress: null,
     diagnostics
+  };
+}
+
+function updateLiveRunFromRegionAnalysis(
+  current: LiveRunState | null,
+  event: LiveOfflineAnalysisRegionEvent
+): LiveRunState | null {
+  if (!current) return current;
+  let analysis = current.analysis;
+  if (event.event === "analysis_region_complete" && event.region_analysis) {
+    const regions = [...(analysis.regions ?? [])];
+    const existingIndex = regions.findIndex((region) => region.region_id === event.region_id);
+    if (existingIndex >= 0) regions[existingIndex] = event.region_analysis;
+    else regions.push(event.region_analysis);
+    analysis = {
+      ...analysis,
+      regions: regions.sort((left, right) => left.region_index - right.region_index)
+    };
+  }
+  return {
+    ...current,
+    status: "running",
+    statusMessage: "Building result analysis",
+    analysis,
+    analysisProgress: {
+      current: event.current,
+      total: event.total,
+      regionId: event.region_id,
+      regionLabel: event.region_label
+    }
   };
 }
 
@@ -7291,6 +8024,77 @@ function distanceForResultSource(result: DetectionResult | null, source: Detecti
   if (!result) return null;
   if (source === "raw") return result.raw_distance_px ?? result.distance_px;
   return result.stabilized_distance_px ?? result.distance_px;
+}
+
+function measurementRegionDisplayLabel(region: MeasurementRegion, language: UiLanguage): string {
+  const match = /^(?:位置|Position)\s+(\d+)$/i.exec(region.label.trim());
+  return match ? `${uiText(language, "Position")} ${match[1]}` : region.label;
+}
+
+function regionAnalysisMeasurementRegion(region: RegionAnalysisResult): MeasurementRegion {
+  return {
+    region_id: region.region_id,
+    index: region.region_index,
+    label: region.region_label,
+    enabled: true,
+    roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 },
+    color: region.color
+  };
+}
+
+function analysisRegionTrendSources(analysis: AnalysisResult | null): RegionTrendSource[] {
+  return analysis?.regions?.map((region) => ({
+    region_id: region.region_id,
+    region_index: region.region_index,
+    region_label: region.region_label,
+    color: region.color,
+    temperature_distance: region.temperature_distance,
+    all_frames: region.all_frames,
+    afas_preprocessing: region.afas_preprocessing
+  })) ?? [];
+}
+
+function readAfasStatusForRegion(region: RegionAnalysisResult): string {
+  const status = region.afas_analysis.result_status;
+  return typeof status === "string" ? status : "unavailable";
+}
+
+function analysisProgressLabel(
+  progress: NonNullable<LiveRunState["analysisProgress"]>,
+  language: UiLanguage
+): string {
+  return uiText(language, "Analyzing position {current}/{total}")
+    .replace("{current}", String(progress.current))
+    .replace("{total}", String(progress.total));
+}
+
+function updatePrimaryMeasurementRoi(
+  measurement: MeasurementDefinition,
+  roi: RotatedROI
+): MeasurementDefinition {
+  if (!measurement.regions?.length) return { ...measurement, roi };
+  const primary = [...measurement.regions]
+    .filter((region) => region.enabled)
+    .sort((left, right) => left.index - right.index)[0];
+  return primary ? updateRegionRoi(measurement, primary.region_id, roi) : { ...measurement, roi };
+}
+
+function regionResultFromDetection(
+  region: MeasurementRegion,
+  detection: DetectionResult
+): RegionResult {
+  return {
+    region_id: region.region_id,
+    region_index: region.index,
+    region_label: region.label,
+    color: region.color,
+    detection_result: detection,
+    curve_points: {
+      distance_time: null,
+      temperature_time: null,
+      temperature_distance: null
+    }
+  };
 }
 
 function formatDistance(result: DetectionResult | null, source: DetectionResultSource = "stabilized", language: UiLanguage = "en"): string {

@@ -194,6 +194,24 @@ def _real_camera_measurement(max_frames: int = 2) -> MeasurementDefinition:
     )
 
 
+def _multi_region_real_camera_measurement(max_frames: int = 1) -> MeasurementDefinition:
+    payload = _real_camera_measurement(max_frames=max_frames).model_dump(mode="json")
+    roi = payload["roi"]
+    colors = ["#ef4444", "#3b82f6", "#22c55e"]
+    payload["regions"] = [
+        {
+            "region_id": f"region_{index}",
+            "index": index,
+            "label": f"位置 {index}",
+            "enabled": True,
+            "roi": roi,
+            "color": colors[index - 1],
+        }
+        for index in range(1, 4)
+    ]
+    return MeasurementDefinition.model_validate(payload)
+
+
 def test_attach_temperature_honors_real_hardware_sync_tolerance() -> None:
     detection = _valid_detection()
 
@@ -222,6 +240,42 @@ def test_attach_temperature_honors_real_hardware_sync_tolerance() -> None:
     assert ten_ms_stale.temperature_delta_ms == 100.0
     assert thousand_ms_ok.temperature_sync_status == TemperatureSyncStatus.TEMP_SYNC_OK
     assert thousand_ms_ok.temperature_delta_ms == 100.0
+
+
+def test_real_camera_multi_region_frame_reads_camera_and_temperature_once(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    camera = FakeCameraSource()
+    temperature = FakeTemperatureController()
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=camera,
+            temperature_controller=temperature,
+            measurement=_multi_region_real_camera_measurement(max_frames=1),
+            max_frames=1,
+            target_fps=10.0,
+        )
+    )
+
+    frame_event = next(event for event in events if event["event"] == "frame")
+    complete = events[-1]
+    assert camera.index == 1
+    assert temperature.index == 1
+    assert [item["region_id"] for item in frame_event["region_results"]] == [
+        "region_1",
+        "region_2",
+        "region_3",
+    ]
+    assert frame_event["detection_result"] == frame_event["region_results"][0]["detection_result"]
+    assert len(complete["run_manifest"]["detection_results"]) == 1
+    assert len(complete["run_manifest"]["region_detection_results"]) == 3
+    assert [event["current"] for event in events if event["event"] == "analyzing_region"] == [1, 2, 3]
+    assert [event["region_id"] for event in events if event["event"] == "analysis_region_complete"] == [
+        "region_1",
+        "region_2",
+        "region_3",
+    ]
 
 
 def test_real_camera_run_defaults_to_preview_without_saving_raw_frames(tmp_path: Path) -> None:
@@ -443,6 +497,9 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
         "preview_path": "preview_frames/latest.png",
     }
     assert ok_events[0]["live_point_status"] == {
+        "region_id": "region_1",
+        "region_index": 1,
+        "region_label": "位置 1",
         "temperature_distance_present": True,
         "temperature_distance_point_count": 1,
         "reason_if_missing": "",
@@ -462,6 +519,9 @@ def test_real_camera_stream_sync_tolerance_controls_saved_temperature_distance_p
     assert stale_events[0]["detection_result"]["temperature_delta_ms"] == 100.0
     assert stale_events[0]["detection_result"]["temperature_sync_status"] == "TEMP_SYNC_STALE"
     assert stale_events[0]["live_point_status"] == {
+        "region_id": "region_1",
+        "region_index": 1,
+        "region_label": "位置 1",
         "temperature_distance_present": False,
         "temperature_distance_point_count": 0,
         "reason_if_missing": "temperature_sync_not_formal",
@@ -508,6 +568,8 @@ def test_real_camera_stream_stop_callback_saves_manual_stop_run(tmp_path: Path) 
         "stopping",
         "saving_manifest",
         "building_analysis",
+        "analyzing_region",
+        "analysis_region_complete",
         "complete",
     ]
     assert events[1]["run_id"] == events[0]["run_id"]
@@ -607,6 +669,8 @@ def test_real_camera_stream_stops_when_target_temperature_reached(tmp_path: Path
         "stopping",
         "saving_manifest",
         "building_analysis",
+        "analyzing_region",
+        "analysis_region_complete",
         "complete",
     ]
     assert events[0]["total_frames"] == 0
