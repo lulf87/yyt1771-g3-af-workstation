@@ -9267,9 +9267,9 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
-### P-0084 — 产品界面仍可切换工程模式且运行来源由浏览器选择
+### P-0092 — 产品界面仍可切换工程模式且运行来源由浏览器选择
 
-- Status: IN_PROGRESS
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/core/runtime_policy.py`, `backend/src/yyt1771_g3/api/main.py`, `scripts/g3_start.sh`
 - Found date: 2026-07-11
@@ -9293,32 +9293,68 @@ RESOLVED_BROWSER_VERIFIED
 - 新增启动期 `RuntimePolicy`、`/api/app/runtime` 和扩展 source-status。
 - 正常前端入口锁定 Operator，忽略旧 query/localStorage 模式，来源只读。
 - 新增真实/模拟跨源 acquisition guard、运行/导出来源字段和 `g3_start.sh real|sim`。
-- 浏览器复测完成后补充证据与最终状态。
+- 快速启动复用条件新增 `/api/app/runtime` 和 runtime source 匹配检查，避免复用旧代码或错误来源的后端。
 
 #### Tests run
 
 ```bash
-Pending final verification.
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python3 -m pytest backend/tests -q
+Result: PASS, 239 passed.
+
+cd frontend && npm test && npm run build
+Result: PASS, 141 passed; TypeScript/Vite production build passed.
+
+bash scripts/tests/test_g3_start.sh
+bash -n scripts/g3_start.sh scripts/g3_fast_start.sh scripts/tests/test_g3_start.sh
+git diff --check
+Result: PASS.
 ```
 
 #### Browser retest log
 
-- Retest date:
-- Browser:
-- OS:
-- Frontend URL:
-- Backend URL:
-- Dataset:
-- Page:
+- Retest date: 2026-07-11
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=engineering`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`; real profile `hik_gige_mvs + lu92xx_modbus_rtu`
+- Page: Operator 实时测试 / 结果与导出 / 历史导入
 - Steps:
+  1. 执行 `scripts/g3_start.sh sim`，确认 `/api/app/runtime.runtime_source=simulated_material`。
+  2. 通过 `?mode=engineering` 打开页面，确认仍只有实际使用导航，没有模式或来源切换、设备设置入口。
+  3. 添加至 3 个检测位置，执行“检测当前帧”，确认 3 个位置都有独立结果和 A/B overlay。
+  4. 确认设置并开始模拟测试，观察 3 条实时曲线、逐位置正式点数和运行中位置锁定；手动停止。
+  5. 检查结果页 3 个位置卡片和组合曲线；生成 export，检查 `run_export.json` / `parameters.json` 的 runtime 字段和多 ROI 文件。
+  6. 将 ZIP 导入历史页，确认显示离线/模拟素材 badge、非真实数据警告、3 个位置和组合曲线。
+  7. 执行 `scripts/g3_start.sh real`，确认旧 sim 后端因 runtime 不匹配被重启，`/api/app/runtime.runtime_source=real_hardware`。
+  8. 在本机温控串口不可用状态检查真实硬件 guard、禁用 Probe/Start、保留设备设置、且不显示模拟画面。
 - Expected:
+  - query/localStorage 不得打开 Engineering；启动命令是唯一来源选择。
+  - sim 保留完整 Operator 多 ROI 流程并明确标为非真实数据。
+  - real 不 fallback，硬件不可用时只显示 guard 和设备设置。
+  - run/export/import 保留 `runtime_source`、`product_mode` 和模拟 provenance。
 - Actual:
-- Result: PASS / FAIL
+  - `?mode=engineering` 仍只显示 `实时测试 / 历史导入 / 结果与导出`，sim badge 为“模拟素材调试”，无模式/来源/设备设置切换。
+  - 3 个位置 Probe 均为 VALID、距离 `988.00 px`；live run 到 69 帧，每个位置 68 个正式点，三条组合曲线正常，Stop 后恢复可编辑。
+  - run manifest 为 `runtime_source=simulated_material`、`product_mode=development`、`operator_data_source=simulated_material`，包含 3 regions 和 207 个 region results。
+  - export 包含 legacy、long、wide、3 个 region CSV、组合/分位置 PNG；`run_export.json` 与 `parameters.json` 均保存模拟 runtime 字段。
+  - ZIP 历史导入显示“离线/模拟素材”和非真实数据警告，保留 3 个位置结果与组合曲线。
+  - real 模式检测到 `/dev/cu.usbserial-11210` 不存在，显示真实硬件不可用，Probe/Start 禁用，设备设置可用，无模拟画面；浏览器控制台的温控 503 与页面 guard 一致。
+- Result: PASS
 - Evidence:
+  - `output/playwright/p0092_sim_operator_three_roi.png`
+  - `output/playwright/p0092_sim_import_source_badge.png`
+  - `output/playwright/p0092_real_hardware_unavailable_guard.png`
+  - `output/playwright/p0092_sim_export.zip`
+  - `output/playwright/p0092_real_runtime.json`
+  - `output/playwright/p0092_real_source_status.json`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260711T125502726649Z/run_manifest.json`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260711T125502726649Z/exports/`
+  - `output/dev/g3-fast-start-backend-8022.log`
 
 #### Final status
 
-IN_PROGRESS
+RESOLVED_BROWSER_VERIFIED
 
 ---
 
