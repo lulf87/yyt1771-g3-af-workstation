@@ -113,7 +113,7 @@ test("real camera frame refresh preserves all configured measurement positions",
       { region_id: "region_1", index: 1, label: "位置 1", enabled: true, roi: firstRoi, color: "#ef4444" },
       { region_id: "region_2", index: 2, label: "位置 2", enabled: true, roi: secondRoi, color: "#3b82f6" }
     ],
-    detector_config: { contrast_threshold: 30 }
+    detector_config: { contrast_threshold: 55 }
   };
 
   const next = createRealCameraMeasurementFromShape(previous, [1364, 2048]);
@@ -510,6 +510,8 @@ test("real camera setup live polling uses fast default interval, slow unavailabl
 
   const measurement = createRealCameraMeasurementFromShape(null, [1364, 2048]);
 
+  assert.equal(measurement.detector_config.contrast_threshold, 55);
+  assert.equal(measurement.detector_config.distance_outlier_max_jump_px, 100);
   assert.equal(measurement.detector_config.setup_preview_fps, 0);
   assert.equal(normalizeSetupPreviewFps(null), 0);
   assert.equal(normalizeSetupPreviewFps(0), 0);

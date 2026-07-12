@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
+const stylesSource = readFileSync(resolve(rootDir, "src/styles.css"), "utf8");
 
 function sourceSlice(startMarker, endMarker) {
   const start = mainSource.indexOf(startMarker);
@@ -54,6 +55,30 @@ test("current and imported results use the combined multi-position chart", () =>
   assert.match(importedReview, /<MultiRegionTrendChart/);
   assert.match(importedReview, /<MultiRegionAfasReview/);
   assert.match(importedReview, /analysisRegionTrendSources/);
+});
+
+test("results page stacks summary, combined chart, AFAS detail, and parameters at full width", () => {
+  const resultsPage = sourceSlice(
+    "function OperatorResultsPage({",
+    "function ExportSaveDialog({"
+  );
+  const order = [
+    'className="toolPanel operatorResultSummary"',
+    'className="toolPanel operatorResultChart"',
+    'className="toolPanel operatorAfasDetailPanel"',
+    'className="toolPanel operatorReanalysisPanel"'
+  ].map((marker) => resultsPage.indexOf(marker));
+
+  assert.ok(order.every((index) => index >= 0));
+  assert.deepEqual(order, [...order].sort((left, right) => left - right));
+  for (const className of [
+    "operatorResultSummary",
+    "operatorResultChart",
+    "operatorAfasDetailPanel",
+    "operatorReanalysisPanel"
+  ]) {
+    assert.match(stylesSource, new RegExp(`\\.${className}[^}]*grid-column:\\s*1 / -1`, "s"));
+  }
 });
 
 test("multi-position AFAS review switches one region into the existing detail chart", () => {

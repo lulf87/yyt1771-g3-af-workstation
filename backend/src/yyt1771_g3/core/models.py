@@ -101,7 +101,7 @@ class DetectorConfig(G3Model):
     switch_after_n_frames: int = 3
     jump_limit_px: float = 35.0
     min_confidence: float = 0.15
-    contrast_threshold: float = 30.0
+    contrast_threshold: float = 55.0
     dark_enhance_bg_kernel_px: int = 41
     hysteresis_low_ratio: float = 0.45
     mask_open_kernel_px: int = 3
@@ -197,7 +197,7 @@ class DetectorConfig(G3Model):
     temperature_serial_port: str = ""
     distance_outlier_filter_enabled: bool = True
     distance_outlier_reference_count: int = 5
-    distance_outlier_max_jump_px: float = 20.0
+    distance_outlier_max_jump_px: float = 100.0
     distance_outlier_baseline: Literal["last", "mean", "median"] = "median"
 
     @field_validator(

@@ -294,8 +294,16 @@ input {
 }
 
 .operatorResultsGrid {
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
+}
+
+.operatorResultSummary,
+.operatorResultChart,
+.operatorAfasDetailPanel,
+.operatorReanalysisPanel {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .operatorImportedDetails {
@@ -2433,10 +2441,6 @@ input {
 
 .operatorReanalysisPanel {
   align-self: start;
-}
-
-.operatorAfasDetailPanel {
-  grid-column: 1 / -1;
 }
 
 .multiRegionAfasReview {

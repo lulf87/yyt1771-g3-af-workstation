@@ -186,7 +186,7 @@ def test_measurement_definition_rejects_duplicate_identity_and_invalid_color(
 def test_detector_config_exposes_basic_contour_and_temporal_controls() -> None:
     config = DetectorConfig()
 
-    assert config.contrast_threshold == 30.0
+    assert config.contrast_threshold == 55.0
     assert config.contour_close_kernel == 21
     assert config.contour_close_kernel_px == 21
     assert config.contour_smooth_window == 7
@@ -194,7 +194,7 @@ def test_detector_config_exposes_basic_contour_and_temporal_controls() -> None:
     assert config.temporal_stabilization_strength == "medium"
     assert config.distance_outlier_filter_enabled is True
     assert config.distance_outlier_reference_count == 5
-    assert config.distance_outlier_max_jump_px == 20.0
+    assert config.distance_outlier_max_jump_px == 100.0
     assert config.distance_outlier_baseline == "median"
 
 

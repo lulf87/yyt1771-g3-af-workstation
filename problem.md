@@ -109,6 +109,7 @@
 | P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
 | P-0096 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator measurement positions | 检测位置卡片展示当前距离、状态、正式点数和最近帧等非必要信息 | 2026-07-12 | 2026-07-12 | Codex | 已移除位置卡片结果指标和空状态提示；保留位置编辑操作，Chromium 模拟模式复测通过 |
 | P-0097 | RESOLVED_BROWSER_VERIFIED | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 组合总览 + 按位置 AFAS 详情、当前位置/全部位置重分析已实现；3/6 位置 Chromium 流程通过 |
+| P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
 
 ---
 
@@ -9682,6 +9683,56 @@ RESOLVED_BROWSER_VERIFIED
   - `output/playwright/p0097-multi-region-afas-detail-20260712/valid-afas-position-2.png`
   - `output/playwright/p0097-multi-region-afas-detail-20260712/export.zip`
   - `output/playwright/p0097-multi-region-afas-detail-20260712/valid-afas-export.zip`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0098 — 结果页主栏宽度不一致且实时测试默认阈值需调整
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/styles.css`, `frontend/src/main.tsx`, `frontend/src/setupSources.ts`, `backend/src/yyt1771_g3/core/models.py`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+“结果与导出”使用两列网格，导致摘要和转变点分析参数缩在左列，组合曲线和详细图宽度不一致。实时测试新建测量的对比度阈值和最大允许跳变默认仍为 30 / 20。
+
+#### Fix summary
+
+- 结果页改为单列全宽，DOM 和视觉顺序固定为：结果与导出摘要 → 组合曲线 → AFAS 详细分析 → 转变点分析参数。
+- `operatorResultSummary`、`operatorResultChart`、`operatorAfasDetailPanel` 和 `operatorReanalysisPanel` 均占满结果网格宽度。
+- 前端运行默认配置、真实相机 setup 默认配置和后端 `DetectorConfig` 统一改为 `contrast_threshold=55`、`distance_outlier_max_jump_px=100`。
+- 已保存 run 的参数快照不迁移、不覆盖；只有新建测量和缺省配置使用新默认值。
+
+#### Tests run
+
+- Frontend: `npm test` → `148 passed`。
+- Frontend: `npm run build` → TypeScript + Vite PASS。
+- Backend: `PYTHONPATH=backend/src pytest -q backend/tests` → `249 passed in 94.91s`。
+- 新增结果页顺序和四栏全宽 CSS 回归测试；更新前后端默认配置断言。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: 实时测试；结果与导出
+- Steps: 冷打开模拟实际使用页检查检测方案默认值；导入有效 6 位置 AFAS 保存结果检查全宽结果布局；再执行 108 点模拟 run，停止后检查当前 run 的四个主栏及最下方参数栏。
+- Expected: 新测量默认显示 55 / 100；结果摘要、组合曲线、AFAS 详情和参数按指定顺序全宽排列。
+- Actual: 实时测试首次加载显示对比度阈值 55、最大允许跳变 100；当前 run 结果 DOM 顺序正确，四个主栏均使用单列全宽网格；转变点分析参数位于 AFAS 详情下方；控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0098-results-layout-defaults-20260712/results-full-width.png`
+  - `output/playwright/p0098-results-layout-defaults-20260712/results-current-run-full-page.png`
 
 #### Final status
 

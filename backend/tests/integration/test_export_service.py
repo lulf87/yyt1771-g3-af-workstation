@@ -191,7 +191,7 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
     assert parameters["measurement_definition"]["detector_config"]["contrast_threshold"] == 42.0
     assert parameters["measurement_definition"]["detector_config"]["distance_outlier_filter_enabled"] is True
     assert parameters["measurement_definition"]["detector_config"]["distance_outlier_reference_count"] == 5
-    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_max_jump_px"] == 20.0
+    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_max_jump_px"] == 100.0
     assert parameters["measurement_definition"]["detector_config"]["distance_outlier_baseline"] == "median"
     assert "operator_data_source" in parameters
     assert "provenance" in parameters
