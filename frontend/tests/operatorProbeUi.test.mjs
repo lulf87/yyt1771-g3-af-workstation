@@ -110,6 +110,20 @@ test("operator current-frame probe result drives image overlay without engineeri
   assert.doesNotMatch(operatorPage, /Probe Result/);
 });
 
+test("simulated operator startup displays the selected material before probing", () => {
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(mainSource, /startupFrameUrl=\{activeFrameUrl\}/);
+  assert.match(operatorPage, /startupFrameUrl: string;/);
+  assert.match(
+    operatorPage,
+    /cameraPreviewUrl \|\| \(simulatedMode \? startupFrameUrl : ""\)/
+  );
+});
+
 test("imported simulated exports keep a visible source warning", () => {
   const importedSummary = sourceSlice(
     "function ImportedRunSummary({",

@@ -2060,6 +2060,7 @@ function PageContent({
         cameraPreviewRefreshStatus={cameraPreviewRefreshStatus}
         cameraPreviewState={cameraPreviewState}
         activeSourceShape={activeSourceShape}
+        startupFrameUrl={activeFrameUrl}
         operatorSourceStatus={operatorSourceStatus}
         operatorSourceStatusError={operatorSourceStatusError}
         loadingOperatorSourceStatus={loadingOperatorSourceStatus}
@@ -2197,6 +2198,7 @@ function OperatorRunPage({
   cameraPreviewRefreshStatus,
   cameraPreviewState,
   activeSourceShape,
+  startupFrameUrl,
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
@@ -2233,6 +2235,7 @@ function OperatorRunPage({
   cameraPreviewRefreshStatus: PreviewRefreshStatus;
   cameraPreviewState: RealCameraPreviewState | null;
   activeSourceShape: number[];
+  startupFrameUrl: string;
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
@@ -2328,7 +2331,7 @@ function OperatorRunPage({
   const latestFrameUrl =
     canShowCurrentSourceData
       ? liveRun?.frameUrl ??
-        (setupProbeFrameUrl || latestRunResultFrameUrl || cameraPreviewUrl)
+        (setupProbeFrameUrl || latestRunResultFrameUrl || cameraPreviewUrl || (simulatedMode ? startupFrameUrl : ""))
       : "";
   const latestFrameShape =
     liveRun?.frameShape ??

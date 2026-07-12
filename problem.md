@@ -9358,6 +9358,66 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
+### P-0093 — 模拟启动后未显示所选素材首帧
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+执行 `scripts/g3_start.sh sim` 后，页面能识别“模拟素材调试”运行来源，但图像区域为空并显示“相机不可用”，用户无法确认启动命令指定的素材已经加载。
+
+#### Expected
+
+模拟来源的实际使用页面在首次检测前就显示启动命令指定数据集的当前帧；“检测当前帧”仍负责执行正式检测和显示 A/B overlay。
+
+#### Actual
+
+后端 `/api/app/runtime` 正确返回 `golden_a_20260522_dev_lab`，数据集注册表也能读取 5807 帧，但前端没有把已经生成的离线首帧 URL 传入 Operator 图像区，并沿用了真实相机预览的 `unavailable` 占位状态。
+
+#### Fix summary
+
+- 将上层已解析的当前离线帧 URL 传给实际使用页面。
+- 模拟模式在没有 Probe、Run 或相机预览图时使用该素材帧作为安全 fallback；真实硬件模式仍禁止任何离线素材 fallback。
+- 新增前端回归测试，锁定“模拟启动、尚未 Probe 时显示所选素材”的行为。
+
+#### Tests run
+
+```bash
+cd frontend && npm test && npm run build
+Result: PASS, 142 passed; TypeScript/Vite production build passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试
+- Steps:
+  1. 保持后端 `runtime_source=simulated_material`，刷新实际使用页面。
+  2. 在未点击“检测当前帧”的状态检查右侧图像区。
+  3. 点击“检测当前帧”，检查检测状态和 A/B overlay。
+- Expected: 首次检测前显示启动指定素材；检测后仍显示正式 A/B overlay，且不出现“相机不可用”。
+- Actual: 页面加载后立即显示 `golden_a_20260522_dev_lab` 第 1 帧和位置 1 ROI；点击检测后状态为 VALID、距离 `988.00 px`，显示 A/B 与正式测宽带。浏览器控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0093_sim_material_loaded_before_probe.png`
+  - `output/playwright/p0093_sim_material_probe_overlay.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。
