@@ -108,6 +108,7 @@
 | P-0090 | FIXED_PENDING_BROWSER_RETEST | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 自动化、配置预设、新旧导入及 Engineering Golden A/C 已通过；现场相机未枚举且温控串口缺失，Operator 真机多位置 Probe/Run 待补 |
 | P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
 | P-0096 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator measurement positions | 检测位置卡片展示当前距离、状态、正式点数和最近帧等非必要信息 | 2026-07-12 | 2026-07-12 | Codex | 已移除位置卡片结果指标和空状态提示；保留位置编辑操作，Chromium 模拟模式复测通过 |
+| P-0097 | OPEN | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 已确认回退链路并完成设计；等待实施和浏览器复测 |
 
 ---
 
@@ -9612,6 +9613,29 @@ RESOLVED_BROWSER_VERIFIED
 #### Final status
 
 RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0097 — 多位置结果缺少逐位置 AFAS 详细分析图
+
+- Status: OPEN
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/multiRegionAnalysis.ts`, analysis API/service and v2 summary
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+多位置改造后，操作员“结果与导出”和历史导入只渲染组合趋势图。后端仍保存每个位置的 AFAS preprocessing、analysis 和 summary，现有 `AnalysisAfasChart` 也仍完整，但结果页没有按位置接入低/高温基线、最大斜率切线、AS/AF 交点、垂直辅助线、marker、缩放和图层开关。现有参数面板还读取第一个位置的顶层兼容镜像，并把一套参数应用到全部位置。
+
+#### Expected
+
+保留多位置组合总览，并在当前结果、保存重开和历史导入中共用按位置切换的完整 AFAS 详细图；详细图和参数必须读取对应 region，保存后重开与导入不得重新检测或默认重算。当前位置重分析和应用全部位置必须具有真实后端作用域。
+
+#### Design
+
+`docs/superpowers/specs/2026-07-12-multi-region-afas-detail-design.md`
 
 ---
 
