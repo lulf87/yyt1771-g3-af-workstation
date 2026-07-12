@@ -107,6 +107,7 @@
 | P-0089 | OPEN | P0 | backend / Hik MVS discovery / hardware setup | 后端在相机网卡激活前加载 MVS 后，后接入的真实相机可能持续枚举为空 | 2026-07-10 | 2026-07-10 | Codex | 当前现场通过重启后端恢复；待实现无需重启的 MVS 枚举恢复并复测先启动软件后接相机流程 |
 | P-0090 | FIXED_PENDING_BROWSER_RETEST | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 自动化、配置预设、新旧导入及 Engineering Golden A/C 已通过；现场相机未枚举且温控串口缺失，Operator 真机多位置 Probe/Run 待补 |
 | P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
+| P-0096 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator measurement positions | 检测位置卡片展示当前距离、状态、正式点数和最近帧等非必要信息 | 2026-07-12 | 2026-07-12 | Codex | 已移除位置卡片结果指标和空状态提示；保留位置编辑操作，Chromium 模拟模式复测通过 |
 
 ---
 
@@ -9567,6 +9568,46 @@ RESOLVED_BROWSER_VERIFIED
 - Actual: 每 ROI raw=49、grouped=4、smoothed=4、sample sum=49、duplicate X=0、strict increasing=true；6 ROI 独立结果一致。刷新前后 summary SHA-256 同为 `18b5f4ac41f846a52c8ad77c2ec68b30dfe34930248e5f8ba3f4f7ae2478b80d`。导入后每 ROI 仍为 grouped=4、smoothed=4。控制台 0 errors/0 warnings。
 - Result: PASS
 - Evidence: `output/playwright/p0095-temperature-grouping-20260712/results.png`, `results-after-reload.png`, `summary.json`, `summary-after-reload.json`, `export.zip`, `import.json`.
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0096 — 检测位置卡片包含非必要实时结果信息
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/main.tsx`, `frontend/tests/operatorMeasurementRegions.test.mjs`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+实际使用界面的“检测位置”卡片重复展示当前距离、当前状态、正式点数、最近正式点帧号和无正式点提示，占用较多纵向空间；这些结果信息不属于位置配置操作。
+
+#### Fix summary
+
+- 从每个位置卡片移除上述实时结果指标和空状态提示。
+- 保留位置颜色/名称、启用开关、名称输入、编辑测量区域、删除位置和添加位置。
+- 仅移除位置面板展示及其组件参数，不改变实时结果数据、检测、曲线或多 ROI 行为。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: 模拟相机 + 模拟温控，启动素材 `golden_a_20260522_dev_lab`
+- Page: 实时测试 / 检测位置
+- Steps: 打开模拟测试页面；检查默认位置卡片；点击“添加位置”；检查两个位置卡片及保留的操作按钮。
+- Expected: 不显示红框内的结果指标或无正式点提示；位置编辑操作保持可用。
+- Actual: 两个位置卡片均仅显示名称、启用、位置输入、编辑和删除操作；添加位置正常；控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence: `output/playwright/p0096-position-card-without-live-metrics.png`
 
 #### Final status
 

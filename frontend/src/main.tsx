@@ -2422,8 +2422,6 @@ function OperatorRunPage({
           activeRegionId={activeRegionId}
           disabled={operatorRunActive}
           measurement={normalizedMeasurement}
-          regionLiveStateById={liveRun?.regionLiveStateById ?? {}}
-          regionResultsById={regionResultsById}
           setActiveRegionId={setActiveRegionId}
           onMeasurement={onMeasurement}
           onPreviewAffectingChange={onPreviewAffectingChange}
@@ -2559,8 +2557,6 @@ function OperatorMeasurementPositionsPanel({
   activeRegionId,
   disabled,
   measurement,
-  regionLiveStateById,
-  regionResultsById,
   setActiveRegionId,
   onMeasurement,
   onPreviewAffectingChange,
@@ -2569,8 +2565,6 @@ function OperatorMeasurementPositionsPanel({
   activeRegionId: string;
   disabled: boolean;
   measurement: MeasurementDefinition;
-  regionLiveStateById: RegionLiveStateById;
-  regionResultsById: Record<string, RegionResult>;
   setActiveRegionId: (regionId: string) => void;
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
@@ -2610,14 +2604,6 @@ function OperatorMeasurementPositionsPanel({
       {disabled ? <div className="inlineWarning">{t("Test running positions locked")}</div> : null}
       <div className="operatorPositionList">
         {regions.map((region) => {
-          const result = regionResultsById[region.region_id];
-          const liveState = regionLiveStateById[region.region_id];
-          const pointCount = liveState?.formalPointCount ??
-            result?.live_point_status?.temperature_distance_point_count ??
-            0;
-          const missingPointMessage = livePointStatusMessage(
-            result?.live_point_status ?? liveState?.latestMissingReason
-          );
           const isActive = region.region_id === activeRegionId;
           const cannotDisable = region.enabled && enabledCount <= 1;
           return (
@@ -2670,20 +2656,6 @@ function OperatorMeasurementPositionsPanel({
                   }}
                 />
               </label>
-              <dl className="operatorPositionMetrics">
-                <Metric label="Current distance" value={formatDistance(result?.detection_result ?? null, "stabilized", language)} />
-                <Metric label="Current status" value={result?.detection_result.detection_status ?? t("No data")} />
-                <Metric label="Formal points" value={pointCount.toLocaleString()} />
-                <Metric
-                  label="Latest formal frame"
-                  value={liveState?.lastFormalFrameIndex ?? result?.curve_points.temperature_distance?.frame_index ?? t("No data")}
-                />
-              </dl>
-              {missingPointMessage ? (
-                <div className="operatorPositionEmpty">{t(missingPointMessage)}</div>
-              ) : !pointCount ? (
-                <div className="operatorPositionEmpty">{t("No formal points for this position")}</div>
-              ) : null}
               <div className="buttonPair operatorPositionActions">
                 <button
                   className="secondaryButton compactButton"

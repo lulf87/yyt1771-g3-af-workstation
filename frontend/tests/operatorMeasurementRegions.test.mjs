@@ -40,7 +40,7 @@ test("operator mode renders an array-driven position panel and locks it while ru
   assert.match(positionsPanel, /regions\.length <= 1/);
 });
 
-test("operator position panel selects one active ROI and reports per-position probe state", () => {
+test("operator position panel selects one active ROI without per-position result metrics", () => {
   const positionsPanel = sourceSlice(
     "function OperatorMeasurementPositionsPanel({",
     "function OperatorDetectionParameterPanel({"
@@ -48,11 +48,12 @@ test("operator position panel selects one active ROI and reports per-position pr
 
   assert.match(positionsPanel, /activeRegionId/);
   assert.match(positionsPanel, /setActiveRegionId/);
-  assert.match(positionsPanel, /regionResultsById/);
-  assert.match(positionsPanel, /temperature_distance_point_count/);
-  assert.match(positionsPanel, /Current distance/);
-  assert.match(positionsPanel, /Current status/);
   assert.match(positionsPanel, /Edit ROI/);
+  assert.doesNotMatch(positionsPanel, /Current distance/);
+  assert.doesNotMatch(positionsPanel, /Current status/);
+  assert.doesNotMatch(positionsPanel, /Formal points/);
+  assert.doesNotMatch(positionsPanel, /Latest formal frame/);
+  assert.doesNotMatch(positionsPanel, /No formal points for this position/);
 });
 
 test("frame canvas renders all enabled positions and edits only the active ROI", () => {
