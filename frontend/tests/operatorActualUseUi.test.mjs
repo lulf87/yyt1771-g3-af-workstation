@@ -245,7 +245,7 @@ test("operator results page keeps AFAS re-analysis controls without debug JSON",
   );
 
   assert.match(resultsPage, /<AfasParameterPanel/);
-  assert.match(resultsPage, /buttonLabel="Re-analyze"/);
+  assert.match(resultsPage, /buttonLabel="Re-analyze current position"/);
   assert.match(afasParameterPanel, /Savgol window/);
   assert.match(afasParameterPanel, /Low start °C/);
   assert.match(afasParameterPanel, /High start °C/);

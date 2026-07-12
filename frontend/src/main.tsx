@@ -3609,6 +3609,7 @@ function OperatorResultsPage({
   const [exportMessage, setExportMessage] = useState("");
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [analysisOverride, setAnalysisOverride] = useState<AnalysisResult | null>(null);
+  const [selectedRegionId, setSelectedRegionId] = useState("");
   const currentAnalysis =
     runResult?.analysis_result ??
     (liveRun?.status === "stopped" || liveRun?.status === "complete" ? liveRun.analysis : null);
@@ -3687,11 +3688,21 @@ function OperatorResultsPage({
           <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
         )}
       </section>
+      {analysis ? (
+        <section className="toolPanel operatorAfasDetailPanel">
+          <MultiRegionAfasReview
+            analysis={analysis}
+            selectedRegionId={selectedRegionId}
+            onSelectedRegionId={setSelectedRegionId}
+          />
+        </section>
+      ) : null}
       {analysis && currentRunId ? (
         <section className="toolPanel operatorReanalysisPanel">
           <AfasParameterPanel
-            analysis={analysis}
-            buttonLabel="Re-analyze"
+            analysis={analysisForRegion(analysis, selectedRegionId) ?? analysis}
+            buttonLabel="Re-analyze current position"
+            regionId={selectedRegionId || analysis.regions?.[0]?.region_id}
             runId={currentRunId}
             onAnalysisUpdated={setAnalysisOverride}
           />
@@ -3879,16 +3890,24 @@ function ImportedRunSummary({ view }: { view: ImportedRunView }) {
 function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
   const t = useUiText();
   const analysis = view.analysis_result;
+  const [selectedRegionId, setSelectedRegionId] = useState("");
   return (
     <div className="operatorImportedChart">
       <h3>{t("Temperature-distance curve")}</h3>
       {analysis ? (
-        <MultiRegionTrendChart
-          sources={analysisRegionTrendSources(analysis)}
-          isRunning={false}
-          targetTemperature={null}
-          variant="result"
-        />
+        <>
+          <MultiRegionTrendChart
+            sources={analysisRegionTrendSources(analysis)}
+            isRunning={false}
+            targetTemperature={null}
+            variant="result"
+          />
+          <MultiRegionAfasReview
+            analysis={analysis}
+            selectedRegionId={selectedRegionId}
+            onSelectedRegionId={setSelectedRegionId}
+          />
+        </>
       ) : view.temperature_distance_image_data_url ? (
         <figure className="importedPngFigure">
           <img src={view.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
@@ -3897,6 +3916,60 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
       ) : (
         <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
       )}
+    </div>
+  );
+}
+
+function MultiRegionAfasReview({
+  analysis,
+  selectedRegionId,
+  onSelectedRegionId
+}: {
+  analysis: AnalysisResult;
+  selectedRegionId: string;
+  onSelectedRegionId: (regionId: string) => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const regions = analysis.regions ?? [];
+  const selectedRegion = regions.find((region) => region.region_id === selectedRegionId) ?? regions[0];
+  const selectedAnalysis = selectedRegion ? analysisForRegion(analysis, selectedRegion.region_id) : null;
+
+  useEffect(() => {
+    if (selectedRegion && selectedRegion.region_id !== selectedRegionId) {
+      onSelectedRegionId(selectedRegion.region_id);
+    }
+  }, [onSelectedRegionId, selectedRegion, selectedRegionId]);
+
+  if (!selectedRegion || !selectedAnalysis) {
+    return <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>;
+  }
+  const summary = readRecord(selectedRegion.summary);
+  const failureReason = String(summary.failure_reason ?? selectedRegion.afas_analysis.reason ?? "");
+
+  return (
+    <div className="multiRegionAfasReview">
+      <div className="multiRegionAfasHeader">
+        <h2>{t("AFAS detailed analysis")}</h2>
+        <span>{t("Selected position")}: {measurementRegionDisplayLabel(regionAnalysisMeasurementRegion(selectedRegion), language)}</span>
+      </div>
+      <div className="multiRegionAfasTabs" role="tablist" aria-label={t("AFAS detailed analysis")}>
+        {regions.map((region) => (
+          <button
+            aria-selected={region.region_id === selectedRegion.region_id}
+            className={region.region_id === selectedRegion.region_id ? "active" : ""}
+            key={region.region_id}
+            onClick={() => onSelectedRegionId(region.region_id)}
+            role="tab"
+            type="button"
+          >
+            <span className="regionColorSwatch" style={{ backgroundColor: region.color }} />
+            {measurementRegionDisplayLabel(regionAnalysisMeasurementRegion(region), language)}
+          </button>
+        ))}
+      </div>
+      {failureReason ? <div className="inlineWarning">{localizeDisplayString(failureReason, language)}</div> : null}
+      <AnalysisAfasChart analysis={selectedAnalysis} />
     </div>
   );
 }
@@ -5854,11 +5927,13 @@ function readAfasAfValue(result: Record<string, unknown>): number | undefined {
 function AfasParameterPanel({
   analysis,
   buttonLabel = "Recalculate",
+  regionId,
   runId,
   onAnalysisUpdated
 }: {
   analysis: AnalysisResult;
   buttonLabel?: string;
+  regionId?: string;
   runId: string | null;
   onAnalysisUpdated: (analysis: AnalysisResult) => void;
 }) {
@@ -5897,7 +5972,7 @@ function AfasParameterPanel({
     });
   }
 
-  async function recalculateAnalysis() {
+  async function recalculateAnalysis(applyToAll = false) {
     if (!runId) return;
     setRecalculating(true);
     setError("");
@@ -5905,6 +5980,7 @@ function AfasParameterPanel({
       const nextPreprocessing = normalizeAfasPreprocessingParameters(preprocessing);
       const nextTangent = normalizeAfasAnalysisParameters(tangent);
       const nextAnalysis = await recomputeRunAnalysis(runId, {
+        ...(applyToAll ? {} : { region_id: regionId }),
         afas_preprocessing_parameters: nextPreprocessing,
         afas_analysis_parameters: nextTangent
       });
@@ -5923,15 +5999,25 @@ function AfasParameterPanel({
           <Settings size={15} aria-hidden="true" />
           {t("AFAS Parameters")}
         </h3>
-        <button
-          className="secondaryButton analysisRecalculateButton"
-          disabled={!runId || recalculating}
-          onClick={recalculateAnalysis}
-          type="button"
-        >
-          <RefreshCcw size={15} aria-hidden="true" />
-          {recalculating ? t("Recalculating") : t(buttonLabel)}
-        </button>
+        <div className="buttonPair analysisRecalculateActions">
+          <button
+            className="secondaryButton analysisRecalculateButton"
+            disabled={!runId || !regionId || recalculating}
+            onClick={() => recalculateAnalysis(false)}
+            type="button"
+          >
+            <RefreshCcw size={15} aria-hidden="true" />
+            {recalculating ? t("Recalculating") : t(buttonLabel)}
+          </button>
+          <button
+            className="secondaryButton analysisRecalculateButton"
+            disabled={!runId || recalculating}
+            onClick={() => recalculateAnalysis(true)}
+            type="button"
+          >
+            {t("Apply to all positions")}
+          </button>
+        </div>
       </div>
       <div className="analysisControlGrid">
         <fieldset>
@@ -8055,6 +8141,25 @@ function regionAnalysisMeasurementRegion(region: RegionAnalysisResult): Measurem
     enabled: true,
     roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 },
     color: region.color
+  };
+}
+
+function analysisForRegion(analysis: AnalysisResult, regionId: string): AnalysisResult | null {
+  const region = analysis.regions?.find((candidate) => candidate.region_id === regionId) ?? analysis.regions?.[0];
+  if (!region) return null;
+  return {
+    ...analysis,
+    all_frames: region.all_frames,
+    distance_time: region.distance_time,
+    raw_distance_time: region.raw_distance_time,
+    stabilized_distance_time: region.stabilized_distance_time,
+    temperature_time: region.temperature_time,
+    temperature_distance: region.temperature_distance,
+    raw_temperature_distance: region.raw_temperature_distance,
+    stabilized_temperature_distance: region.stabilized_temperature_distance,
+    afas_preprocessing: region.afas_preprocessing,
+    afas_analysis: region.afas_analysis,
+    regions: [region]
   };
 }
 

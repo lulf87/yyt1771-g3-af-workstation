@@ -49,9 +49,31 @@ test("current and imported results use the combined multi-position chart", () =>
 
   assert.match(resultsPage, /Combined curves/);
   assert.match(resultsPage, /<MultiRegionTrendChart/);
+  assert.match(resultsPage, /<MultiRegionAfasReview/);
   assert.match(resultsPage, /variant="result"/);
   assert.match(importedReview, /<MultiRegionTrendChart/);
+  assert.match(importedReview, /<MultiRegionAfasReview/);
   assert.match(importedReview, /analysisRegionTrendSources/);
+});
+
+test("multi-position AFAS review switches one region into the existing detail chart", () => {
+  const review = sourceSlice(
+    "function MultiRegionAfasReview({",
+    "function OperatorRegionResults({"
+  );
+  const adapter = sourceSlice(
+    "function analysisForRegion(",
+    "function analysisRegionTrendSources("
+  );
+
+  assert.match(review, /selectedRegionId/);
+  assert.match(review, /analysis\.regions/);
+  assert.match(review, /<AnalysisAfasChart analysis=\{selectedAnalysis\}/);
+  assert.match(review, /regionColorSwatch/);
+  assert.match(adapter, /region\.afas_preprocessing/);
+  assert.match(adapter, /region\.afas_analysis/);
+  assert.doesNotMatch(adapter, /analysis\.afas_preprocessing/);
+  assert.doesNotMatch(adapter, /analysis\.afas_analysis/);
 });
 
 test("result chart exposes formal, display trend, and AFAS smoothing layers", () => {
@@ -75,6 +97,8 @@ test("one global re-analysis request updates all normalized analysis regions", (
   );
 
   assert.match(panel, /recomputeRunAnalysis\(runId/);
+  assert.match(panel, /region_id: regionId/);
+  assert.match(panel, /Apply to all positions/);
   assert.match(panel, /onAnalysisUpdated\(nextAnalysis\)/);
   assert.doesNotMatch(panel, /for \(const region/);
 });

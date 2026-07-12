@@ -44,6 +44,41 @@ def build_analysis_result(
     )
 
 
+def recompute_region_analysis_result(
+    manifest: RunManifest,
+    current_analysis: AnalysisResult,
+    region_id: str,
+    *,
+    afas_preprocessing_parameters: Mapping[str, Any] | None = None,
+    afas_analysis_parameters: Mapping[str, Any] | None = None,
+) -> AnalysisResult:
+    region = next(
+        (candidate for candidate in manifest.measurement_definition.enabled_regions if candidate.region_id == region_id),
+        None,
+    )
+    if region is None:
+        raise ValueError(f"Unknown enabled measurement region: {region_id}")
+    detections = detection_results_by_region(manifest).get(region_id, [])
+    replacement = build_region_analysis_result(
+        region,
+        detections,
+        afas_preprocessing_parameters=afas_preprocessing_parameters,
+        afas_analysis_parameters=afas_analysis_parameters,
+    )
+    existing = {candidate.region_id: candidate for candidate in current_analysis.regions}
+    existing[region_id] = replacement
+    regions = [
+        existing[candidate.region_id]
+        for candidate in manifest.measurement_definition.enabled_regions
+        if candidate.region_id in existing
+    ]
+    return build_analysis_result_from_regions(
+        manifest,
+        regions,
+        analysis_id=current_analysis.analysis_id,
+    )
+
+
 def detection_results_by_region(manifest: RunManifest) -> dict[str, list[DetectionResult]]:
     grouped: dict[str, list[DetectionResult]] = {
         region.region_id: [] for region in manifest.measurement_definition.enabled_regions

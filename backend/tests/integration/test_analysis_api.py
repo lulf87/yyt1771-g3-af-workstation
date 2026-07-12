@@ -177,3 +177,34 @@ def test_analysis_api_applies_global_afas_parameters_to_every_region(tmp_path, m
     assert [region["region_id"] for region in regions] == ["region_1", "region_2"]
     assert [region["afas_preprocessing"]["parameters"]["savgol_window_length"] for region in regions] == [9, 9]
     assert [region["afas_analysis"]["parameters"]["tangent_offset"] for region in regions] == [1, 1]
+
+    original_region_1 = regions[0]
+    scoped = TestClient(app).post(
+        f"/api/runs/{manifest.run_id}/analysis",
+        json={
+            "region_id": "region_2",
+            "afas_preprocessing_parameters": {
+                "group_by_temperature": False,
+                "savgol_window_length": 11,
+                "savgol_polyorder": 2,
+            },
+            "afas_analysis_parameters": {
+                "low_range_celsius": [20.0, 26.0],
+                "high_range_celsius": [45.0, 51.0],
+                "tangent_offset": 2,
+            },
+        },
+    )
+    assert scoped.status_code == 200
+    scoped_regions = scoped.json()["analysis_result"]["regions"]
+    assert scoped_regions[0] == original_region_1
+    assert scoped_regions[1]["afas_preprocessing"]["parameters"]["savgol_window_length"] == 11
+    assert scoped_regions[1]["afas_analysis"]["parameters"]["tangent_offset"] == 2
+    stored = json.loads((tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text())
+    assert stored["regions"] == scoped_regions
+
+    unknown = TestClient(app).post(
+        f"/api/runs/{manifest.run_id}/analysis",
+        json={"region_id": "region_missing"},
+    )
+    assert unknown.status_code == 422

@@ -82,6 +82,56 @@ test("empty frame image path stays empty", async () => {
   assert.equal(apiUrlFromPath("", { maxWidth: 720 }), "");
 });
 
+test("run analysis recompute serializes an optional position scope", async () => {
+  const { recomputeRunAnalysis } = await loadApiClientModule();
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return Response.json({
+      analysis_result: {
+        analysis_id: "analysis-1",
+        run_id: "run-1",
+        all_frames: [],
+        distance_time: [],
+        raw_distance_time: [],
+        stabilized_distance_time: [],
+        temperature_time: [],
+        temperature_distance: [],
+        raw_temperature_distance: [],
+        stabilized_temperature_distance: [],
+        afas_preprocessing: {},
+        afas_analysis: {},
+        regions: [],
+        export_artifacts: [],
+        created_at: "2026-07-12T00:00:00Z"
+      }
+    });
+  };
+  try {
+    await recomputeRunAnalysis("run-1", {
+      region_id: "region_2",
+      afas_preprocessing_parameters: {
+        group_by_temperature: true,
+        outlier_window: 5,
+        outlier_threshold: 3,
+        outlier_max_iterations: 2,
+        savgol_window_length: 9,
+        savgol_polyorder: 2
+      },
+      afas_analysis_parameters: {
+        low_range_celsius: [20, 26],
+        high_range_celsius: [45, 51],
+        tangent_offset: 1
+      }
+    });
+    assert.match(calls[0].url, /\/api\/runs\/run-1\/analysis$/);
+    assert.equal(JSON.parse(calls[0].init.body).region_id, "region_2");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("diagnostic image metadata exposes mask and contour display sources", async () => {
   const { readDiagnosticImages } = await loadApiClientModule();
 

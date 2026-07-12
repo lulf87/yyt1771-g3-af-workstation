@@ -42,7 +42,7 @@ from yyt1771_g3.services.live_offline_run_service import (
     read_run,
     run_live_offline_dataset,
 )
-from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.analysis_service import build_analysis_result, recompute_region_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.export_service import export_run, export_run_bundle, load_v2_export_models
 from yyt1771_g3.services.hardware_setup_service import (
@@ -407,6 +407,7 @@ class RealCameraSetupProbeRequest(BaseModel):
 
 
 class AnalysisRecomputeRequest(BaseModel):
+    region_id: str | None = None
     afas_preprocessing_parameters: dict[str, Any] | None = None
     afas_analysis_parameters: dict[str, Any] | None = None
 
@@ -770,12 +771,22 @@ def get_run_availability(run_id: str) -> dict[str, Any]:
 def recompute_run_analysis(run_id: str, request: AnalysisRecomputeRequest) -> dict[str, Any]:
     run_store = _run_store()
     if run_store.schema_version(run_id) == 2:
-        manifest, _ = load_v2_export_models(run_store, run_id)
+        manifest, current_analysis = load_v2_export_models(run_store, run_id)
         try:
-            analysis = build_analysis_result(
-                manifest,
-                afas_preprocessing_parameters=request.afas_preprocessing_parameters,
-                afas_analysis_parameters=request.afas_analysis_parameters,
+            analysis = (
+                recompute_region_analysis_result(
+                    manifest,
+                    current_analysis,
+                    request.region_id,
+                    afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                    afas_analysis_parameters=request.afas_analysis_parameters,
+                )
+                if request.region_id
+                else build_analysis_result(
+                    manifest,
+                    afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                    afas_analysis_parameters=request.afas_analysis_parameters,
+                )
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -796,11 +807,24 @@ def recompute_run_analysis(run_id: str, request: AnalysisRecomputeRequest) -> di
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}") from exc
 
     try:
-        analysis = build_analysis_result(
-            manifest,
-            afas_preprocessing_parameters=request.afas_preprocessing_parameters,
-            afas_analysis_parameters=request.afas_analysis_parameters,
-        )
+        if request.region_id:
+            try:
+                current_analysis = run_store.read_analysis_result(run_id)
+            except FileNotFoundError:
+                current_analysis = build_analysis_result(manifest)
+            analysis = recompute_region_analysis_result(
+                manifest,
+                current_analysis,
+                request.region_id,
+                afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                afas_analysis_parameters=request.afas_analysis_parameters,
+            )
+        else:
+            analysis = build_analysis_result(
+                manifest,
+                afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                afas_analysis_parameters=request.afas_analysis_parameters,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     run_store.write_analysis_result(analysis)

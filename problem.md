@@ -108,7 +108,7 @@
 | P-0090 | FIXED_PENDING_BROWSER_RETEST | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 自动化、配置预设、新旧导入及 Engineering Golden A/C 已通过；现场相机未枚举且温控串口缺失，Operator 真机多位置 Probe/Run 待补 |
 | P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
 | P-0096 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator measurement positions | 检测位置卡片展示当前距离、状态、正式点数和最近帧等非必要信息 | 2026-07-12 | 2026-07-12 | Codex | 已移除位置卡片结果指标和空状态提示；保留位置编辑操作，Chromium 模拟模式复测通过 |
-| P-0097 | OPEN | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 已确认回退链路并完成设计；等待实施和浏览器复测 |
+| P-0097 | RESOLVED_BROWSER_VERIFIED | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 组合总览 + 按位置 AFAS 详情、当前位置/全部位置重分析已实现；3/6 位置 Chromium 流程通过 |
 
 ---
 
@@ -227,7 +227,7 @@ FIXED_PENDING_BROWSER_RETEST
 
 ### P-0089 — 后端在相机网卡激活前加载 MVS 后，后接入的真实相机可能持续枚举为空
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/services/hardware_setup_service.py`
 - Found date: 2026-07-10
@@ -9636,6 +9636,56 @@ RESOLVED_BROWSER_VERIFIED
 #### Design
 
 `docs/superpowers/specs/2026-07-12-multi-region-afas-detail-design.md`
+
+#### Fix summary
+
+- 保留 `MultiRegionTrendChart` 作为 1–6 位置组合总览，在当前结果和历史导入中共用 `MultiRegionAfasReview`。
+- 位置标签把选中 `RegionAnalysisResult` 映射到既有 `AnalysisAfasChart`，恢复平滑曲线、原始诊断点开关、异常点、低/高温基线、最大斜率切线、AS/AF 交点和垂直辅助线、最大斜率点、缩放和图层开关。
+- 详细图和参数只读取选中 region 的 `afas_preprocessing`、`afas_analysis` 和曲线，不再读取顶层位置 1 兼容镜像。
+- 重分析 API 新增可选 `region_id`。指定位置时只重建并替换目标 region；不指定时继续应用到全部位置。v1 写回 `analysis_result.json`，v2 原子写回轻量 `analysis_summary.json`。
+- 历史导入保持只读，直接使用保存快照，不重新检测或默认重算。
+- 未恢复 v2 `all_frames`，未修改检测、温度同步、异常过滤或 AFAS 数学。
+
+#### Tests run
+
+- Backend: `PYTHONPATH=backend/src pytest -q backend/tests` → `249 passed in 105.38s`。
+- Frontend: `npm test` → `147 passed`。
+- Frontend: `npm run build` → TypeScript + Vite PASS。
+- 新增/更新覆盖：结果与导入详情挂载、选中 region 隔离、API `region_id` 序列化、位置 2 局部重分析后位置 1 深度一致、未知 region 返回 422。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: 实时测试 → 结果与导出；历史导入
+- Steps:
+  1. 以 simulated_material 启动，添加并启用 3 个位置，运行 203 帧后停止。
+  2. 打开结果与导出，检查组合总览和逐位置 AFAS 详情，切换到位置 2。
+  3. 将位置 2 的 tangent offset 从 0 改为 1，点击“仅重新分析当前位置”，读取保存后的 summary。
+  4. 导出该 v2 run 并导入 ZIP，确认历史页仍显示组合总览和逐位置详细图。
+  5. 导入已有 6 位置且 AFAS status=ok 的 v2 Golden A 导出，切换位置 2，检查完整构造线和 marker。
+- Expected: 组合图保留；每个位置独立显示详细 AFAS；局部重分析不改变其他位置；导入直接复现保存的图和 AS/AF。
+- Actual:
+  - 新 run 的 3 个位置各保存 202 个 raw points / 9 个 smoothed points，详情标签可独立切换。
+  - 局部重分析后 summary 参数为 `region_1=0, region_2=1, region_3=0`，证明只写回目标位置。
+  - 导出再导入保留 3 个位置、组合图和逐位置详情。
+  - 6 位置保存结果导入后，位置 2 显示 AS `12.21 °C`、AF `13.73 °C`、最大斜率温度 `13.73 °C`，SVG 中存在 AS/AF 基线、最大斜率切线、AS/AF 垂直构造线和 marker。
+  - 控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/results-position-2.png`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/import-position-2.png`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/valid-afas-position-2.png`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/export.zip`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/valid-afas-export.zip`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
 
 ---
 

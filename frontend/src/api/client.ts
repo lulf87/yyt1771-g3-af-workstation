@@ -1704,6 +1704,7 @@ export async function getRunAvailability(runId: string): Promise<RunAvailability
 export async function recomputeRunAnalysis(
   runId: string,
   parameters: {
+    region_id?: string;
     afas_preprocessing_parameters: AfasPreprocessingParameters;
     afas_analysis_parameters: AfasAnalysisParameters;
   }
