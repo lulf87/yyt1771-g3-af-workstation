@@ -16,6 +16,7 @@ import numpy as np
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
@@ -59,6 +60,7 @@ from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
 from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
 from yyt1771_g3.temperature.simulated import SimulatedTemperatureController
+from yyt1771_g3.web_assets import frontend_dist_dir
 
 
 @asynccontextmanager
@@ -1510,3 +1512,19 @@ def _camera_frame_from_data_url(
     except Exception as exc:
         raise ValueError("frame_png_data_url cannot be decoded as a PNG image") from exc
     return CameraFrame(array=array, timestamp_ms=timestamp_ms, camera_meta=camera_meta)
+
+
+_frontend_dist = frontend_dist_dir()
+if _frontend_dist is not None:
+    _frontend_assets = _frontend_dist / "assets"
+    if _frontend_assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=_frontend_assets), name="frontend-assets")
+
+    @app.get("/{frontend_path:path}", include_in_schema=False)
+    def serve_frontend(frontend_path: str) -> FileResponse:
+        if frontend_path == "api" or frontend_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+        requested = (_frontend_dist / frontend_path).resolve()
+        if frontend_path and requested.is_relative_to(_frontend_dist) and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(_frontend_dist / "index.html")

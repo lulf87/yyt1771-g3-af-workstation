@@ -10,3 +10,4 @@ opencv-python==4.13.0.92
 pytest>=9,<10
 httpx2>=2.3,<3
 pyserial>=3.5,<4
+PyYAML>=6,<7

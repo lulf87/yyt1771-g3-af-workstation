@@ -821,7 +821,7 @@ export type TemperatureStatusResponse = {
   };
 };
 
-const API_BASE = import.meta.env?.VITE_G3_API_BASE ?? "http://127.0.0.1:8000";
+const API_BASE = import.meta.env?.VITE_G3_API_BASE ?? "";
 
 export class ApiError extends Error {
   status: number;

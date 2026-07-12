@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from yyt1771_g3.core.app_paths import hardware_config_path as application_hardware_config_path
+
 
 HARDWARE_CONFIG_ENV = "YYT1771_G3_HARDWARE_CONFIG"
 DEFAULT_TEMP_SYNC_TARGET_MS = 1000.0
@@ -155,7 +157,7 @@ def hardware_config_path(path: str | Path | None = None) -> Path:
 def local_hardware_profile_path(path: str | Path | None = None) -> Path:
     if path is not None:
         return Path(path).expanduser()
-    return _project_root() / "configs" / "local" / "realcamera_temp.local.yaml"
+    return application_hardware_config_path()
 
 
 def hardware_config_from_mapping(payload: dict[str, Any]) -> HardwareConfig:
@@ -268,7 +270,7 @@ def _default_config_path() -> Path:
     configured = os.environ.get(HARDWARE_CONFIG_ENV, "").strip()
     if configured:
         return Path(configured).expanduser()
-    return _project_root() / "configs" / "local" / "realcamera_temp.local.yaml"
+    return application_hardware_config_path()
 
 
 def _project_root() -> Path:

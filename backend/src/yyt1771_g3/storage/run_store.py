@@ -7,7 +7,7 @@ from typing import Any
 
 from yyt1771_g3.core.models import AnalysisResult, RunManifest
 from yyt1771_g3.core.run_models_v2 import RunAnalysisSummaryV2, RunMetaV2, RunStateV2
-from yyt1771_g3.services.offline_dataset import _project_root
+from yyt1771_g3.core.app_paths import run_store_dir
 from yyt1771_g3.storage.manifest_io import read_json_model, write_json_model
 
 
@@ -15,7 +15,7 @@ class RunStore:
     def __init__(self, root_dir: str | Path | None = None) -> None:
         if root_dir is None:
             root_dir = os.environ.get("YYT1771_G3_RUN_STORE_DIR")
-        self.root_dir = Path(root_dir) if root_dir is not None else _project_root() / "output" / "runs"
+        self.root_dir = Path(root_dir) if root_dir is not None else run_store_dir()
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
     def run_dir(self, run_id: str) -> Path:

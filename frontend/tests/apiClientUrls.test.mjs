@@ -441,7 +441,7 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url: String(url), init });
-    const path = new URL(String(url)).pathname;
+    const path = new URL(String(url), "http://localhost").pathname;
     if (path === "/api/hardware/setup/environment") {
       return new Response(
         JSON.stringify({
