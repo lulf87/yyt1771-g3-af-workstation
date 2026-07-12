@@ -9418,6 +9418,67 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
+### P-0094 — 多 ROI 停止后重复序列化完整检测对象导致长时间卡住
+
+- Status: OPEN
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/storage/run_store.py`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+模拟 run 使用 6 个 ROI、处理约 4816 帧后点击停止，页面数分钟仍保持“测量中”，无法进入结果与导出。
+
+#### Expected
+
+停止后立即停止采集/检测，只对已处理帧做一次轻量 finalize；结果页应通过 compact summary 或分页数据进入，不应重新检测已处理帧，也不应把全部重量级检测对象重复传回浏览器。
+
+#### Actual
+
+- 本次 run 的有效业务量为 4816 帧、6 个 ROI，即 28,896 条 region detection。
+- `run_manifest.json` 同时保存 legacy `detection_results` 和完整 `region_detection_results`；`analysis_result.json` 又在顶层 `all_frames` 与 `regions[].all_frames` 重复保存检测对象。
+- 本次 `run_manifest.json` 为 560,062,915 bytes，`analysis_result.json` 为 648,047,445 bytes，合计 1,208,110,360 bytes（约 1.13 GiB）。
+- 停止后的 `GET /api/runs/{run_id}` 会完整读取、校验、重新序列化并向浏览器返回这两个文件；现场后端持续约 96–97% CPU，连接长时间保持 ESTABLISHED。
+- 若 `waitForStoppedRun()` 在约 5.6 秒内没有发现完整结果，前端还会调用非流式 `/api/live-offline-runs`，按 `processedFrames` 从头重新检测作为 fallback，存在重复计算全部已处理帧的风险。
+
+#### Suspected cause
+
+停止协议把“停止采集”“落盘”“分析”“读取完整 run”“把完整 run 传给浏览器”绑定为一个同步流程，并叠加 legacy/multi-ROI 数据复制和重新检测 fallback。重量级 `debug_artifacts`、candidate 诊断信息随每帧每 ROI 多次复制，造成 O(frames × regions) 的大 JSON 体积和高昂解析/序列化成本。
+
+#### Fix summary
+
+尚未修改。建议先确认产品保存边界，再设计 compact run storage、异步 finalize、结果摘要 API 和禁止重新检测 fallback。
+
+#### Tests run
+
+本轮为现场只读诊断，未执行修复测试。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chrome（用户现场截图）
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试
+- Steps: 6 ROI 模拟测试处理约 4816 帧后点击停止。
+- Expected: 快速停止并进入结果与导出。
+- Actual: 数分钟仍显示“测量中”；后端生成约 1.13 GiB JSON 并持续高 CPU 处理完整结果响应。
+- Result: FAIL
+- Evidence:
+  - `output/runs/run-golden_a_20260522_dev_lab-20260712T011223343269Z/run_manifest.json`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260712T011223343269Z/analysis_result.json`
+  - `output/dev/g3-fast-start-backend-8022.log`
+
+#### Final status
+
+OPEN
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。
