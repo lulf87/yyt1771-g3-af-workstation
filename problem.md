@@ -9420,7 +9420,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0094 — 多 ROI 停止后重复序列化完整检测对象导致长时间卡住
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/storage/run_store.py`
 - Found date: 2026-07-12
@@ -9449,11 +9449,24 @@ RESOLVED_BROWSER_VERIFIED
 
 #### Fix summary
 
-尚未修改。建议先确认产品保存边界，再设计 compact run storage、异步 finalize、结果摘要 API 和禁止重新检测 fallback。
+已完成 Operator run v2 紧凑持久化和轻量停止协议：
+
+1. 新 run 使用 `run_meta.json` + `run_state.json` + `results.sqlite` + `analysis_summary.json`，逐帧逐 ROI 正式结果只保存一份。
+2. SQLite 在运行期间每 50 帧批量提交；停止只 flush 尾批次并构建最终曲线/AFAS 快照。
+3. 正常 VALID 帧不持久化完整 `debug_artifacts`、candidate metadata 和 rejected candidate 列表；异常事件单独写入 `diagnostic_events`。
+4. 统一 `POST /api/runs/{run_id}/stop`，停止请求幂等；状态为 RUNNING → STOP_REQUESTED → FINALIZING → READY/ERROR。
+5. 新增轻量 status/summary/分页 results/单帧 results 接口，停止后的 `complete` 事件只返回 `run_id` 和 `state`。
+6. 删除 Operator 模拟停止后调用 `createLiveOfflineRun(processedFrames)` 从头重检的 fallback。
+7. 前端停止时进入“正在整理并保存结果”，READY 后只加载 summary；页面重启可从最后保存的 run 恢复相同曲线。
+8. v2 导出只在用户点击后从 SQLite/summary 生成，ZIP 包含 v2 主文件和旧导入器可读的兼容视图；旧 v1 run/导出路径保留。
 
 #### Tests run
 
-本轮为现场只读诊断，未执行修复测试。
+- `PYTHONPATH=backend/src python3 -m pytest backend/tests -q` → `246 passed`。
+- `cd frontend && npm test` → `143 passed`。
+- `cd frontend && npm run build` → TypeScript + Vite build PASS。
+- 4816 帧 × 6 ROI 合成 SQLite 测试：28,896 条唯一 region result，数据库 `<20 MiB`。
+- 4816 帧 × 6 ROI 合成 analysis snapshot 测试：6 个 region，主存储 `<50 MiB`，summary 不含 `all_frames`。
 
 #### Browser retest log
 
@@ -9473,9 +9486,41 @@ RESOLVED_BROWSER_VERIFIED
   - `output/runs/run-golden_a_20260522_dev_lab-20260712T011223343269Z/analysis_result.json`
   - `output/dev/g3-fast-start-backend-8022.log`
 
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright headed)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试 → 结果与导出
+- Steps:
+  1. 以 `runtime_source=simulated_material` 启动，添加并启用 6 个检测位置。
+  2. 开始模拟测试，确认 6 个位置独立增长正式点和组合曲线。
+  3. 在帧 56 点击停止，检查状态时间、v2 文件体积和结果页。
+  4. 整页重载，再打开结果与导出，比较 summary hash、6 个位置点数和组合曲线。
+  5. 显式生成 v2 ZIP 并重新导入。
+- Expected: 停止后不重检，快速 READY；不生成巨型 v1 JSON；重载和导入后仍显示相同 6 ROI 曲线。
+- Actual:
+  - `processed_frames=56`，`region_count=6`，SQLite 中 336 条逐 ROI 结果只保存一份。
+  - `stopped_at=03:10:14.235366Z`，`finalized_at=03:10:14.532968Z`，finalize 约 `0.298 s`。
+  - `results.sqlite=208,896 B`，`analysis_summary.json=277,919 B`，`run_meta.json=5,710 B`，`run_state.json=352 B`，run 主文件合计约 `493 KiB`（目录 `du` 约 `540 KiB`）；未生成 `run_manifest.json` / `analysis_result.json`。
+  - 停止前后每个位置均为 55 个正式点；重载后结果页恢复 6 个位置和组合曲线。
+  - 重载前后 `/summary` SHA-256 同为 `745dd53d43ec54935806366f8b7ddabaf281a373400b2872033c68d65cdcd3a6`。
+  - ZIP `242,538 B`，重新导入后为 6 regions，每个 region 55 点，`runtime_source=simulated_material`。
+  - 浏览器控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0094-v2-6roi-20260712/results-before-reload.png`
+  - `output/playwright/p0094-v2-6roi-20260712/results-page-after-reload.png`
+  - `output/playwright/p0094-v2-6roi-20260712/status.json`
+  - `output/playwright/p0094-v2-6roi-20260712/summary-before-reload.json`
+  - `output/playwright/p0094-v2-6roi-20260712/summary-after-reload.json`
+  - `output/playwright/p0094-v2-6roi-20260712/zip-contents.txt`
+  - `output/playwright/p0094-v2-6roi-20260712/imported-view.json`
+
 #### Final status
 
-OPEN
+RESOLVED_BROWSER_VERIFIED
 
 ---
 

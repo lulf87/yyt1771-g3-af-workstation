@@ -24,6 +24,7 @@ from yyt1771_g3.services.live_offline_run_service import (
 )
 from yyt1771_g3.services.offline_dataset import load_dataset_registry
 from yyt1771_g3.storage.run_store import RunStore
+from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 
 
 def _write_run_dataset(root: Path, frame_count: int = 3) -> None:
@@ -184,8 +185,10 @@ def test_streamed_live_offline_run_filters_each_region_independently(tmp_path: P
     assert second_by_id["region_2"]["curve_points"]["temperature_distance"] is not None
     assert second_by_id["region_2"]["live_point_status"]["temperature_distance_point_count"] == 2
     complete = events[-1]
-    assert len(complete["run_manifest"]["detection_results"]) == 2
-    assert len(complete["run_manifest"]["region_detection_results"]) == 4
+    assert set(complete) == {"event", "run_id", "state"}
+    with RunResultsDatabase(run_store.results_database_path(complete["run_id"])) as database:
+        assert database.frame_count() == 2
+        assert database.result_count() == 4
     assert [event["current"] for event in events if event["event"] == "analyzing_region"] == [1, 2]
     assert [event["region_id"] for event in events if event["event"] == "analysis_region_complete"] == [
         "region_1",
@@ -508,11 +511,11 @@ def test_streamed_live_offline_run_saves_partial_result_when_stopped(tmp_path: P
 
     events.close()
 
-    stopped_result = read_run(run_store, run_id)
-    assert [record.frame_index for record in stopped_result.manifest.frame_records] == [1]
-    assert [result.frame_index for result in stopped_result.manifest.detection_results] == [1]
-    assert [point.frame_index for point in stopped_result.analysis.temperature_distance] == [1]
-    assert stopped_result.manifest.config_snapshot["stop_reason"] == "stream_closed"
+    stopped_state = run_store.read_run_state(run_id)
+    assert stopped_state.processed_frames == 1
+    assert stopped_state.stop_reason == "stream_closed"
+    assert stopped_state.state.value == "READY"
+    assert run_store.read_analysis_summary(run_id).run_id == run_id
 
 
 def test_streamed_live_offline_run_frame_events_defer_smoothed_afas_preview_for_short_runs(tmp_path: Path) -> None:
@@ -578,7 +581,8 @@ def test_streamed_live_offline_run_frame_events_defer_smoothed_afas_preview_for_
     assert all(event["afas_analysis"] == {"result_status": "pending"} for event in frame_events)
 
     complete = [event for event in events if event["event"] == "complete"][0]
-    final_preview = complete["analysis_result"]["afas_preprocessing"]
+    final_summary = run_store.read_analysis_summary(complete["run_id"])
+    final_preview = final_summary.regions[0]["afas_preprocessing"]
     assert len(final_preview["raw"]["temperature_celsius"]) == 21
     assert final_preview["grouped"]["applied"] is True
     assert len(final_preview["smoothed"]["temperature_celsius"]) == 21
@@ -898,12 +902,13 @@ def test_streamed_live_offline_run_short_frame_events_defer_afas_preview(tmp_pat
         assert event["afas_analysis"] == {"result_status": "pending"}
 
     complete = [event for event in events if event["event"] == "complete"][0]
-    final_preview = complete["analysis_result"]["afas_preprocessing"]
+    final_summary = run_store.read_analysis_summary(complete["run_id"])
+    final_preview = final_summary.regions[0]["afas_preprocessing"]
     assert len(final_preview["raw"]["temperature_celsius"]) == 4
     assert final_preview["grouped"]["applied"] is True
     assert final_preview["grouped"]["temperature_celsius"] == [21.0, 22.0]
     assert final_preview["smoothed"]["temperature_celsius"] == [21.0, 22.0]
-    assert complete["analysis_result"]["afas_analysis"]["reason"] == "insufficient_points"
+    assert final_summary.regions[0]["afas_analysis"]["reason"] == "insufficient_points"
 
 
 def test_streamed_live_offline_run_unchanged_afas_preview_does_not_stop_temperature_distance_points(

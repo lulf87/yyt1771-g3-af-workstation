@@ -27,6 +27,7 @@ from yyt1771_g3.core.runtime_policy import RUNTIME_SOURCE_ENV, RuntimePolicy, lo
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
 from yyt1771_g3.core.models import MeasurementDefinition
+from yyt1771_g3.core.run_models_v2 import RunStage, RunStateValue
 from yyt1771_g3.services.offline_dataset import (
     DatasetAccessError,
     DatasetNotFoundError,
@@ -43,7 +44,7 @@ from yyt1771_g3.services.live_offline_run_service import (
 )
 from yyt1771_g3.services.analysis_service import build_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
-from yyt1771_g3.services.export_service import export_run, export_run_bundle
+from yyt1771_g3.services.export_service import export_run, export_run_bundle, load_v2_export_models
 from yyt1771_g3.services.hardware_setup_service import (
     HardwareSetupError,
     build_hardware_environment_report,
@@ -51,6 +52,9 @@ from yyt1771_g3.services.hardware_setup_service import (
     save_hardware_binding,
 )
 from yyt1771_g3.services.import_service import RunExportImportError, import_run_export_bytes
+from yyt1771_g3.services.run_control_service import run_controls
+from yyt1771_g3.services.run_v2_service import build_v2_analysis_summary, update_v2_run_state
+from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
 from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
@@ -590,6 +594,94 @@ def stream_live_offline_run(request: LiveOfflineRunRequest) -> StreamingResponse
     return StreamingResponse(event_lines(), media_type="application/x-ndjson")
 
 
+@app.get("/api/runs")
+def list_saved_runs() -> dict[str, Any]:
+    return {"runs": _run_store().list_saved_runs()}
+
+
+@app.get("/api/runs/{run_id}/status")
+def get_run_status(run_id: str) -> dict[str, Any]:
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    return store.read_run_state(run_id).model_dump(mode="json")
+
+
+@app.post("/api/runs/{run_id}/stop")
+def stop_run(run_id: str) -> dict[str, Any]:
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        if _request_real_camera_stream_stop(run_id):
+            return {"run_id": run_id, "state": "STOP_REQUESTED", "stop_requested": True}
+        raise HTTPException(status_code=404, detail=f"Active run not found: {run_id}")
+    state = store.read_run_state(run_id)
+    if state.state in {RunStateValue.READY, RunStateValue.ERROR}:
+        return {**state.model_dump(mode="json"), "stop_requested": False, "already_complete": True}
+    run_controls.request_stop(run_id)
+    state = update_v2_run_state(
+        store,
+        run_id,
+        state=RunStateValue.STOP_REQUESTED,
+        stage=RunStage.STOP_REQUESTED,
+        stop_reason="manual_stop_requested",
+    )
+    return {**state.model_dump(mode="json"), "stop_requested": True, "already_complete": False}
+
+
+@app.get("/api/runs/{run_id}/summary")
+def get_run_summary(run_id: str) -> dict[str, Any]:
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    state = store.read_run_state(run_id)
+    if state.state != RunStateValue.READY:
+        raise HTTPException(status_code=409, detail={"message": "Run is not ready", "state": state.model_dump(mode="json")})
+    return {
+        "run_meta": store.read_run_meta(run_id).model_dump(mode="json"),
+        "run_state": state.model_dump(mode="json"),
+        "analysis_summary": store.read_analysis_summary(run_id).model_dump(mode="json"),
+    }
+
+
+@app.get("/api/runs/{run_id}/results")
+def get_run_results(
+    run_id: str,
+    region_id: str | None = None,
+    offset: int = 0,
+    limit: int = 200,
+    status: str | None = None,
+    frame_start: int | None = None,
+    frame_end: int | None = None,
+) -> dict[str, Any]:
+    if offset < 0 or not 1 <= limit <= 1000:
+        raise HTTPException(status_code=400, detail="offset must be >= 0 and limit must be between 1 and 1000")
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    with RunResultsDatabase(store.results_database_path(run_id)) as database:
+        items, total = database.query_results(
+            region_id=region_id,
+            offset=offset,
+            limit=limit,
+            status=status,
+            frame_start=frame_start,
+            frame_end=frame_end,
+        )
+    return {"items": items, "offset": offset, "limit": limit, "total": total}
+
+
+@app.get("/api/runs/{run_id}/frames/{frame_index}/results")
+def get_run_frame_results(run_id: str, frame_index: int) -> dict[str, Any]:
+    if frame_index <= 0:
+        raise HTTPException(status_code=400, detail="frame_index must be positive")
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    with RunResultsDatabase(store.results_database_path(run_id)) as database:
+        items = database.frame_results(frame_index)
+    return {"run_id": run_id, "frame_index": frame_index, "items": items}
+
+
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str) -> dict[str, Any]:
     try:
@@ -677,6 +769,27 @@ def get_run_availability(run_id: str) -> dict[str, Any]:
 @app.post("/api/runs/{run_id}/analysis")
 def recompute_run_analysis(run_id: str, request: AnalysisRecomputeRequest) -> dict[str, Any]:
     run_store = _run_store()
+    if run_store.schema_version(run_id) == 2:
+        manifest, _ = load_v2_export_models(run_store, run_id)
+        try:
+            analysis = build_analysis_result(
+                manifest,
+                afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                afas_analysis_parameters=request.afas_analysis_parameters,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        latest: dict[str, Any] = {}
+        for detection in manifest.region_detection_results:
+            latest[detection.region_id] = detection
+        summary = build_v2_analysis_summary(
+            run_store,
+            run_id=run_id,
+            region_analyses=list(analysis.regions),
+            latest_results=latest,
+        )
+        run_store.write_analysis_summary(summary)
+        return {"analysis_result": analysis.model_dump(mode="json")}
     try:
         manifest = run_store.read_run_manifest(run_id)
     except FileNotFoundError as exc:
@@ -1057,6 +1170,7 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
                 save_preview_frames=run_config.run.save_preview_frames,
                 preview_max_width=run_config.run.preview_max_width,
                 stop_requested=_real_camera_stream_stop_requested,
+                compact_stream=request.operator_mode,
             )
             for event in events:
                 event_run_id = _stream_event_run_id(event)

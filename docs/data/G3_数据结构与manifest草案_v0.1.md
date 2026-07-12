@@ -210,3 +210,36 @@ roi_ab_overlay_combined.png
 ```
 
 旧数据缺少字段时继续根据 `operator_data_source`、run mode 和 provenance 推断；无法可靠判断时保持 unknown，不得把模拟/离线数据显示为真实测试。
+
+---
+
+## 9. Operator run v2 紧凑存储
+
+新 Operator run 不再把完整 `DetectionResult` 数组重复写入 manifest 和 analysis。正式数据分为：
+
+```text
+run_meta.json
+  run/source/product/provenance/measurement/config/software
+
+run_state.json
+  state/stage/processed_frames/region_count/stop timestamps/error
+
+results.sqlite
+  frames                 每帧一条
+  region_results         每帧每个 enabled ROI 一条，联合主键去重
+  diagnostic_events      只保留 INVALID/outlier/显式诊断事件
+
+analysis_summary.json
+  regions[].curves/AFAS/summary/status_events/latest_result
+```
+
+`analysis_summary.json` 不得包含 `all_frames`、`detection_results` 或顶层第一 ROI 曲线副本。为保证重启后显示与停止时一致，最终曲线点、AFAS 预处理、AS/AF/拟合结果作为显示快照保存，打开历史 run 时不默认重新检测或重算 AFAS。
+
+v1 兼容边界：
+
+```text
+v1: run_manifest.json + analysis_result.json
+v2: run_meta.json + run_state.json + results.sqlite + analysis_summary.json
+```
+
+读取层自动识别版本。旧 v1 run 无需迁移；新 v2 run 不得在普通结果请求中重建巨大 v1 对象。导出按钮可在边界层临时构造紧凑的兼容视图，但不回写 run 主存储。

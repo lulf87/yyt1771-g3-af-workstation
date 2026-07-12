@@ -124,6 +124,24 @@ test("simulated operator startup displays the selected material before probing",
   );
 });
 
+test("simulated stop finalizes the existing run without replaying processed frames", () => {
+  const startHandler = sourceSlice(
+    "async function startLiveOfflineRun(",
+    "function stopLiveOfflineRun()"
+  );
+  const stopHandler = sourceSlice(
+    "function stopLiveOfflineRun()",
+    "function chooseSetupSource("
+  );
+
+  assert.doesNotMatch(startHandler, /waitForStoppedRun/);
+  assert.doesNotMatch(startHandler, /createLiveOfflineRun/);
+  assert.match(startHandler, /getRunSummary\(completion\.run_id\)/);
+  assert.match(stopHandler, /stopRun\(runId\)/);
+  assert.doesNotMatch(stopHandler, /runAbortRef\.current\?\.abort\(\);\s*$/m);
+  assert.match(mainSource, /Finalizing saved results/);
+});
+
 test("imported simulated exports keep a visible source warning", () => {
   const importedSummary = sourceSlice(
     "function ImportedRunSummary({",

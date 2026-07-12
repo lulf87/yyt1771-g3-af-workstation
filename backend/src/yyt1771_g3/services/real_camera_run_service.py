@@ -22,6 +22,7 @@ from yyt1771_g3.core.models import (
     TemperatureRecord,
 )
 from yyt1771_g3.core.runtime_policy import run_runtime_metadata
+from yyt1771_g3.core.run_models_v2 import RunStage, RunStateValue
 from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 from yyt1771_g3.services.analysis_service import (
     build_analysis_result,
@@ -49,6 +50,14 @@ from yyt1771_g3.services.run_detector_policy import (
     should_rerun_with_enhanced,
 )
 from yyt1771_g3.services.source_provenance import camera_runtime_provenance
+from yyt1771_g3.services.run_control_service import run_controls
+from yyt1771_g3.services.run_v2_service import (
+    build_v2_analysis_summary,
+    compact_detection_for_analysis,
+    initialize_v2_run,
+    update_v2_run_state,
+)
+from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureController, TemperatureReading
 from yyt1771_g3.vision.detectors import detect_frame_with_state
@@ -186,8 +195,9 @@ def iter_real_camera_run_events(
     save_preview_frames: bool = True,
     preview_max_width: int = 1200,
     stop_requested: Callable[[str], bool] | None = None,
+    compact_stream: bool = False,
 ) -> Iterator[dict[str, Any]]:
-    if len(measurement.enabled_regions) > 1:
+    if len(measurement.enabled_regions) > 1 or compact_stream:
         yield from _iter_real_camera_run_events_multi(
             run_store,
             camera_source=camera_source,
@@ -202,6 +212,7 @@ def iter_real_camera_run_events(
             save_preview_frames=save_preview_frames,
             preview_max_width=preview_max_width,
             stop_requested=stop_requested,
+            compact_stream=compact_stream,
         )
         return
     frame_limit = _unbounded_frame_limit(max_frames)
@@ -447,6 +458,7 @@ def _iter_real_camera_run_events_multi(
     save_preview_frames: bool,
     preview_max_width: int,
     stop_requested: Callable[[str], bool] | None,
+    compact_stream: bool = False,
 ) -> Iterator[dict[str, Any]]:
     frame_limit = _unbounded_frame_limit(max_frames)
     run_id = _new_run_id()
@@ -466,13 +478,48 @@ def _iter_real_camera_run_events_multi(
     detection_results: list[DetectionResult] = []
     region_detection_results: list[DetectionResult] = []
     saved_result: RealCameraRunResult | None = None
+    saved_v2 = False
     stop_reason = "manual_stop_or_stream_closed"
     temperature_start_error = ""
+    pending_frames: list[FrameRecord] = []
+    pending_temperatures: list[TemperatureRecord] = []
+    pending_region_results: list[DetectionResult] = []
+    if compact_stream:
+        runtime_metadata = run_runtime_metadata(
+            default_runtime_source="real_hardware",
+            legacy_operator_data_source="real_camera",
+        )
+        provenance = camera_runtime_provenance(
+            camera_profile=camera_profile or {},
+            temperature_backend=temperature_backend,
+        )
+        initialize_v2_run(
+            run_store,
+            run_id=run_id,
+            dataset_id="real_camera",
+            measurement=measurement,
+            runtime_source=runtime_metadata["runtime_source"],
+            product_mode=runtime_metadata["product_mode"],
+            operator_data_source=runtime_metadata["operator_data_source"],
+            provenance=provenance,
+            config_snapshot={
+                "mode": "real_camera_run",
+                "max_frames": frame_limit,
+                "target_fps": target_fps,
+                "save_raw_frames": save_raw_frames,
+                "save_preview_frames": save_preview_frames,
+            },
+            software={"package": "yyt1771_g3", "phase": "G3-P0094-v2"},
+        )
+        run_controls.register(run_id)
 
     try:
         temperature_start_error = _prepare_temperature_controller(temperature_controller, measurement)
         frame_index = 1
         while frame_limit is None or frame_index <= frame_limit:
+            if compact_stream and run_controls.should_stop(run_id):
+                stop_reason = "manual_stop_requested"
+                break
             frame = camera_source.preview_frame()
             temperature = _read_temperature(temperature_controller, startup_error=temperature_start_error)
             raw_frame_path: Path | None = None
@@ -511,8 +558,23 @@ def _iter_real_camera_run_events_multi(
             first = region_results[0]
             frame_records.append(frame_record)
             temperature_records.append(temperature_record)
-            detection_results.append(first.detection)
-            region_detection_results.extend(item.detection for item in region_results)
+            stored_region_detections = [
+                compact_detection_for_analysis(item.detection) if compact_stream else item.detection
+                for item in region_results
+            ]
+            detection_results.append(stored_region_detections[0])
+            region_detection_results.extend(stored_region_detections)
+            if compact_stream:
+                pending_frames.append(frame_record)
+                pending_temperatures.append(temperature_record)
+                pending_region_results.extend(item.detection for item in region_results)
+                if len(pending_frames) >= 50:
+                    with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
+                        database.append_batch(pending_frames, pending_temperatures, pending_region_results)
+                    pending_frames.clear()
+                    pending_temperatures.clear()
+                    pending_region_results.clear()
+                    update_v2_run_state(run_store, run_id, processed_frames=len(frame_records))
             first_preview = _live_afas_preprocessing_preview(
                 runtime_state.temperature_distance_points[first.region.region_id],
                 processed_frames=len(frame_records),
@@ -545,6 +607,68 @@ def _iter_real_camera_run_events_multi(
             frame_index += 1
 
         final_stop_reason = stop_reason if stop_reason in {"manual_stop_requested", "target_temperature_reached"} else "complete"
+        if compact_stream:
+            if pending_frames:
+                with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
+                    database.append_batch(pending_frames, pending_temperatures, pending_region_results)
+                pending_frames.clear()
+                pending_temperatures.clear()
+                pending_region_results.clear()
+            update_v2_run_state(
+                run_store,
+                run_id,
+                state=RunStateValue.FINALIZING,
+                stage=RunStage.BUILDING_ANALYSIS,
+                processed_frames=len(frame_records),
+                stop_reason=final_stop_reason,
+            )
+            yield _run_stage_event(
+                run_id=run_id,
+                event="building_analysis",
+                processed_frames=len(frame_records),
+                frame_count=frame_limit,
+                stop_reason=final_stop_reason,
+            )
+            grouped = {region.region_id: [] for region in measurement.enabled_regions}
+            for detection in region_detection_results:
+                grouped[detection.region_id].append(detection)
+            region_analyses = []
+            latest_results: dict[str, DetectionResult] = {}
+            for current, region in enumerate(measurement.enabled_regions, start=1):
+                detections = grouped.get(region.region_id, [])
+                yield {
+                    "event": "analyzing_region", "run_id": run_id, "dataset_id": "real_camera",
+                    "operator_data_source": "real_camera", "processed_frames": len(frame_records),
+                    "frame_count": frame_limit or 0, "total_frames": frame_limit or 0,
+                    "current": current, "total": len(measurement.enabled_regions),
+                    "region_id": region.region_id, "region_index": region.index,
+                    "region_label": region.label, "color": region.color,
+                }
+                region_analysis = build_region_analysis_result(region, detections)
+                region_analyses.append(region_analysis)
+                if detections:
+                    latest_results[region.region_id] = detections[-1]
+                yield {
+                    "event": "analysis_region_complete", "run_id": run_id,
+                    "dataset_id": "real_camera", "operator_data_source": "real_camera",
+                    "current": current, "total": len(measurement.enabled_regions),
+                    "region_id": region.region_id, "region_index": region.index,
+                    "region_label": region.label, "color": region.color,
+                    "summary": region_analysis.summary,
+                    "afas_status": region_analysis.afas_analysis.get("result_status", "unavailable"),
+                }
+            update_v2_run_state(run_store, run_id, stage=RunStage.WRITING_SUMMARY)
+            summary = build_v2_analysis_summary(
+                run_store, run_id=run_id, region_analyses=region_analyses, latest_results=latest_results
+            )
+            run_store.write_analysis_summary(summary)
+            update_v2_run_state(
+                run_store, run_id, state=RunStateValue.READY, stage=RunStage.READY,
+                processed_frames=len(frame_records), stop_reason=final_stop_reason,
+            )
+            saved_v2 = True
+            yield {"event": "complete", "run_id": run_id, "state": "READY"}
+            return
         yield _run_stage_event(
             run_id=run_id,
             event="stopping",
@@ -631,7 +755,37 @@ def _iter_real_camera_run_events_multi(
         }
     finally:
         try:
-            if saved_result is None and frame_records:
+            if compact_stream:
+                run_controls.release(run_id)
+                if not saved_v2 and frame_records:
+                    try:
+                        if pending_frames:
+                            with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
+                                database.append_batch(pending_frames, pending_temperatures, pending_region_results)
+                        grouped = {region.region_id: [] for region in measurement.enabled_regions}
+                        for detection in region_detection_results:
+                            grouped[detection.region_id].append(detection)
+                        region_analyses = [
+                            build_region_analysis_result(region, grouped.get(region.region_id, []))
+                            for region in measurement.enabled_regions
+                        ]
+                        summary = build_v2_analysis_summary(
+                            run_store,
+                            run_id=run_id,
+                            region_analyses=region_analyses,
+                            latest_results={key: values[-1] for key, values in grouped.items() if values},
+                        )
+                        run_store.write_analysis_summary(summary)
+                        update_v2_run_state(
+                            run_store, run_id, state=RunStateValue.READY, stage=RunStage.READY,
+                            processed_frames=len(frame_records), stop_reason="stream_closed",
+                        )
+                    except Exception as exc:
+                        update_v2_run_state(
+                            run_store, run_id, state=RunStateValue.ERROR, stage=RunStage.ERROR,
+                            processed_frames=len(frame_records), stop_reason="stream_closed", error=str(exc),
+                        )
+            elif saved_result is None and frame_records:
                 _save_real_camera_run_result(
                     run_store,
                     run_id=run_id,

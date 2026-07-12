@@ -22,7 +22,6 @@ import {
   ApiError,
   apiUrlFromPath,
   artifactDownloadUrl,
-  createLiveOfflineRun,
   createRunExports,
   downloadRunExportBundle,
   fetchRunExportBundle,
@@ -34,6 +33,7 @@ import {
   getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
+  getRunSummary,
   getRunAvailability,
   getOfflineDatasetSummary,
   importRunExportFile,
@@ -49,7 +49,8 @@ import {
   recomputeRunAnalysis,
   runFrameImageUrl,
   saveHardwareBinding,
-  stopRealCameraRun,
+  runResponseFromSummary,
+  stopRun,
   streamLiveOfflineRun,
   streamRealCameraRun,
   testHardwareCamera,
@@ -253,7 +254,7 @@ type LiveRunState = {
   datasetId: string;
   operatorDataSource: OperatorDataSource;
   provenance: SourceProvenance | null;
-  status: "running" | "complete" | "stopped";
+  status: "running" | "stopping" | "complete" | "stopped";
   statusMessage: string;
   frameIndex: number;
   frameUrl: string;
@@ -276,6 +277,7 @@ type LiveRunState = {
 type OperatorDataSource = "offline_dataset" | "real_camera";
 
 const OPERATOR_SOURCE_STORAGE_KEY = "yyt1771-g3-operator-source";
+const LAST_SAVED_RUN_STORAGE_KEY = "yyt1771-g3-last-saved-run";
 
 type DetectionResultSource = "stabilized" | "raw";
 
@@ -675,6 +677,7 @@ function App() {
   const operatorSourceStatusRetryTimerRef = useRef<number | null>(null);
   const operatorSourceStatusRetryCountRef = useRef(0);
   const operatorTemperaturePollInFlightRef = useRef(false);
+  const savedRunRestoreAttemptedRef = useRef(false);
   const measurementRef = useRef<MeasurementDefinition | null>(null);
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
@@ -690,6 +693,12 @@ function App() {
     void refreshAppRuntime();
     void refreshDatasets();
   }, []);
+
+  useEffect(() => {
+    if (!measurement || savedRunRestoreAttemptedRef.current) return;
+    savedRunRestoreAttemptedRef.current = true;
+    void restoreLastSavedRun();
+  }, [measurement]);
 
   useEffect(() => {
     if (appRuntime?.runtime_source !== "simulated_material") return;
@@ -997,6 +1006,17 @@ function App() {
     }
   }
 
+  async function restoreLastSavedRun() {
+    const runId = window.localStorage.getItem(LAST_SAVED_RUN_STORAGE_KEY);
+    if (!runId) return;
+    try {
+      const restored = runResponseFromSummary(await getRunSummary(runId));
+      setRunResult(restored);
+    } catch {
+      window.localStorage.removeItem(LAST_SAVED_RUN_STORAGE_KEY);
+    }
+  }
+
   async function handleDeviceSetupSaved() {
     await refreshHardwareProfile();
     await refreshOperatorSourceStatus({ reason: "saved" });
@@ -1121,7 +1141,7 @@ function App() {
     };
 
     try {
-      const response = await streamLiveOfflineRun(selectedId, measurementForRun, {
+      const completion = await streamLiveOfflineRun(selectedId, measurementForRun, {
         startFrame: frameIndex,
         targetFps: measurementForRun.detector_config.live_offline_fps ?? 8,
         signal: controller.signal
@@ -1131,20 +1151,16 @@ function App() {
           liveRunProcessedFramesRef.current = event.processed_frames;
           applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          liveRunIdRef.current = event.run_manifest.run_id;
-          liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
+          liveRunIdRef.current = event.run_id;
           setLiveRun((current) =>
             current
               ? {
                   ...current,
                   status: "complete",
-                  operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
-                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   statusMessage: "",
                   analysisProgress: null,
-                  analysis: event.analysis_result,
-                  processedFrames: event.run_manifest.frame_records.length,
-                  totalFrames: event.run_manifest.frame_records.length
+                  processedFrames: liveRunProcessedFramesRef.current,
+                  totalFrames: liveRunProcessedFramesRef.current
                 }
               : current
           );
@@ -1154,32 +1170,23 @@ function App() {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
+      const response = runResponseFromSummary(await getRunSummary(completion.run_id));
+      window.localStorage.setItem(LAST_SAVED_RUN_STORAGE_KEY, completion.run_id);
       setRunResult(response);
+      setLiveRun((current) => current ? {
+        ...current,
+        status: "complete",
+        statusMessage: "",
+        analysisProgress: null,
+        runId: completion.run_id,
+        analysis: response.analysis_result,
+        provenance: response.run_manifest.provenance ?? current.provenance,
+        processedFrames: Number(response.run_manifest.config_snapshot.processed_frames ?? current.processedFrames),
+        totalFrames: Number(response.run_manifest.config_snapshot.processed_frames ?? current.processedFrames)
+      } : current);
     } catch (err) {
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
-        const stoppedRunId = liveRunIdRef.current;
-        if (stoppedRunId) {
-          try {
-            const partialResult = await waitForStoppedRun(stoppedRunId);
-            applyStoppedRunResult(partialResult);
-          } catch (fetchErr) {
-            if (measurementForRun && selectedId && liveRunProcessedFramesRef.current > 0) {
-              try {
-                const partialResult = await createLiveOfflineRun(selectedId, measurementForRun, {
-                  startFrame: frameIndex,
-                  maxFrames: liveRunProcessedFramesRef.current,
-                  targetFps: measurementForRun.detector_config.live_offline_fps ?? 8
-                });
-                applyStoppedRunResult(partialResult);
-              } catch (fallbackErr) {
-                setError(fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
-              }
-            } else {
-              setError(fetchErr instanceof Error ? fetchErr.message : String(fetchErr));
-            }
-          }
-        }
       } else {
         setError(err instanceof Error ? err.message : String(err));
         setRunResult(null);
@@ -1191,39 +1198,19 @@ function App() {
       setRunning(false);
     }
 
-    function applyStoppedRunResult(partialResult: RunResponse) {
-      setRunResult(partialResult);
-      setLiveRun((current) =>
-        current
-          ? {
-              ...current,
-              status: "stopped",
-              statusMessage: "",
-              analysisProgress: null,
-              runId: partialResult.run_manifest.run_id,
-              operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
-              provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
-              analysis: partialResult.analysis_result,
-              processedFrames: partialResult.run_manifest.frame_records.length,
-              totalFrames: partialResult.run_manifest.config_snapshot.max_frames as number
-            }
-          : current
-      );
-    }
   }
 
   function stopLiveOfflineRun() {
-    if (runningCamera) {
-      const runId = liveRunIdRef.current;
-      if (runId) {
-        void stopRealCameraRun(runId).catch((err) => {
-          setError(err instanceof Error ? err.message : String(err));
-          runAbortRef.current?.abort();
-        });
-        return;
-      }
-    }
-    runAbortRef.current?.abort();
+    const runId = liveRunIdRef.current;
+    if (!runId) return;
+    setLiveRun((current) => current ? {
+      ...current,
+      status: "stopping",
+      statusMessage: t("Finalizing saved results")
+    } : current);
+    void stopRun(runId).catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
   }
 
   function chooseSetupSource(source: SetupSourceKind) {
@@ -1541,22 +1528,28 @@ function App() {
           liveRunProcessedFramesRef.current = event.processed_frames;
           applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          liveRunIdRef.current = event.run_manifest.run_id;
-          liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
+          if (!event.run_manifest || !event.analysis_result) {
+            liveRunIdRef.current = event.run_id;
+            return;
+          }
+          const completedManifest = event.run_manifest;
+          const completedAnalysis = event.analysis_result;
+          liveRunIdRef.current = completedManifest.run_id;
+          liveRunProcessedFramesRef.current = completedManifest.frame_records.length;
           setLiveRun((current) =>
             current
               ? {
                   ...current,
                   status: "complete",
-                  operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
-                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
+                  operatorDataSource: completedManifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
+                  provenance: completedManifest.provenance ?? completedAnalysis.provenance ?? current.provenance,
                   statusMessage: "",
                   analysisProgress: null,
-                  analysis: event.analysis_result,
-                  processedFrames: event.run_manifest.frame_records.length,
-                  totalFrames: event.run_manifest.frame_records.length,
+                  analysis: completedAnalysis,
+                  processedFrames: completedManifest.frame_records.length,
+                  totalFrames: completedManifest.frame_records.length,
                   frameShape:
-                    event.run_manifest.frame_records[event.run_manifest.frame_records.length - 1]?.shape ??
+                    completedManifest.frame_records[completedManifest.frame_records.length - 1]?.shape ??
                     current.frameShape
                 }
               : current
@@ -1567,7 +1560,26 @@ function App() {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
-      setRunResult(response);
+      const completedResponse = "run_id" in response
+        ? runResponseFromSummary(await getRunSummary(response.run_id))
+        : response;
+      if ("run_id" in response) {
+        window.localStorage.setItem(LAST_SAVED_RUN_STORAGE_KEY, response.run_id);
+      }
+      setRunResult(completedResponse);
+      if (options.operatorMode) {
+        setLiveRun((current) => current ? {
+          ...current,
+          status: "complete",
+          statusMessage: "",
+          analysisProgress: null,
+          runId: completedResponse.run_manifest.run_id,
+          analysis: completedResponse.analysis_result,
+          provenance: completedResponse.run_manifest.provenance ?? current.provenance,
+          processedFrames: Number(completedResponse.run_manifest.config_snapshot.processed_frames ?? current.processedFrames),
+          totalFrames: Number(completedResponse.run_manifest.config_snapshot.processed_frames ?? current.processedFrames)
+        } : current);
+      }
     } catch (err) {
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
@@ -2469,9 +2481,15 @@ function OperatorRunPage({
             type="button"
           >
             <Play size={16} aria-hidden="true" />
-            {operatorRunActive ? t("Running") : simulatedMode ? t("Start simulated test") : t("Start live test")}
+            {operatorRunActive
+              ? liveRun?.status === "stopping"
+                ? t("Finalizing saved results")
+                : t("Running")
+              : simulatedMode
+                ? t("Start simulated test")
+                : t("Start live test")}
           </button>
-          <button className="secondaryButton" disabled={!operatorRunActive} onClick={onStopRun} type="button">
+          <button className="secondaryButton" disabled={!operatorRunActive || liveRun?.status === "stopping"} onClick={onStopRun} type="button">
             <Square size={16} aria-hidden="true" />
             {t("Stop test")}
           </button>
@@ -7824,7 +7842,7 @@ function createInitialLiveRun(
     datasetId,
     operatorDataSource: "offline_dataset",
     provenance: null,
-    status: "running",
+    status: "stopping",
     statusMessage: "",
     frameIndex: startFrame,
     frameUrl: frameIndexImageUrl(datasetId, startFrame, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
@@ -7847,7 +7865,7 @@ function createInitialRealCameraLiveRun(measurement: MeasurementDefinition): Liv
     datasetId: "real_camera",
     operatorDataSource: "real_camera",
     provenance: null,
-    status: "running",
+    status: "stopping",
     statusMessage: "",
     frameIndex: 0,
     frameUrl: "",

@@ -315,6 +315,7 @@ const ZH_TEXT: Record<string, string> = {
   "Real camera test": "真实相机测试",
   "Simulated test": "模拟测试",
   "Simulated material debug": "模拟素材调试",
+  "Finalizing saved results": "正在整理并保存结果",
   "Simulated material debug mode is active. This is not real test data.": "当前为模拟素材调试模式，不代表真实测试数据。",
   "Offline dataset / simulated material": "离线数据集 / 模拟素材",
   "Real hardware unavailable": "真实硬件不可用",
