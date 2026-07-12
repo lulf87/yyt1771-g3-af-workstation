@@ -7,6 +7,14 @@ import type {
   MeasurementRegion,
   RegionResult
 } from "./api/client";
+import type { GroupedTemperaturePoint } from "./temperatureCurve.js";
+import {
+  formalCurvePoints,
+  groupLegacyCurvePoints,
+  groupedPointsFromMap,
+  upsertGroupedTemperaturePoint,
+  validateStrictlyIncreasingTemperature
+} from "./temperatureCurve.js";
 
 export type RegionLiveState = {
   regionId: string;
@@ -16,6 +24,7 @@ export type RegionLiveState = {
   latestResult: RegionResult | null;
   allFrames: DetectionResult[];
   temperatureDistance: CurvePoint[];
+  groupedTemperaturePoints: Map<number, GroupedTemperaturePoint>;
   displayTemperatureDistance: CurvePoint[];
   formalPointCount: number;
   lastFormalFrameIndex: number | null;
@@ -35,6 +44,7 @@ export type RegionTrendSource = {
   all_frames?: DetectionResult[];
   allFrames?: DetectionResult[];
   afas_preprocessing?: Record<string, unknown>;
+  groupedTemperaturePoints?: Map<number, GroupedTemperaturePoint>;
 };
 
 export type MultiRegionTrendPoint = {
@@ -132,7 +142,14 @@ export function appendRegionFrameEvent(
     const temperatureDistance = formalPoint
       ? appendUniqueCurvePoint(current.temperatureDistance, formalPoint)
       : current.temperatureDistance;
-    const lastFormalPoint = temperatureDistance[temperatureDistance.length - 1] ?? null;
+    const groupedTemperaturePoints = current.groupedTemperaturePoints;
+    if (result.grouped_temperature_point_update) {
+      upsertGroupedTemperaturePoint(groupedTemperaturePoints, result.grouped_temperature_point_update);
+    }
+    const formalTemperatureDistance = groupedTemperaturePoints.size
+      ? groupedPointsFromMap(groupedTemperaturePoints)
+      : groupLegacyCurvePoints(temperatureDistance, 0.01);
+    const lastFormalPoint = formalTemperatureDistance[formalTemperatureDistance.length - 1] ?? null;
     next[result.region_id] = {
       ...current,
       regionId: result.region_id,
@@ -142,11 +159,12 @@ export function appendRegionFrameEvent(
       latestResult: result,
       allFrames: appendUniqueDetection(current.allFrames, result.detection_result),
       temperatureDistance,
+      groupedTemperaturePoints,
       displayTemperatureDistance: smoothDisplayPoints(
-        temperatureDistance,
+        formalTemperatureDistance,
         options.smoothingWindowSize ?? 5
       ),
-      formalPointCount: temperatureDistance.length,
+      formalPointCount: formalTemperatureDistance.length,
       lastFormalFrameIndex: lastFormalPoint?.frame_index ?? current.lastFormalFrameIndex,
       latestMissingReason: formalPoint ? "" : result.live_point_status?.reason_if_missing ?? ""
     };
@@ -165,6 +183,7 @@ export function regionTrendSourcesFromLiveState(
       region_label: state.regionLabel,
       color: state.color,
       temperatureDistance: state.temperatureDistance,
+      groupedTemperaturePoints: state.groupedTemperaturePoints,
       displayTemperatureDistance: state.displayTemperatureDistance,
       allFrames: state.allFrames
     }));
@@ -183,12 +202,18 @@ export function buildMultiRegionTrendModel(
     .filter((source) => visibleRegionIds.has(source.region_id))
     .sort((left, right) => left.region_index - right.region_index)
     .map((source) => {
-      const rawPoints = source.temperatureDistance ?? source.temperature_distance ?? [];
+      const rawFramePoints = source.temperatureDistance ?? source.temperature_distance ?? [];
+      const rawPoints = source.groupedTemperaturePoints?.size
+        ? groupedPointsFromMap(source.groupedTemperaturePoints)
+        : formalCurvePoints(source.afas_preprocessing, rawFramePoints);
       const displayPoints = source.displayTemperatureDistance?.length
         ? source.displayTemperatureDistance
         : options.displaySmoothing?.enabled
           ? smoothDisplayPoints(rawPoints, options.displaySmoothing.windowSize ?? 5)
           : rawPoints.map((point) => ({ ...point }));
+      if (!validateStrictlyIncreasingTemperature(displayPoints)) {
+        throw new Error(`Formal temperature curve is not strictly increasing for ${source.region_id}`);
+      }
       return {
         source,
         rawPoints,
@@ -258,7 +283,11 @@ export function buildMultiRegionTrendModel(
         regionLabel: source.region_label,
         color: source.color,
         visible: visibleRegionIds.has(source.region_id),
-        pointCount: (source.temperatureDistance ?? source.temperature_distance ?? []).length
+        pointCount: source.groupedTemperaturePoints?.size
+          ?? formalCurvePoints(
+            source.afas_preprocessing,
+            source.temperatureDistance ?? source.temperature_distance ?? []
+          ).length
       })),
     hasPoints: series.some((item) =>
       (layers.formalPoints && item.rawPoints.length > 0) ||
@@ -277,6 +306,7 @@ function emptyRegionState(region: MeasurementRegion): RegionLiveState {
     latestResult: null,
     allFrames: [],
     temperatureDistance: [],
+    groupedTemperaturePoints: new Map(),
     displayTemperatureDistance: [],
     formalPointCount: 0,
     lastFormalFrameIndex: null,
@@ -351,8 +381,8 @@ function readAfasSmoothedPoints(source: RegionTrendSource): CurvePoint[] {
     return [{
       x: temperature,
       y: distance,
-      frame_index: source.temperature_distance?.[index]?.frame_index ?? index + 1,
-      sync_status: source.temperature_distance?.[index]?.sync_status ?? null
+      frame_index: index + 1,
+      sync_status: "TEMP_SYNC_OK"
     }];
   });
 }

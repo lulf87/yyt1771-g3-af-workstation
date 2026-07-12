@@ -16,6 +16,11 @@ from yyt1771_g3.core.models import (
     MeasurementRegion,
 )
 from yyt1771_g3.services.analysis_service import curve_points_for_detection
+from yyt1771_g3.services.afas_analysis import (
+    DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS,
+    canonical_temperature_bin_key,
+    upsert_grouped_temperature_point,
+)
 from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter
 from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.run_detector_policy import (
@@ -44,6 +49,7 @@ class RegionRuntimeState:
     temporal_stabilizers: dict[str, CausalTemporalStabilizer] = field(default_factory=dict)
     outlier_filters: dict[str, CausalDistanceOutlierFilter] = field(default_factory=dict)
     temperature_distance_points: dict[str, list[CurvePoint]] = field(default_factory=dict)
+    grouped_temperature_points: dict[str, dict[int, dict[str, Any]]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,7 @@ class RegionFrameResult:
     detection: DetectionResult
     curve_points: dict[str, CurvePoint | None]
     live_point_status: dict[str, Any]
+    grouped_temperature_point_update: dict[str, Any] | None = None
 
 
 def region_frame_result_payload(
@@ -70,6 +77,7 @@ def region_frame_result_payload(
             for key, point in item.curve_points.items()
         },
         "live_point_status": dict(item.live_point_status),
+        "grouped_temperature_point_update": item.grouped_temperature_point_update,
     }
     if afas_preprocessing is not None:
         payload["afas_preprocessing"] = afas_preprocessing
@@ -104,6 +112,7 @@ def create_region_runtime_state(
         )
         state.outlier_filters[region.region_id] = CausalDistanceOutlierFilter(measurement.detector_config)
         state.temperature_distance_points[region.region_id] = []
+        state.grouped_temperature_points[region.region_id] = {}
     return state
 
 
@@ -145,6 +154,7 @@ def detect_regions_for_frame(
         temperature_distance = curve_points.get("temperature_distance")
         if temperature_distance is not None:
             state.temperature_distance_points[region.region_id].append(temperature_distance)
+        grouped_update = _update_temperature_bucket(state, region.region_id, temperature_distance)
         results.append(
             RegionFrameResult(
                 region=region,
@@ -155,6 +165,7 @@ def detect_regions_for_frame(
                     curve_points,
                     temperature_distance_point_count=len(state.temperature_distance_points[region.region_id]),
                 ),
+                grouped_temperature_point_update=grouped_update,
             )
         )
     return results, state
@@ -233,6 +244,7 @@ def detect_regions_for_run_frame(
         temperature_distance = curve_points.get("temperature_distance")
         if temperature_distance is not None:
             runtime_state.temperature_distance_points[region.region_id].append(temperature_distance)
+        grouped_update = _update_temperature_bucket(runtime_state, region.region_id, temperature_distance)
         results.append(
             RegionFrameResult(
                 region=region,
@@ -245,6 +257,7 @@ def detect_regions_for_run_frame(
                         runtime_state.temperature_distance_points[region.region_id]
                     ),
                 ),
+                grouped_temperature_point_update=grouped_update,
             )
         )
     return results, runtime_state
@@ -260,6 +273,23 @@ def _ensure_region_state(
     state.temporal_stabilizers.setdefault(region.region_id, CausalTemporalStabilizer(measurement))
     state.outlier_filters.setdefault(region.region_id, CausalDistanceOutlierFilter(measurement.detector_config))
     state.temperature_distance_points.setdefault(region.region_id, [])
+    state.grouped_temperature_points.setdefault(region.region_id, {})
+
+
+def _update_temperature_bucket(
+    state: RegionRuntimeState,
+    region_id: str,
+    point: CurvePoint | None,
+) -> dict[str, Any] | None:
+    if point is None:
+        return None
+    key = canonical_temperature_bin_key(point.x, DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS)
+    buckets = state.grouped_temperature_points.setdefault(region_id, {})
+    updated = upsert_grouped_temperature_point(
+        buckets.get(key), point, bin_celsius=DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS,
+    )
+    buckets[key] = updated
+    return {**updated, "temperature_group_bin_celsius": DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS}
 
 
 def _attach_region_metadata(

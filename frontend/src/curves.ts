@@ -1,4 +1,5 @@
 export type CurveKey = "distance_time" | "temperature_time" | "temperature_distance";
+import { formalCurvePoints, validateStrictlyIncreasingTemperature } from "./temperatureCurve.js";
 
 export type CurvePointInput = {
   x: number;
@@ -422,13 +423,13 @@ type RawOverlayLineSegment = CurveOverlayLineSpec & {
 };
 
 export function buildRunCurveSpecs(analysis: AnalysisCurveSource): CurveSpec[] {
-  const smoothedPoints = readSmoothedTemperatureDistance(analysis);
+  const savedSmoothed = readSmoothedTemperatureDistance(analysis);
+  const smoothedPoints = formalCurvePoints(analysis.afas_preprocessing, analysis.temperature_distance);
   return [
     {
       key: "temperature_distance",
-      title: smoothedPoints ? "Smoothed distance - temperature" : "Distance - temperature",
-      points: smoothedPoints ?? analysis.temperature_distance,
-      referencePoints: smoothedPoints ? analysis.temperature_distance : undefined,
+      title: savedSmoothed ? "Smoothed distance - temperature" : "Distance - temperature",
+      points: smoothedPoints,
       overlays: undefined,
       xAxis: { kind: "raw", label: "Temperature (°C)" },
       xAxisLabel: "Temperature (°C)",
@@ -439,13 +440,13 @@ export function buildRunCurveSpecs(analysis: AnalysisCurveSource): CurveSpec[] {
 }
 
 export function buildAnalysisCurveSpecs(analysis: AnalysisCurveSource): CurveSpec[] {
-  const smoothedPoints = readSmoothedTemperatureDistance(analysis);
+  const savedSmoothed = readSmoothedTemperatureDistance(analysis);
+  const smoothedPoints = formalCurvePoints(analysis.afas_preprocessing, analysis.temperature_distance);
   return [
     {
       key: "temperature_distance",
-      title: smoothedPoints ? "Smoothed distance - temperature" : "Distance - temperature",
-      points: smoothedPoints ?? analysis.temperature_distance,
-      referencePoints: smoothedPoints ? analysis.temperature_distance : undefined,
+      title: savedSmoothed ? "Smoothed distance - temperature" : "Distance - temperature",
+      points: smoothedPoints,
       overlays: readAfasOverlays(analysis),
       xAxis: { kind: "raw", label: "Temperature (°C)" },
       xAxisLabel: "Temperature (°C)",
@@ -475,12 +476,11 @@ function readPreprocessedTemperatureDistance(
     const value = values[index];
     if (typeof temperature !== "number" || typeof value !== "number") return [];
     if (!Number.isFinite(temperature) || !Number.isFinite(value)) return [];
-    const rawPoint = options.attachRawFrameMetadata ? analysis.temperature_distance[index] : null;
     return [{
       x: temperature,
       y: value,
-      frame_index: rawPoint?.frame_index,
-      sync_status: rawPoint?.sync_status
+      frame_index: undefined,
+      sync_status: "TEMP_SYNC_OK"
     }];
   });
   return points.length
@@ -502,7 +502,8 @@ export function buildRunTrendModel(
     bottom: height - padding.bottom
   };
   const frameMap = buildFrameMap(analysis.all_frames ?? []);
-  const allReferenceData = normalizeRunTrendDataPoints(analysis.temperature_distance, "raw", frameMap)
+  const canonicalFormalPoints = formalCurvePoints(analysis.afas_preprocessing, analysis.temperature_distance);
+  const allReferenceData = normalizeRunTrendDataPoints(canonicalFormalPoints, "grouped", frameMap, { preserveMissingFrameIndex: true })
     .filter((point) => isFormalTrendPoint(point));
   const allStatusData = normalizeRunTrendStatusData(analysis, frameMap);
   const visibleReferenceData = allReferenceData;
@@ -514,6 +515,9 @@ export function buildRunTrendModel(
       .filter((point) => isFormalTrendPoint(point))
       .sort((a, b) => a.temperature - b.temperature)
     : [];
+  if (!validateStrictlyIncreasingTemperature(allFormalData.map((point) => ({ x: point.temperature })))) {
+    throw new Error("Formal temperature-distance curve must be strictly increasing");
+  }
   const visibleFormalData = allFormalData;
   const allPreviewData = previewSource.points
     ? normalizeRunTrendDataPoints(previewSource.points, previewSource.source, frameMap, { preserveMissingFrameIndex: true })
@@ -694,17 +698,18 @@ function readRunTrendCurveSource(
   label: string;
   points: CurvePointInput[] | null;
 } {
-  if (displaySmoothing?.enabled && analysis.temperature_distance.length) {
+  const grouped = formalCurvePoints(analysis.afas_preprocessing, analysis.temperature_distance);
+  if (displaySmoothing?.enabled && grouped.length) {
     return {
       source: "live_smoothed",
       label: "Live smoothed trend",
-      points: smoothLiveDisplaySeries(analysis.temperature_distance, displaySmoothing)
+      points: smoothLiveDisplaySeries(grouped, displaySmoothing)
     };
   }
   return {
     source: "raw",
     label: "Live temperature-distance points",
-    points: analysis.temperature_distance
+    points: grouped
   };
 }
 

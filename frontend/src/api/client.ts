@@ -442,6 +442,19 @@ export type CurvePoint = {
   sync_status: string | null;
 };
 
+export type GroupedTemperaturePoint = {
+  bin_key: number;
+  temperature_celsius: number;
+  distance_px: number;
+  sample_count: number;
+  minimum_distance_px: number;
+  maximum_distance_px: number;
+  first_frame_index: number;
+  last_frame_index: number;
+  representative_frame_index: number;
+  temperature_group_bin_celsius: number;
+};
+
 export type LivePointStatus = {
   region_id?: string;
   region_index?: number;
@@ -474,6 +487,7 @@ export type RegionResult = {
   curve_points: RegionCurvePoints;
   live_point_status?: LivePointStatus;
   afas_preprocessing?: Record<string, unknown>;
+  grouped_temperature_point_update?: GroupedTemperaturePoint | null;
 };
 
 export type RegionOverlay = {

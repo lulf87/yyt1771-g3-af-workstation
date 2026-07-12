@@ -29,6 +29,7 @@ from yyt1771_g3.core.models import (
     TemperatureRecord,
 )
 from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.afas_analysis import group_temperature_curve_points
 from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 from yyt1771_g3.storage.run_store import RunStore
 
@@ -420,10 +421,11 @@ def _write_analysis_by_region_json(export_dir: Path, analysis: AnalysisResult) -
 def _write_curve_png(export_dir: Path, analysis: AnalysisResult) -> ExportArtifact:
     path = export_dir / "temperature_distance.png"
     fig, ax = plt.subplots(figsize=(6, 4), dpi=140)
-    if analysis.temperature_distance:
+    points = _formal_plot_points(analysis.afas_preprocessing, analysis.temperature_distance)
+    if points:
         ax.plot(
-            [point.x for point in analysis.temperature_distance],
-            [point.y for point in analysis.temperature_distance],
+            [point[0] for point in points],
+            [point[1] for point in points],
             color="#2563eb",
             linewidth=1.8,
         )
@@ -454,25 +456,14 @@ def _write_region_curve_pngs(export_dir: Path, analysis: AnalysisResult) -> list
 def _save_region_curve_figure(path: Path, regions: list[RegionAnalysisResult]) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5), dpi=140)
     for region in sorted(regions, key=lambda item: item.region_index):
-        if region.temperature_distance:
+        points = _formal_plot_points(region.afas_preprocessing, region.temperature_distance)
+        if points:
             ax.plot(
-                [point.x for point in region.temperature_distance],
-                [point.y for point in region.temperature_distance],
+                [point[0] for point in points],
+                [point[1] for point in points],
                 color=region.color,
                 linewidth=1.8,
                 label=_plot_region_label(region),
-            )
-        smoothed = region.afas_preprocessing.get("smoothed", {})
-        temperatures = smoothed.get("temperature_celsius")
-        values = smoothed.get("values")
-        if isinstance(temperatures, list) and isinstance(values, list) and temperatures and values:
-            ax.plot(
-                temperatures,
-                values,
-                color=region.color,
-                linewidth=2.2,
-                alpha=0.55,
-                linestyle="--",
             )
     ax.set_xlabel("temperature_celsius")
     ax.set_ylabel("distance_px")
@@ -482,6 +473,23 @@ def _save_region_curve_figure(path: Path, regions: list[RegionAnalysisResult]) -
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
+
+
+def _formal_plot_points(preprocessing: dict[str, Any], raw_points: list[CurvePoint]) -> list[tuple[float, float]]:
+    for key in ("smoothed_temperature_points", "repaired_temperature_points", "grouped_temperature_points"):
+        series = preprocessing.get(key)
+        if isinstance(series, list) and series:
+            return [
+                (float(point["temperature_celsius"]), float(point["distance_px"]))
+                for point in series if isinstance(point, dict)
+            ]
+    smoothed = preprocessing.get("smoothed", {})
+    temperatures = smoothed.get("temperature_celsius") if isinstance(smoothed, dict) else None
+    values = smoothed.get("values") if isinstance(smoothed, dict) else None
+    if isinstance(temperatures, list) and isinstance(values, list) and temperatures and values:
+        return [(float(x), float(y)) for x, y in zip(temperatures, values)]
+    grouped = group_temperature_curve_points(raw_points)
+    return [(point["temperature_celsius"], point["distance_px"]) for point in grouped]
 
 
 def _write_overlay_png(export_dir: Path, manifest: RunManifest) -> ExportArtifact:

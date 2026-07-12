@@ -243,3 +243,9 @@ v2: run_meta.json + run_state.json + results.sqlite + analysis_summary.json
 ```
 
 读取层自动识别版本。旧 v1 run 无需迁移；新 v2 run 不得在普通结果请求中重建巨大 v1 对象。导出按钮可在边界层临时构造紧凑的兼容视图，但不回写 run 主存储。
+
+## 10. 温度—距离曲线层
+
+`afas_preprocessing.parameters.temperature_group_bin_celsius` 是唯一桶宽来源，默认 `0.01 °C`。后端用整数 `bin_key` 统一分桶，并依次保存 `grouped_temperature_points`、`repaired_temperature_points`、`smoothed_temperature_points`。每个 grouped point 包含均值距离、sample count、min/max 及 first/last/representative frame。
+
+默认正式 path 使用 smoothed，不可用时依次 fallback 到 repaired、grouped。raw frame points 仅用于审计和诊断散点，不得连线。任何正式 path 的温度 X 必须严格递增。

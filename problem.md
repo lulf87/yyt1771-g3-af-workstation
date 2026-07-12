@@ -9524,6 +9524,56 @@ RESOLVED_BROWSER_VERIFIED
 
 ---
 
+### P-0095 — 温度—距离正式曲线重复温度导致竖线和回折
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `afas_analysis`, `region_detection_service`, `curves.ts`, `multiRegionAnalysis.ts`, import/export
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+实时和历史温度—距离折线直接连接逐帧点；重复温度产生竖线，温度回摆产生向左回折。实时、停止、重开和导入还可能选择不同曲线层。
+
+#### Fix summary
+
+- 后端统一使用 `temperature_group_bin_celsius=0.01`和整数 canonical `bin_key`；每桶保存均值、sample count、min/max 和 first/last/representative frame。
+- 正式流程固定为 raw frame points → grouped → outlier repair → smoothed，不改现有 AFAS 数学。
+- 实时每 ROI 使用独立 Map，后端 O(1) upsert 当前温度桶并发送轻量 update。
+- 前端正式 path 只读 smoothed/repaired/grouped；旧 raw-only 数据先兼容分组。raw 点保留，不再连成正式折线。
+- 去除 grouped/smoothed 按 raw 数组同 index 继承 frame metadata 的错误映射。
+- v2 summary 持久化 grouped/repaired/smoothed 快照；导出 PNG 使用同一正式序列；v1 raw-only 导入由后端生成兼容 grouped 曲线。
+
+#### Tests run
+
+- Backend: `249 passed`.
+- Frontend: `145 passed`.
+- Frontend TypeScript/Vite build: PASS.
+- 新增重复 20 点、乱序 `1.20/1.30/1.20/1.40`、浮点误差、metadata、严格递增和 legacy fallback 测试。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright headed)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试 → 结果与导出
+- Steps: 6 ROI 模拟运行 50 帧，停止后检查 summary，整页刷新重开，导出 ZIP 再导入。
+- Expected: 每 ROI 每温度桶一点，X 严格递增，无竖线/回折，重开和导入一致。
+- Actual: 每 ROI raw=49、grouped=4、smoothed=4、sample sum=49、duplicate X=0、strict increasing=true；6 ROI 独立结果一致。刷新前后 summary SHA-256 同为 `18b5f4ac41f846a52c8ad77c2ec68b30dfe34930248e5f8ba3f4f7ae2478b80d`。导入后每 ROI 仍为 grouped=4、smoothed=4。控制台 0 errors/0 warnings。
+- Result: PASS
+- Evidence: `output/playwright/p0095-temperature-grouping-20260712/results.png`, `results-after-reload.png`, `summary.json`, `summary-after-reload.json`, `export.zip`, `import.json`.
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。

@@ -10,12 +10,13 @@ from zipfile import BadZipFile, ZipFile
 
 from pydantic import BaseModel, Field
 
-from yyt1771_g3.core.models import AnalysisResult, MeasurementDefinition, RunManifest
+from yyt1771_g3.core.models import AnalysisResult, CurvePoint, MeasurementDefinition, RunManifest
 from yyt1771_g3.services.source_provenance import (
     imported_file_provenance,
     infer_provenance_from_export_payload,
     operator_data_source_from_provenance,
 )
+from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 
 
 class RunExportImportError(ValueError):
@@ -277,7 +278,27 @@ def _normalize_export_models(payload: dict[str, Any]) -> dict[str, Any]:
     analysis_payload = _dict_or_none(payload.get("analysis_result")) or _dict_or_none(payload.get("analysis"))
     if analysis_payload is not None:
         analysis = AnalysisResult.model_validate(analysis_payload)
-        normalized["analysis_result"] = analysis.model_dump(mode="json")
+        analysis_dump = analysis.model_dump(mode="json")
+        compatibility_generated = False
+        for region in analysis_dump.get("regions", []):
+            preprocessing = region.get("afas_preprocessing") or {}
+            if not preprocessing.get("grouped_temperature_points") and region.get("temperature_distance"):
+                region["afas_preprocessing"] = preprocess_temperature_distance(
+                    [CurvePoint.model_validate(point) for point in region["temperature_distance"]],
+                    parameter_overrides=preprocessing.get("parameters"),
+                )
+                compatibility_generated = True
+        if analysis_dump.get("regions"):
+            analysis_dump["afas_preprocessing"] = analysis_dump["regions"][0]["afas_preprocessing"]
+        elif not analysis_dump.get("afas_preprocessing", {}).get("grouped_temperature_points") and analysis_dump.get("temperature_distance"):
+            analysis_dump["afas_preprocessing"] = preprocess_temperature_distance(
+                [CurvePoint.model_validate(point) for point in analysis_dump["temperature_distance"]],
+                parameter_overrides=analysis_dump.get("afas_preprocessing", {}).get("parameters"),
+            )
+            compatibility_generated = True
+        if compatibility_generated:
+            analysis_dump["compatibility_curve_generated"] = True
+        normalized["analysis_result"] = analysis_dump
     direct_measurement = _dict_or_none(payload.get("measurement_definition"))
     if direct_measurement is not None:
         measurement = MeasurementDefinition.model_validate(direct_measurement)

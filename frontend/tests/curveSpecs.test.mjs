@@ -816,19 +816,18 @@ test("run trend model uses formal live points as primary while keeping AFAS smoo
   assert.deepEqual(
     model.referencePoints.map((point) => [point.frameIndex, point.temperature, point.distance]),
     [
-      [1, 1.20, 1018.0],
-      [2, 1.20, 1019.0],
-      [3, 1.24, 1018.4],
-      [4, 1.21, 1018.8]
+      [2, 1.20, 1018.5],
+      [4, 1.21, 1018.8],
+      [3, 1.24, 1018.4]
     ]
   );
   assert.deepEqual(
     model.formalPoints.map((point) => point.temperature),
-    [1.20, 1.20, 1.21, 1.24]
+    [1.20, 1.21, 1.24]
   );
   assert.deepEqual(
     model.formalSegments.map((segment) => segment.map((point) => point.temperature)),
-    [[1.20, 1.20, 1.21, 1.24]]
+    [[1.20, 1.21, 1.24]]
   );
   assert.equal(model.previewSource, "smoothed");
   assert.equal(model.previewLabel, "AFAS preprocessing preview");
@@ -837,8 +836,8 @@ test("run trend model uses formal live points as primary while keeping AFAS smoo
     [1.20, 1.21, 1.24]
   );
   assert.match(model.previewNote, /batch/i);
-  assert.equal(model.latestPoint?.frameIndex, 4);
-  assert.equal(model.latestPoint?.source, "raw");
+  assert.equal(model.latestPoint?.frameIndex, 3);
+  assert.equal(model.latestPoint?.source, "grouped");
 });
 
 test("run trend model keeps growing formal points when AFAS preview is unchanged", async () => {
