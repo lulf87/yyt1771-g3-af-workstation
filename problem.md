@@ -112,6 +112,7 @@
 | P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
 | P-0099 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / position result cards | 六个位置结果纵向占用过多，应在桌面端每行显示三个 | 2026-07-12 | 2026-07-12 | Codex | 桌面 3 列、中屏 2 列、手机 1 列；6 位置 Chromium 复测为两行 |
 | P-0100 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows distribution / runtime | Windows 目标机仍需 Python、Node 和 Git Bash，无法零环境安装运行 | 2026-07-12 | 2026-07-12 | Codex | Mac 自动化待完成；Windows x64 CI 打包、干净机安装和真实硬件浏览器复测待补 |
+| P-0101 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / PyInstaller / launcher | portable G3Workstation.exe 启动报 `No module named yyt1771_g3.api` | 2026-07-12 | 2026-07-12 | Codex | hidden import 与打包后 EXE health smoke 已补；待 Windows CI 和用户重新运行新包 |
 
 ---
 
@@ -9831,6 +9832,65 @@ curl http://127.0.0.1:8023/operator/results
 - Actual: root and deep link both returned 200 from the same origin; UI and first frame rendered; `location.origin` was `http://127.0.0.1:8023`; no console errors.
 - Result: PASS for Mac same-origin source-runtime precheck. P-0100 remains `FIXED_PENDING_BROWSER_RETEST` until Windows x64 package/install/upgrade and real-hardware flow pass.
 - Evidence: `output/playwright/p0100-windows-same-origin-browser-smoke-20260712.png`; `/tmp/g3-windows-launcher-smoke.log`
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0101 — Windows portable EXE 缺失 FastAPI 动态入口模块
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `packaging/windows/g3_workstation.spec`, `packaging/windows/build_release.ps1`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+用户在 Windows 解压首个 portable artifact 并运行 `G3Workstation.exe` 后，PyInstaller 异常窗口显示：
+
+```text
+Failed to execute script 'launcher' due to unhandled exception:
+No module named 'yyt1771_g3.api'
+```
+
+#### Root cause
+
+`launcher.py` 通过 `uvicorn.run("yyt1771_g3.api.main:app", ...)` 在运行时以字符串动态导入 FastAPI app。PyInstaller 静态分析无法从字符串发现该模块；原 spec 的 hidden imports 只包含 `cv2/matplotlib/scipy` 收集结果，Windows 构建日志也没有 `yyt1771_g3.api.main` 的 analysis 记录。因此 CI 能成功生成 EXE，但该 EXE 在 Uvicorn 动态导入时立即失败。
+
+#### Fix summary
+
+- PyInstaller spec 显式加入 `yyt1771_g3.api.main` hidden import。
+- Windows build 在压缩和上传前启动打包后的 `G3Workstation.exe`，最多等待 30 秒并请求 `/api/health`。
+- EXE 退出、超时或 health 非 `ok` 时直接使 Windows release 失败，阻止上传不可启动的 artifact。
+- 新增打包配置回归测试，锁定 hidden import 和 packaged-EXE health smoke。
+
+#### Tests run
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python3 -m pytest backend/tests -q
+# Result: PASS, 257 passed
+
+# Windows release packaged-EXE health smoke result pending CI run.
+```
+
+#### Browser retest log
+
+- Retest date: pending
+- Browser: Windows default browser required
+- OS: Windows 10/11 x64
+- Frontend URL: `http://127.0.0.1:8022/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: N/A for startup smoke; real hardware flow remains under P-0100
+- Page: application startup
+- Steps: download rebuilt portable artifact, extract fully, run `G3Workstation.exe`, open health and root page
+- Expected: no PyInstaller exception; health returns `ok`; browser opens G3
+- Actual: pending rebuilt artifact
+- Result: pending
+- Evidence: user photo `/Users/lulingfeng/Downloads/IMG_2815.HEIC`; CI run pending
 
 #### Final status
 

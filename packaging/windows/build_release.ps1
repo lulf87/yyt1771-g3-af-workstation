@@ -39,6 +39,33 @@ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Dist, $Work
     (Join-Path $Repo "packaging\windows\g3_workstation.spec")
 
 $PortableDir = Join-Path $Dist "YYT1771-G3"
+$Executable = Join-Path $PortableDir "G3Workstation.exe"
+$SmokePort = 18022
+$SmokeProcess = Start-Process -FilePath $Executable `
+    -ArgumentList @("--source", "real", "--product-mode", "production", "--port", "$SmokePort", "--no-browser") `
+    -PassThru
+$SmokeHealthy = $false
+try {
+    for ($Attempt = 0; $Attempt -lt 60; $Attempt++) {
+        if ($SmokeProcess.HasExited) { break }
+        try {
+            $Health = Invoke-RestMethod -Uri "http://127.0.0.1:$SmokePort/api/health" -TimeoutSec 1
+            if ($Health.status -eq "ok") {
+                $SmokeHealthy = $true
+                break
+            }
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+} finally {
+    if (-not $SmokeProcess.HasExited) { Stop-Process -Id $SmokeProcess.Id -Force }
+    $SmokeProcess.WaitForExit()
+}
+if (-not $SmokeHealthy) {
+    throw "Packaged G3Workstation.exe failed the /api/health startup smoke test"
+}
+
 $PortableZip = Join-Path $BuildRoot "YYT1771-G3-$Version-portable-x64.zip"
 Remove-Item -Force -ErrorAction SilentlyContinue $PortableZip
 Compress-Archive -Path (Join-Path $PortableDir "*") -DestinationPath $PortableZip

@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_all
 
 repo = Path(SPECPATH).resolve().parents[1]
 datas = [(str(repo / "frontend" / "dist"), "frontend/dist")]
-hiddenimports = []
+hiddenimports = ["yyt1771_g3.api.main"]
 for package in ("cv2", "matplotlib", "scipy"):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
