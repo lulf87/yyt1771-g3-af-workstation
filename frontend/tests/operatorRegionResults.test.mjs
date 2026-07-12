@@ -36,6 +36,10 @@ test("operator results render one summary card per analysis position", () => {
   assert.match(regionResults, /AS/);
   assert.match(regionResults, /AF/);
   assert.match(regionResults, /ΔT/);
+  assert.match(
+    stylesSource,
+    /\.operatorRegionResultGrid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s
+  );
 });
 
 test("current and imported results use the combined multi-position chart", () => {

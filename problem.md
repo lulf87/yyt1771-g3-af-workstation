@@ -110,6 +110,7 @@
 | P-0096 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator measurement positions | 检测位置卡片展示当前距离、状态、正式点数和最近帧等非必要信息 | 2026-07-12 | 2026-07-12 | Codex | 已移除位置卡片结果指标和空状态提示；保留位置编辑操作，Chromium 模拟模式复测通过 |
 | P-0097 | RESOLVED_BROWSER_VERIFIED | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 组合总览 + 按位置 AFAS 详情、当前位置/全部位置重分析已实现；3/6 位置 Chromium 流程通过 |
 | P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
+| P-0099 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / position result cards | 六个位置结果纵向占用过多，应在桌面端每行显示三个 | 2026-07-12 | 2026-07-12 | Codex | 桌面 3 列、中屏 2 列、手机 1 列；6 位置 Chromium 复测为两行 |
 
 ---
 
@@ -9733,6 +9734,34 @@ RESOLVED_BROWSER_VERIFIED
 - Evidence:
   - `output/playwright/p0098-results-layout-defaults-20260712/results-full-width.png`
   - `output/playwright/p0098-results-layout-defaults-20260712/results-current-run-full-page.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0099 — 位置结果卡片需要桌面端每行三个
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/styles.css`, `frontend/tests/operatorRegionResults.test.mjs`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Fix summary
+
+- 桌面端 `operatorRegionResultGrid` 改为三列，6 个位置最多两行。
+- 视口不超过 1050px 时降为两列，不超过 640px 时降为一列，避免内容拥挤。
+- 不改变位置结果字段、顺序、颜色或 AFAS 数据。
+
+#### Verification
+
+- Frontend: `npm test` → `148 passed`。
+- Frontend: `npm run build` → TypeScript + Vite PASS。
+- Browser: Chromium，导入 `golden_a_20260522_dev_lab` 的 6 位置有效 AFAS 结果，在“结果与导出”页面确认位置 1–3 第一行、位置 4–6 第二行；控制台 0 errors、0 warnings。
+- Evidence: `output/playwright/p0099-three-column-region-results-20260712/results-six-regions.png`
 
 #### Final status
 
