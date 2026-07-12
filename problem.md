@@ -111,6 +111,7 @@
 | P-0097 | RESOLVED_BROWSER_VERIFIED | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 组合总览 + 按位置 AFAS 详情、当前位置/全部位置重分析已实现；3/6 位置 Chromium 流程通过 |
 | P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
 | P-0099 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / position result cards | 六个位置结果纵向占用过多，应在桌面端每行显示三个 | 2026-07-12 | 2026-07-12 | Codex | 桌面 3 列、中屏 2 列、手机 1 列；6 位置 Chromium 复测为两行 |
+| P-0100 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows distribution / runtime | Windows 目标机仍需 Python、Node 和 Git Bash，无法零环境安装运行 | 2026-07-12 | 2026-07-12 | Codex | Mac 自动化待完成；Windows x64 CI 打包、干净机安装和真实硬件浏览器复测待补 |
 
 ---
 
@@ -9766,6 +9767,74 @@ RESOLVED_BROWSER_VERIFIED
 #### Final status
 
 RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0100 — Windows 目标机无法零环境安装运行
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend runtime`, `frontend production build`, `packaging/windows`, `.github/workflows`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+现有 Windows PowerShell 入口最终调用 Bash 和 macOS/Unix 快速启动脚本，运行时同时启动 Uvicorn 与 Vite。目标机必须预装 Python、Node.js、npm、Git Bash 及项目源码，不符合操作员零环境交付目标。配置和 run 数据默认也写入仓库，安装到 Program Files 后普通用户无法可靠保存。
+
+#### Expected
+
+Windows 10/11 x64 干净机只运行单一 Setup EXE 即可安装。操作员双击图标后由内置 Python 运行时启动单一同源 FastAPI/前端服务，无需开发工具；配置/数据与日志分别保存到 ProgramData 和 LocalAppData，升级不覆盖数据。
+
+#### Fix summary
+
+- 前端 API 默认改为同源；FastAPI 提供 `frontend/dist`、静态 assets 和 SPA fallback。
+- 新增跨平台 `app_paths.py`，将 Windows 配置/run/日志与安装目录分离，同时保留环境变量覆盖。
+- 新增 `launcher.py`，默认锁定 production + real hardware，进行健康检查、日志初始化和浏览器打开。
+- 补充 PyYAML 运行依赖，新增 PyInstaller one-folder spec、PowerShell 构建脚本、Inno Setup 安装器和 Windows x64 GitHub Actions。
+- 新增 Windows 交付/验收文档，明确 Hik MVS 和串口驱动的授权与实机验收边界。
+
+#### Tests run
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python3 -m pytest backend/tests -q
+# Result: PASS, 253 passed
+
+cd frontend && npm test
+# Result: PASS, 148 passed
+
+cd frontend && npm run build
+# Result: PASS, TypeScript + Vite production build
+
+PYTHONPATH=backend/src python3 -m yyt1771_g3.launcher \
+  --source sim --product-mode development \
+  --dataset-id golden_a_20260522_dev_lab --port 8023 --no-browser
+curl http://127.0.0.1:8023/api/health
+curl http://127.0.0.1:8023/
+curl http://127.0.0.1:8023/operator/results
+# Result: PASS; health OK, root and SPA fallback return the same built index.html,
+# runtime policy reports simulated_material/development with the requested dataset id.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Playwright Chromium (gstack browse)
+- OS: macOS (source-runtime precheck; Windows x64 final retest still required)
+- Frontend URL: `http://127.0.0.1:8023/`
+- Backend URL: `http://127.0.0.1:8023`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator Live Test; SPA deep link `/operator/results`
+- Steps: build `frontend/dist`; start only `python -m yyt1771_g3.launcher --source sim --product-mode development`; open root; wait for network idle; inspect page/console; navigate directly to SPA deep link.
+- Expected: the single backend port serves the built UI and API; simulated first frame is visible; direct SPA navigation returns the app; browser console has no errors.
+- Actual: root and deep link both returned 200 from the same origin; UI and first frame rendered; `location.origin` was `http://127.0.0.1:8023`; no console errors.
+- Result: PASS for Mac same-origin source-runtime precheck. P-0100 remains `FIXED_PENDING_BROWSER_RETEST` until Windows x64 package/install/upgrade and real-hardware flow pass.
+- Evidence: `output/playwright/p0100-windows-same-origin-browser-smoke-20260712.png`; `/tmp/g3-windows-launcher-smoke.log`
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
 
 ---
 

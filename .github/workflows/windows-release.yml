@@ -1,0 +1,45 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version
+        required: true
+        default: 0.1.0
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          if (-not $version) { $version = "${{ github.ref_name }}".TrimStart("v") }
+          "G3_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build portable package and installer
+        shell: pwsh
+        run: ./packaging/windows/build_release.ps1 -Version $env:G3_VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YYT1771-G3-Windows-x64-${{ env.G3_VERSION }}
+          path: |
+            build/windows/YYT1771-G3-*.zip
+            build/windows/YYT1771-G3-Setup-*.exe
+          if-no-files-found: error
