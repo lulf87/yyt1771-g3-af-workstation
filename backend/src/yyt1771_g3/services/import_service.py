@@ -10,12 +10,13 @@ from zipfile import BadZipFile, ZipFile
 
 from pydantic import BaseModel, Field
 
-from yyt1771_g3.core.models import AnalysisResult, MeasurementDefinition, RunManifest
+from yyt1771_g3.core.models import AnalysisResult, CurvePoint, MeasurementDefinition, RunManifest
 from yyt1771_g3.services.source_provenance import (
     imported_file_provenance,
     infer_provenance_from_export_payload,
     operator_data_source_from_provenance,
 )
+from yyt1771_g3.services.afas_analysis import preprocess_temperature_distance
 
 
 class RunExportImportError(ValueError):
@@ -32,6 +33,8 @@ class ImportedFrameSummary(BaseModel):
 class ImportedRunView(BaseModel):
     filename: str
     warnings: list[str] = Field(default_factory=list)
+    runtime_source: str = ""
+    product_mode: str = ""
     operator_data_source: str = ""
     provenance: dict[str, Any] = Field(default_factory=dict)
     run_manifest: dict[str, Any] | None = None
@@ -126,6 +129,8 @@ def _view_from_payload(
     return ImportedRunView(
         filename=filename,
         warnings=warnings,
+        runtime_source=_source_metadata_value(payload, "runtime_source"),
+        product_mode=_source_metadata_value(payload, "product_mode"),
         operator_data_source=operator_data_source,
         provenance=imported_file_provenance(source_provenance),
         run_manifest=run_manifest,
@@ -164,9 +169,24 @@ def _merge_parameters_payload(
         merged["measurement_definition"] = measurement
     if "operator_data_source" not in merged and isinstance(parameters_payload.get("operator_data_source"), str):
         merged["operator_data_source"] = parameters_payload["operator_data_source"]
+    for key in ("runtime_source", "product_mode"):
+        if key not in merged and isinstance(parameters_payload.get(key), str):
+            merged[key] = parameters_payload[key]
     if "provenance" not in merged and isinstance(parameters_payload.get("provenance"), dict):
         merged["provenance"] = parameters_payload["provenance"]
     return merged
+
+
+def _source_metadata_value(payload: dict[str, Any], key: str) -> str:
+    direct = payload.get(key)
+    if isinstance(direct, str) and direct:
+        return direct
+    for container_key in ("run_manifest", "analysis_result", "analysis"):
+        container = _dict_or_none(payload.get(container_key))
+        value = (container or {}).get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _operator_data_source_from_payload(
@@ -258,7 +278,27 @@ def _normalize_export_models(payload: dict[str, Any]) -> dict[str, Any]:
     analysis_payload = _dict_or_none(payload.get("analysis_result")) or _dict_or_none(payload.get("analysis"))
     if analysis_payload is not None:
         analysis = AnalysisResult.model_validate(analysis_payload)
-        normalized["analysis_result"] = analysis.model_dump(mode="json")
+        analysis_dump = analysis.model_dump(mode="json")
+        compatibility_generated = False
+        for region in analysis_dump.get("regions", []):
+            preprocessing = region.get("afas_preprocessing") or {}
+            if not preprocessing.get("grouped_temperature_points") and region.get("temperature_distance"):
+                region["afas_preprocessing"] = preprocess_temperature_distance(
+                    [CurvePoint.model_validate(point) for point in region["temperature_distance"]],
+                    parameter_overrides=preprocessing.get("parameters"),
+                )
+                compatibility_generated = True
+        if analysis_dump.get("regions"):
+            analysis_dump["afas_preprocessing"] = analysis_dump["regions"][0]["afas_preprocessing"]
+        elif not analysis_dump.get("afas_preprocessing", {}).get("grouped_temperature_points") and analysis_dump.get("temperature_distance"):
+            analysis_dump["afas_preprocessing"] = preprocess_temperature_distance(
+                [CurvePoint.model_validate(point) for point in analysis_dump["temperature_distance"]],
+                parameter_overrides=analysis_dump.get("afas_preprocessing", {}).get("parameters"),
+            )
+            compatibility_generated = True
+        if compatibility_generated:
+            analysis_dump["compatibility_curve_generated"] = True
+        normalized["analysis_result"] = analysis_dump
     direct_measurement = _dict_or_none(payload.get("measurement_definition"))
     if direct_measurement is not None:
         measurement = MeasurementDefinition.model_validate(direct_measurement)

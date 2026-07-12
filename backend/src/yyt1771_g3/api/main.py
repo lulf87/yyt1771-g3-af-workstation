@@ -23,9 +23,11 @@ from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableE
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import HARDWARE_CONFIG_ENV, HardwareConfig, load_hardware_config
+from yyt1771_g3.core.runtime_policy import RUNTIME_SOURCE_ENV, RuntimePolicy, load_runtime_policy, runtime_policy_payload
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
 from yyt1771_g3.core.models import MeasurementDefinition
+from yyt1771_g3.core.run_models_v2 import RunStage, RunStateValue
 from yyt1771_g3.services.offline_dataset import (
     DatasetAccessError,
     DatasetNotFoundError,
@@ -40,9 +42,9 @@ from yyt1771_g3.services.live_offline_run_service import (
     read_run,
     run_live_offline_dataset,
 )
-from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.analysis_service import build_analysis_result, recompute_region_analysis_result
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
-from yyt1771_g3.services.export_service import export_run, export_run_bundle
+from yyt1771_g3.services.export_service import export_run, export_run_bundle, load_v2_export_models
 from yyt1771_g3.services.hardware_setup_service import (
     HardwareSetupError,
     build_hardware_environment_report,
@@ -50,6 +52,9 @@ from yyt1771_g3.services.hardware_setup_service import (
     save_hardware_binding,
 )
 from yyt1771_g3.services.import_service import RunExportImportError, import_run_export_bytes
+from yyt1771_g3.services.run_control_service import run_controls
+from yyt1771_g3.services.run_v2_service import build_v2_analysis_summary, update_v2_run_state
+from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.lu92xx_modbus import LU92XXModbusRtuController
 from yyt1771_g3.temperature.serial_ports import SerialPortInfo, list_serial_ports
@@ -58,6 +63,11 @@ from yyt1771_g3.temperature.simulated import SimulatedTemperatureController
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):  # noqa: ANN202, ARG001
+    policy = load_runtime_policy(hardware_config=load_hardware_config())
+    app.state.runtime_policy = policy
+    logger.info("Runtime source: %s", policy.runtime_source)
+    logger.info("Product mode: %s", policy.product_mode)
+    logger.info("Simulation allowed: %s", str(policy.simulation_allowed).lower())
     try:
         yield
     finally:
@@ -109,6 +119,32 @@ def _registry():
 
 def _hardware_config() -> HardwareConfig:
     return load_hardware_config()
+
+
+def _runtime_policy() -> RuntimePolicy:
+    policy = getattr(app.state, "runtime_policy", None)
+    if isinstance(policy, RuntimePolicy):
+        return policy
+    return load_runtime_policy(hardware_config=_hardware_config())
+
+
+def _assert_runtime_source(required_source: str) -> None:
+    if not hasattr(app.state, "runtime_policy") and not str(os.environ.get(RUNTIME_SOURCE_ENV, "")).strip():
+        return
+    policy = _runtime_policy()
+    if policy.runtime_source == required_source:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": (
+                f"This operation requires runtime source {required_source}, "
+                f"but the app was started with {policy.runtime_source}."
+            ),
+            "runtime_source": policy.runtime_source,
+            "required_runtime_source": required_source,
+        },
+    )
 
 
 def _hardware_config_with_temperature_port(config: HardwareConfig, port: str | None) -> HardwareConfig:
@@ -222,6 +258,11 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/app/runtime")
+def get_app_runtime() -> dict[str, object]:
+    return runtime_policy_payload(_runtime_policy())
+
+
 @app.get("/api/offline-datasets")
 def list_offline_datasets() -> dict[str, list[dict[str, Any]]]:
     try:
@@ -318,6 +359,7 @@ class ProbeRequest(BaseModel):
 
 @app.post("/api/probe")
 def probe_current_frame(request: ProbeRequest) -> dict[str, Any]:
+    _assert_runtime_source("simulated_material")
     registry = _registry()
     try:
         return probe_offline_frame(
@@ -365,6 +407,7 @@ class RealCameraSetupProbeRequest(BaseModel):
 
 
 class AnalysisRecomputeRequest(BaseModel):
+    region_id: str | None = None
     afas_preprocessing_parameters: dict[str, Any] | None = None
     afas_analysis_parameters: dict[str, Any] | None = None
 
@@ -418,7 +461,7 @@ def _operator_source_status_payload(
         except OfflineDatasetError as exc:
             offline_datasets_available = False
             offline_dataset_error = str(exc)
-    return operator_source_status(
+    status = operator_source_status(
         camera_profile=camera_profile or config.camera.to_profile(),
         camera_meta=camera_meta,
         temperature_backend=_temperature_backend(config),
@@ -426,6 +469,34 @@ def _operator_source_status_payload(
         offline_datasets_available=offline_datasets_available,
         offline_dataset_error=offline_dataset_error,
     )
+    policy = _runtime_policy()
+    configuration_valid = (
+        status["camera_is_simulated"] and status["temperature_is_simulated"]
+        if policy.runtime_source == "simulated_material"
+        else not status["camera_is_simulated"] and not status["temperature_is_simulated"]
+    )
+    configuration_error_zh = ""
+    configuration_error_en = ""
+    if not configuration_valid and policy.runtime_source == "real_hardware":
+        configuration_error_zh = "当前以真实硬件模式启动，但相机或温控配置为模拟设备。请检查启动命令和硬件配置。"
+        configuration_error_en = (
+            "The app was started in real-hardware mode, but camera or temperature backend is simulated. "
+            "Check the startup command and hardware configuration."
+        )
+    status.update(
+        {
+            "runtime_source": policy.runtime_source,
+            "product_mode": policy.product_mode,
+            "configuration_valid": configuration_valid,
+            "configuration_error_zh": configuration_error_zh,
+            "configuration_error_en": configuration_error_en,
+        }
+    )
+    if policy.runtime_source == "simulated_material":
+        status["real_hardware_available"] = False
+    elif not configuration_valid:
+        status["real_hardware_available"] = False
+    return status
 
 
 def _assert_operator_real_camera_available(
@@ -464,6 +535,7 @@ def get_operator_source_status() -> dict[str, Any]:
 
 @app.post("/api/live-offline-runs")
 def create_live_offline_run(request: LiveOfflineRunRequest) -> dict[str, Any]:
+    _assert_runtime_source("simulated_material")
     try:
         result = run_live_offline_dataset(
             _registry(),
@@ -491,6 +563,7 @@ def create_live_offline_run(request: LiveOfflineRunRequest) -> dict[str, Any]:
 
 @app.post("/api/live-offline-runs/stream")
 def stream_live_offline_run(request: LiveOfflineRunRequest) -> StreamingResponse:
+    _assert_runtime_source("simulated_material")
     def event_lines():
         events = None
         try:
@@ -520,6 +593,94 @@ def stream_live_offline_run(request: LiveOfflineRunRequest) -> StreamingResponse
                 close()
 
     return StreamingResponse(event_lines(), media_type="application/x-ndjson")
+
+
+@app.get("/api/runs")
+def list_saved_runs() -> dict[str, Any]:
+    return {"runs": _run_store().list_saved_runs()}
+
+
+@app.get("/api/runs/{run_id}/status")
+def get_run_status(run_id: str) -> dict[str, Any]:
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    return store.read_run_state(run_id).model_dump(mode="json")
+
+
+@app.post("/api/runs/{run_id}/stop")
+def stop_run(run_id: str) -> dict[str, Any]:
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        if _request_real_camera_stream_stop(run_id):
+            return {"run_id": run_id, "state": "STOP_REQUESTED", "stop_requested": True}
+        raise HTTPException(status_code=404, detail=f"Active run not found: {run_id}")
+    state = store.read_run_state(run_id)
+    if state.state in {RunStateValue.READY, RunStateValue.ERROR}:
+        return {**state.model_dump(mode="json"), "stop_requested": False, "already_complete": True}
+    run_controls.request_stop(run_id)
+    state = update_v2_run_state(
+        store,
+        run_id,
+        state=RunStateValue.STOP_REQUESTED,
+        stage=RunStage.STOP_REQUESTED,
+        stop_reason="manual_stop_requested",
+    )
+    return {**state.model_dump(mode="json"), "stop_requested": True, "already_complete": False}
+
+
+@app.get("/api/runs/{run_id}/summary")
+def get_run_summary(run_id: str) -> dict[str, Any]:
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    state = store.read_run_state(run_id)
+    if state.state != RunStateValue.READY:
+        raise HTTPException(status_code=409, detail={"message": "Run is not ready", "state": state.model_dump(mode="json")})
+    return {
+        "run_meta": store.read_run_meta(run_id).model_dump(mode="json"),
+        "run_state": state.model_dump(mode="json"),
+        "analysis_summary": store.read_analysis_summary(run_id).model_dump(mode="json"),
+    }
+
+
+@app.get("/api/runs/{run_id}/results")
+def get_run_results(
+    run_id: str,
+    region_id: str | None = None,
+    offset: int = 0,
+    limit: int = 200,
+    status: str | None = None,
+    frame_start: int | None = None,
+    frame_end: int | None = None,
+) -> dict[str, Any]:
+    if offset < 0 or not 1 <= limit <= 1000:
+        raise HTTPException(status_code=400, detail="offset must be >= 0 and limit must be between 1 and 1000")
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    with RunResultsDatabase(store.results_database_path(run_id)) as database:
+        items, total = database.query_results(
+            region_id=region_id,
+            offset=offset,
+            limit=limit,
+            status=status,
+            frame_start=frame_start,
+            frame_end=frame_end,
+        )
+    return {"items": items, "offset": offset, "limit": limit, "total": total}
+
+
+@app.get("/api/runs/{run_id}/frames/{frame_index}/results")
+def get_run_frame_results(run_id: str, frame_index: int) -> dict[str, Any]:
+    if frame_index <= 0:
+        raise HTTPException(status_code=400, detail="frame_index must be positive")
+    store = _run_store()
+    if store.schema_version(run_id) != 2:
+        raise HTTPException(status_code=404, detail=f"V2 run not found: {run_id}")
+    with RunResultsDatabase(store.results_database_path(run_id)) as database:
+        items = database.frame_results(frame_index)
+    return {"run_id": run_id, "frame_index": frame_index, "items": items}
 
 
 @app.get("/api/runs/{run_id}")
@@ -609,17 +770,61 @@ def get_run_availability(run_id: str) -> dict[str, Any]:
 @app.post("/api/runs/{run_id}/analysis")
 def recompute_run_analysis(run_id: str, request: AnalysisRecomputeRequest) -> dict[str, Any]:
     run_store = _run_store()
+    if run_store.schema_version(run_id) == 2:
+        manifest, current_analysis = load_v2_export_models(run_store, run_id)
+        try:
+            analysis = (
+                recompute_region_analysis_result(
+                    manifest,
+                    current_analysis,
+                    request.region_id,
+                    afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                    afas_analysis_parameters=request.afas_analysis_parameters,
+                )
+                if request.region_id
+                else build_analysis_result(
+                    manifest,
+                    afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                    afas_analysis_parameters=request.afas_analysis_parameters,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        latest: dict[str, Any] = {}
+        for detection in manifest.region_detection_results:
+            latest[detection.region_id] = detection
+        summary = build_v2_analysis_summary(
+            run_store,
+            run_id=run_id,
+            region_analyses=list(analysis.regions),
+            latest_results=latest,
+        )
+        run_store.write_analysis_summary(summary)
+        return {"analysis_result": analysis.model_dump(mode="json")}
     try:
         manifest = run_store.read_run_manifest(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}") from exc
 
     try:
-        analysis = build_analysis_result(
-            manifest,
-            afas_preprocessing_parameters=request.afas_preprocessing_parameters,
-            afas_analysis_parameters=request.afas_analysis_parameters,
-        )
+        if request.region_id:
+            try:
+                current_analysis = run_store.read_analysis_result(run_id)
+            except FileNotFoundError:
+                current_analysis = build_analysis_result(manifest)
+            analysis = recompute_region_analysis_result(
+                manifest,
+                current_analysis,
+                request.region_id,
+                afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                afas_analysis_parameters=request.afas_analysis_parameters,
+            )
+        else:
+            analysis = build_analysis_result(
+                manifest,
+                afas_preprocessing_parameters=request.afas_preprocessing_parameters,
+                afas_analysis_parameters=request.afas_analysis_parameters,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     run_store.write_analysis_result(analysis)
@@ -695,6 +900,7 @@ def release_real_camera_preview() -> dict[str, str]:
 
 @app.post("/api/camera/setup-probe")
 def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[str, Any]:
+    _assert_runtime_source("real_hardware")
     try:
         config = _hardware_config()
         run_config = _hardware_config_with_temperature_port(
@@ -912,6 +1118,7 @@ def get_temperature_status(port: str | None = None) -> dict[str, Any]:
 
 @app.post("/api/real-camera-runs")
 def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
+    _assert_runtime_source("real_hardware")
     try:
         config = _hardware_config()
         camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
@@ -955,6 +1162,7 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
 
 @app.post("/api/real-camera-runs/stream")
 def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
+    _assert_runtime_source("real_hardware")
     config = _hardware_config()
     camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
     run_config = _hardware_config_with_temperature_port(
@@ -986,6 +1194,7 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
                 save_preview_frames=run_config.run.save_preview_frames,
                 preview_max_width=run_config.run.preview_max_width,
                 stop_requested=_real_camera_stream_stop_requested,
+                compact_stream=request.operator_mode,
             )
             for event in events:
                 event_run_id = _stream_event_run_id(event)

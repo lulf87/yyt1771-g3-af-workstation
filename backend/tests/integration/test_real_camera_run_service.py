@@ -278,6 +278,34 @@ def test_real_camera_multi_region_frame_reads_camera_and_temperature_once(tmp_pa
     ]
 
 
+def test_operator_real_camera_stream_uses_compact_v2_completion(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    camera = FakeCameraSource()
+    temperature = FakeTemperatureController()
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=camera,
+            temperature_controller=temperature,
+            measurement=_multi_region_real_camera_measurement(max_frames=1),
+            max_frames=1,
+            target_fps=10.0,
+            camera_profile={"backend": "hik_gige_mvs"},
+            temperature_backend="lu92xx_modbus_rtu",
+            compact_stream=True,
+        )
+    )
+
+    complete = events[-1]
+    assert set(complete) == {"event", "run_id", "state"}
+    assert complete["state"] == "READY"
+    assert run_store.schema_version(complete["run_id"]) == 2
+    assert run_store.read_analysis_summary(complete["run_id"]).counts["region_results"] == 3
+    assert not run_store.run_manifest_path(complete["run_id"]).exists()
+    assert not run_store.analysis_result_path(complete["run_id"]).exists()
+
+
 def test_real_camera_run_defaults_to_preview_without_saving_raw_frames(tmp_path: Path) -> None:
     run_store = RunStore(tmp_path / "runs")
     measurement = MeasurementDefinition(

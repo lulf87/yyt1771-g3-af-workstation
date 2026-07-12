@@ -22,7 +22,6 @@ import {
   ApiError,
   apiUrlFromPath,
   artifactDownloadUrl,
-  createLiveOfflineRun,
   createRunExports,
   downloadRunExportBundle,
   fetchRunExportBundle,
@@ -30,9 +29,11 @@ import {
   frameImageUrl,
   getHardwareSetupEnvironment,
   getHardwareProfile,
+  getAppRuntime,
   getOperatorSourceStatus,
   getTemperatureStatus,
   getRun,
+  getRunSummary,
   getRunAvailability,
   getOfflineDatasetSummary,
   importRunExportFile,
@@ -48,7 +49,8 @@ import {
   recomputeRunAnalysis,
   runFrameImageUrl,
   saveHardwareBinding,
-  stopRealCameraRun,
+  runResponseFromSummary,
+  stopRun,
   streamLiveOfflineRun,
   streamRealCameraRun,
   testHardwareCamera,
@@ -59,6 +61,7 @@ import {
   type AfasAnalysisParameters,
   type AfasPreprocessingParameters,
   type AnalysisResult,
+  type AppRuntime,
   type CameraPreviewResponse,
   type DetectionResult,
   type DiagnosticImages,
@@ -228,8 +231,6 @@ import {
   navItemsForUiMode,
   normalizePageForUiMode,
   pageForSetupSourceEffects,
-  persistUiMode,
-  readInitialUiMode,
   type AppPage,
   type UiMode
 } from "./uiMode";
@@ -253,7 +254,7 @@ type LiveRunState = {
   datasetId: string;
   operatorDataSource: OperatorDataSource;
   provenance: SourceProvenance | null;
-  status: "running" | "complete" | "stopped";
+  status: "running" | "stopping" | "complete" | "stopped";
   statusMessage: string;
   frameIndex: number;
   frameUrl: string;
@@ -276,6 +277,7 @@ type LiveRunState = {
 type OperatorDataSource = "offline_dataset" | "real_camera";
 
 const OPERATOR_SOURCE_STORAGE_KEY = "yyt1771-g3-operator-source";
+const LAST_SAVED_RUN_STORAGE_KEY = "yyt1771-g3-last-saved-run";
 
 type DetectionResultSource = "stabilized" | "raw";
 
@@ -291,10 +293,10 @@ const DEFAULT_CONFIG = {
   switch_after_n_frames: 3,
   jump_limit_px: 35,
   min_confidence: 0.15,
-  contrast_threshold: 30,
+  contrast_threshold: 55,
   distance_outlier_filter_enabled: true,
   distance_outlier_reference_count: 5,
-  distance_outlier_max_jump_px: 20,
+  distance_outlier_max_jump_px: 100,
   distance_outlier_baseline: "median" as const,
   save_temporal_masks: false,
   dark_enhance_bg_kernel_px: 41,
@@ -626,15 +628,13 @@ function persistOperatorDataSource(source: OperatorDataSource): void {
 }
 
 function App() {
-  const initialUiMode = useMemo(() => readInitialUiMode(), []);
   const initialOperatorDataSource = useMemo(() => readInitialOperatorDataSource(), []);
-  const [uiMode, setUiMode] = useState<UiMode>(initialUiMode);
-  const [page, setPage] = useState<Page>(() => defaultPageForUiMode(initialUiMode));
+  const uiMode: UiMode = "operator";
+  const [page, setPage] = useState<Page>(() => defaultPageForUiMode("operator"));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
   const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
-  const [setupSource, setSetupSource] = useState<SetupSourceKind>(() =>
-    initialUiMode === "operator" ? initialOperatorDataSource : "offline_dataset"
-  );
+  const [appRuntime, setAppRuntime] = useState<AppRuntime | null>(null);
+  const [setupSource, setSetupSource] = useState<SetupSourceKind>(initialOperatorDataSource);
   const [operatorDataSource, setOperatorDataSource] = useState<OperatorDataSource>(initialOperatorDataSource);
   const [datasets, setDatasets] = useState<OfflineDatasetListItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -677,6 +677,7 @@ function App() {
   const operatorSourceStatusRetryTimerRef = useRef<number | null>(null);
   const operatorSourceStatusRetryCountRef = useRef(0);
   const operatorTemperaturePollInFlightRef = useRef(false);
+  const savedRunRestoreAttemptedRef = useRef(false);
   const measurementRef = useRef<MeasurementDefinition | null>(null);
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
@@ -689,8 +690,24 @@ function App() {
   const operatorRealHardwareAvailable = operatorSourceRealHardwareAvailable && !operatorTemperatureHardwareUnavailable;
 
   useEffect(() => {
+    void refreshAppRuntime();
     void refreshDatasets();
   }, []);
+
+  useEffect(() => {
+    if (!measurement || savedRunRestoreAttemptedRef.current) return;
+    savedRunRestoreAttemptedRef.current = true;
+    void restoreLastSavedRun();
+  }, [measurement]);
+
+  useEffect(() => {
+    if (appRuntime?.runtime_source !== "simulated_material") return;
+    setOperatorDataSource("offline_dataset");
+    setSetupSource("offline_dataset");
+    if (appRuntime.simulated_dataset_id) {
+      setSelectedId(appRuntime.simulated_dataset_id);
+    }
+  }, [appRuntime]);
 
   useEffect(() => {
     if (uiMode !== "operator" || operatorDataSource !== "real_camera") {
@@ -976,15 +993,34 @@ function App() {
     await getHardwareProfile();
   }
 
+  async function refreshAppRuntime() {
+    try {
+      const runtime = await getAppRuntime();
+      setAppRuntime(runtime);
+      const source = runtime.runtime_source === "simulated_material" ? "offline_dataset" : "real_camera";
+      setOperatorDataSource(source);
+      setSetupSource(source);
+      if (runtime.simulated_dataset_id) setSelectedId(runtime.simulated_dataset_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function restoreLastSavedRun() {
+    const runId = window.localStorage.getItem(LAST_SAVED_RUN_STORAGE_KEY);
+    if (!runId) return;
+    try {
+      const restored = runResponseFromSummary(await getRunSummary(runId));
+      setRunResult(restored);
+    } catch {
+      window.localStorage.removeItem(LAST_SAVED_RUN_STORAGE_KEY);
+    }
+  }
+
   async function handleDeviceSetupSaved() {
     await refreshHardwareProfile();
     await refreshOperatorSourceStatus({ reason: "saved" });
     await refreshSerialPorts();
-  }
-
-  function changeUiMode(nextMode: UiMode) {
-    setUiMode(nextMode);
-    persistUiMode(window.localStorage, nextMode);
   }
 
   async function runProbe(targetFrame = frameIndex) {
@@ -1065,6 +1101,10 @@ function App() {
   }
 
   async function runOperatorProbeCurrentFrame() {
+    if (appRuntime?.runtime_source === "simulated_material") {
+      await runProbe(frameIndex);
+      return;
+    }
     if (!operatorRealHardwareAvailable) {
       setOperatorStartMessage(t("Real hardware unavailable"));
       setProbe(null);
@@ -1101,7 +1141,7 @@ function App() {
     };
 
     try {
-      const response = await streamLiveOfflineRun(selectedId, measurementForRun, {
+      const completion = await streamLiveOfflineRun(selectedId, measurementForRun, {
         startFrame: frameIndex,
         targetFps: measurementForRun.detector_config.live_offline_fps ?? 8,
         signal: controller.signal
@@ -1111,20 +1151,16 @@ function App() {
           liveRunProcessedFramesRef.current = event.processed_frames;
           applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          liveRunIdRef.current = event.run_manifest.run_id;
-          liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
+          liveRunIdRef.current = event.run_id;
           setLiveRun((current) =>
             current
               ? {
                   ...current,
                   status: "complete",
-                  operatorDataSource: event.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
-                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
                   statusMessage: "",
                   analysisProgress: null,
-                  analysis: event.analysis_result,
-                  processedFrames: event.run_manifest.frame_records.length,
-                  totalFrames: event.run_manifest.frame_records.length
+                  processedFrames: liveRunProcessedFramesRef.current,
+                  totalFrames: liveRunProcessedFramesRef.current
                 }
               : current
           );
@@ -1134,32 +1170,23 @@ function App() {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
+      const response = runResponseFromSummary(await getRunSummary(completion.run_id));
+      window.localStorage.setItem(LAST_SAVED_RUN_STORAGE_KEY, completion.run_id);
       setRunResult(response);
+      setLiveRun((current) => current ? {
+        ...current,
+        status: "complete",
+        statusMessage: "",
+        analysisProgress: null,
+        runId: completion.run_id,
+        analysis: response.analysis_result,
+        provenance: response.run_manifest.provenance ?? current.provenance,
+        processedFrames: Number(response.run_manifest.config_snapshot.processed_frames ?? current.processedFrames),
+        totalFrames: Number(response.run_manifest.config_snapshot.processed_frames ?? current.processedFrames)
+      } : current);
     } catch (err) {
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
-        const stoppedRunId = liveRunIdRef.current;
-        if (stoppedRunId) {
-          try {
-            const partialResult = await waitForStoppedRun(stoppedRunId);
-            applyStoppedRunResult(partialResult);
-          } catch (fetchErr) {
-            if (measurementForRun && selectedId && liveRunProcessedFramesRef.current > 0) {
-              try {
-                const partialResult = await createLiveOfflineRun(selectedId, measurementForRun, {
-                  startFrame: frameIndex,
-                  maxFrames: liveRunProcessedFramesRef.current,
-                  targetFps: measurementForRun.detector_config.live_offline_fps ?? 8
-                });
-                applyStoppedRunResult(partialResult);
-              } catch (fallbackErr) {
-                setError(fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
-              }
-            } else {
-              setError(fetchErr instanceof Error ? fetchErr.message : String(fetchErr));
-            }
-          }
-        }
       } else {
         setError(err instanceof Error ? err.message : String(err));
         setRunResult(null);
@@ -1171,39 +1198,19 @@ function App() {
       setRunning(false);
     }
 
-    function applyStoppedRunResult(partialResult: RunResponse) {
-      setRunResult(partialResult);
-      setLiveRun((current) =>
-        current
-          ? {
-              ...current,
-              status: "stopped",
-              statusMessage: "",
-              analysisProgress: null,
-              runId: partialResult.run_manifest.run_id,
-              operatorDataSource: partialResult.run_manifest.operator_data_source === "real_camera" ? "real_camera" : "offline_dataset",
-              provenance: partialResult.run_manifest.provenance ?? partialResult.analysis_result.provenance ?? current.provenance,
-              analysis: partialResult.analysis_result,
-              processedFrames: partialResult.run_manifest.frame_records.length,
-              totalFrames: partialResult.run_manifest.config_snapshot.max_frames as number
-            }
-          : current
-      );
-    }
   }
 
   function stopLiveOfflineRun() {
-    if (runningCamera) {
-      const runId = liveRunIdRef.current;
-      if (runId) {
-        void stopRealCameraRun(runId).catch((err) => {
-          setError(err instanceof Error ? err.message : String(err));
-          runAbortRef.current?.abort();
-        });
-        return;
-      }
-    }
-    runAbortRef.current?.abort();
+    const runId = liveRunIdRef.current;
+    if (!runId) return;
+    setLiveRun((current) => current ? {
+      ...current,
+      status: "stopping",
+      statusMessage: t("Finalizing saved results")
+    } : current);
+    void stopRun(runId).catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
   }
 
   function chooseSetupSource(source: SetupSourceKind) {
@@ -1258,6 +1265,10 @@ function App() {
   }
 
   function startOperatorRun() {
+    if (appRuntime?.runtime_source === "simulated_material") {
+      startOperatorOfflineRun();
+      return;
+    }
     startOperatorRealCameraRun();
   }
 
@@ -1517,22 +1528,28 @@ function App() {
           liveRunProcessedFramesRef.current = event.processed_frames;
           applyLiveFrameEvent(event);
         } else if (event.event === "complete") {
-          liveRunIdRef.current = event.run_manifest.run_id;
-          liveRunProcessedFramesRef.current = event.run_manifest.frame_records.length;
+          if (!event.run_manifest || !event.analysis_result) {
+            liveRunIdRef.current = event.run_id;
+            return;
+          }
+          const completedManifest = event.run_manifest;
+          const completedAnalysis = event.analysis_result;
+          liveRunIdRef.current = completedManifest.run_id;
+          liveRunProcessedFramesRef.current = completedManifest.frame_records.length;
           setLiveRun((current) =>
             current
               ? {
                   ...current,
                   status: "complete",
-                  operatorDataSource: event.run_manifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
-                  provenance: event.run_manifest.provenance ?? event.analysis_result.provenance ?? current.provenance,
+                  operatorDataSource: completedManifest.operator_data_source === "offline_dataset" ? "offline_dataset" : "real_camera",
+                  provenance: completedManifest.provenance ?? completedAnalysis.provenance ?? current.provenance,
                   statusMessage: "",
                   analysisProgress: null,
-                  analysis: event.analysis_result,
-                  processedFrames: event.run_manifest.frame_records.length,
-                  totalFrames: event.run_manifest.frame_records.length,
+                  analysis: completedAnalysis,
+                  processedFrames: completedManifest.frame_records.length,
+                  totalFrames: completedManifest.frame_records.length,
                   frameShape:
-                    event.run_manifest.frame_records[event.run_manifest.frame_records.length - 1]?.shape ??
+                    completedManifest.frame_records[completedManifest.frame_records.length - 1]?.shape ??
                     current.frameShape
                 }
               : current
@@ -1543,7 +1560,26 @@ function App() {
           setLiveRun((current) => updateLiveRunFromProgress(current, event));
         }
       });
-      setRunResult(response);
+      const completedResponse = "run_id" in response
+        ? runResponseFromSummary(await getRunSummary(response.run_id))
+        : response;
+      if ("run_id" in response) {
+        window.localStorage.setItem(LAST_SAVED_RUN_STORAGE_KEY, response.run_id);
+      }
+      setRunResult(completedResponse);
+      if (options.operatorMode) {
+        setLiveRun((current) => current ? {
+          ...current,
+          status: "complete",
+          statusMessage: "",
+          analysisProgress: null,
+          runId: completedResponse.run_manifest.run_id,
+          analysis: completedResponse.analysis_result,
+          provenance: completedResponse.run_manifest.provenance ?? current.provenance,
+          processedFrames: Number(completedResponse.run_manifest.config_snapshot.processed_frames ?? current.processedFrames),
+          totalFrames: Number(completedResponse.run_manifest.config_snapshot.processed_frames ?? current.processedFrames)
+        } : current);
+      }
     } catch (err) {
       if (controller.signal.aborted) {
         setLiveRun((current) => (current ? { ...current, status: "stopped", statusMessage: "", analysisProgress: null } : current));
@@ -1627,13 +1663,12 @@ function App() {
           </div>
         </div>
         <nav className="tabs" aria-label={t("Primary")}>
-          {navItemsForUiMode(uiMode).map((item) => (
+          {navItemsForUiMode("operator").map((item) => (
             <TabButton page={item.page} current={page} onSelect={setPage} icon={pageIcon(item.page)} key={item.page}>
               {t(item.label)}
             </TabButton>
           ))}
         </nav>
-        <UiModeSwitch mode={uiMode} onMode={changeUiMode} />
         <label className="languageControl">
           <span>{t("Language")}</span>
           <select onChange={(event) => setLanguage(event.target.value as UiLanguage)} value={language}>
@@ -1644,38 +1679,15 @@ function App() {
             ))}
           </select>
         </label>
-        <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
+        {appRuntime?.runtime_source !== "simulated_material" ? <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
           <Settings size={17} aria-hidden="true" />
-        </button>
+        </button> : null}
         <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
           <RefreshCcw size={17} aria-hidden="true" />
         </button>
       </header>
 
-      <section className={uiMode === "operator" ? "workspace operatorWorkspace" : "workspace"}>
-        {uiMode === "engineering" ? (
-        <aside className="datasetRail" aria-label={t("Offline datasets")}>
-          {datasets.map((dataset) => (
-            <button
-              className={dataset.id === selectedId ? "datasetItem selected" : "datasetItem"}
-              key={dataset.id}
-              onClick={() => {
-                setSetupSource("offline_dataset");
-                setSelectedId(dataset.id);
-              }}
-              type="button"
-            >
-              <span className="datasetId">{uiDatasetLabel(language, dataset)}</span>
-              <span className="datasetMeta">
-                {uiObjectClass(language, dataset.object_class)} · {dataset.frame_count.toLocaleString()} {t("frames")}
-              </span>
-              <span className="datasetMeta">
-                {uiDetector(language, dataset.default_detector)} · {uiWidthMode(language, dataset.default_width_mode)}
-              </span>
-            </button>
-          ))}
-        </aside>
-        ) : null}
+      <section className="workspace operatorWorkspace">
 
         <section className="panelArea">
           {error ? <div className="statusBlock error">{error}</div> : null}
@@ -1695,6 +1707,7 @@ function App() {
               datasets={datasets}
               selectedId={selectedId}
               operatorDataSource={operatorDataSource}
+              appRuntime={appRuntime}
               operatorSourceStatus={operatorSourceStatus}
               operatorSourceStatusError={operatorSourceStatusError}
               loadingOperatorSourceStatus={loadingOperatorSourceStatus}
@@ -1746,11 +1759,11 @@ function App() {
           ) : null}
         </section>
       </section>
-      <DeviceSetupWizard
+      {appRuntime?.runtime_source !== "simulated_material" ? <DeviceSetupWizard
         open={deviceSetupOpen}
         onClose={() => setDeviceSetupOpen(false)}
         onSaved={handleDeviceSetupSaved}
-      />
+      /> : null}
     </main>
     </UiLanguageContext.Provider>
   );
@@ -1820,6 +1833,7 @@ function PageContent({
   datasets,
   selectedId,
   operatorDataSource,
+  appRuntime,
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
@@ -1880,6 +1894,7 @@ function PageContent({
   datasets: OfflineDatasetListItem[];
   selectedId: string;
   operatorDataSource: OperatorDataSource;
+  appRuntime: AppRuntime | null;
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
@@ -2047,6 +2062,7 @@ function PageContent({
   if (isOperatorRun) {
     return (
       <OperatorRunPage
+        appRuntime={appRuntime}
         measurement={measurement}
         onMeasurement={onMeasurement}
         onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
@@ -2056,6 +2072,7 @@ function PageContent({
         cameraPreviewRefreshStatus={cameraPreviewRefreshStatus}
         cameraPreviewState={cameraPreviewState}
         activeSourceShape={activeSourceShape}
+        startupFrameUrl={activeFrameUrl}
         operatorSourceStatus={operatorSourceStatus}
         operatorSourceStatusError={operatorSourceStatusError}
         loadingOperatorSourceStatus={loadingOperatorSourceStatus}
@@ -2183,6 +2200,7 @@ function PageContent({
 }
 
 function OperatorRunPage({
+  appRuntime,
   measurement,
   onMeasurement,
   onPreviewAffectingChange,
@@ -2192,6 +2210,7 @@ function OperatorRunPage({
   cameraPreviewRefreshStatus,
   cameraPreviewState,
   activeSourceShape,
+  startupFrameUrl,
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
@@ -2218,6 +2237,7 @@ function OperatorRunPage({
   onRefreshOperatorSourceStatus,
   onOpenDeviceSetup
 }: {
+  appRuntime: AppRuntime | null;
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
@@ -2227,6 +2247,7 @@ function OperatorRunPage({
   cameraPreviewRefreshStatus: PreviewRefreshStatus;
   cameraPreviewState: RealCameraPreviewState | null;
   activeSourceShape: number[];
+  startupFrameUrl: string;
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
@@ -2264,13 +2285,20 @@ function OperatorRunPage({
   );
   const latestAnalysis = liveRun?.analysis ?? runResult?.analysis_result ?? null;
   const operatorRunActive = runningCamera || runningOffline;
+  const simulatedMode = appRuntime?.runtime_source === "simulated_material";
   const temperatureHardwareMessage =
     temperatureError?.message ??
     (temperatureStatus?.temperature_status === "unavailable" ? temperatureStatus.reading.error : "");
   const temperatureHardwareUnavailable = Boolean(temperatureHardwareMessage);
   const realHardwareAvailable = operatorSourceStatus?.real_hardware_available === true && !temperatureHardwareUnavailable;
-  const realHardwareError = operatorSourceStatusError || temperatureHardwareMessage;
-  const canShowCurrentSourceData = realHardwareAvailable;
+  const sourceAvailable = simulatedMode || realHardwareAvailable;
+  const runtimeConfigurationError = operatorSourceStatus?.configuration_valid === false
+    ? language === "zh"
+      ? operatorSourceStatus.configuration_error_zh
+      : operatorSourceStatus.configuration_error_en
+    : "";
+  const realHardwareError = runtimeConfigurationError || operatorSourceStatusError || temperatureHardwareMessage;
+  const canShowCurrentSourceData = sourceAvailable;
   useEffect(() => {
     if (normalizedMeasurement.regions.some((region) => region.region_id === activeRegionId)) return;
     setActiveRegionId(normalizedMeasurement.regions[0].region_id);
@@ -2315,20 +2343,21 @@ function OperatorRunPage({
   const latestFrameUrl =
     canShowCurrentSourceData
       ? liveRun?.frameUrl ??
-        (setupProbeFrameUrl || latestRunResultFrameUrl || cameraPreviewUrl)
+        (setupProbeFrameUrl || latestRunResultFrameUrl || cameraPreviewUrl || (simulatedMode ? startupFrameUrl : ""))
       : "";
   const latestFrameShape =
     liveRun?.frameShape ??
     (setupProbeDetection ? probe?.frame.shape ?? cameraPreview?.shape ?? activeSourceShape : null) ??
     runResult?.run_manifest.frame_records[runResult.run_manifest.frame_records.length - 1]?.shape ??
     activeSourceShape;
+  const runtimeFrameLabel = simulatedMode ? t("Simulated material debug") : t("Real camera");
   const latestFrameTitle = liveRun?.detectionResult
-    ? `${t("Real camera")} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
+    ? `${runtimeFrameLabel} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
     : setupProbeDetection
       ? `${t("Current frame probe")} · ${t("frame")} ${setupProbeDetection.frame_index}`
     : latestDetection
-        ? `${t("Real camera")} · ${t("frame")} ${latestDetection.frame_index}`
-        : t("Real camera");
+        ? `${runtimeFrameLabel} · ${t("frame")} ${latestDetection.frame_index}`
+        : runtimeFrameLabel;
   const serialPortOptions = uniqueStrings([
     operatorSettings.serialPort ?? "",
     measurement.detector_config.temperature_serial_port ?? "",
@@ -2342,10 +2371,14 @@ function OperatorRunPage({
     .filter((region) => region.enabled)
     .every((region) => region.roi.width > 0 && region.roi.height > 0);
   const probeCurrentFrameDisabled =
-    probing || operatorRunActive || !hasMeasurementRoi || !realHardwareAvailable;
+    probing || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
-  const startDisabled = operatorRunActive || !realHardwareAvailable;
-  const sourceBadgeLabel = realHardwareAvailable ? "Real hardware ready" : "Real hardware unavailable";
+  const startDisabled = operatorRunActive || !sourceAvailable;
+  const sourceBadgeLabel = simulatedMode
+    ? "Simulated material debug"
+    : realHardwareAvailable
+      ? "Real hardware ready"
+      : "Real hardware unavailable";
   const completedRegionTrendSources = analysisRegionTrendSources(latestAnalysis);
   const liveRegionTrendSources = regionTrendSourcesFromLiveState(liveRun?.regionLiveStateById ?? {});
   const multiRegionTrendSources = liveRun ? liveRegionTrendSources : completedRegionTrendSources;
@@ -2359,12 +2392,17 @@ function OperatorRunPage({
     <div className="operatorRunGrid">
       <section className="toolPanel operatorControlPanel">
         <div className="operatorModeHeader">
-          <h2>{t("Real camera test")}</h2>
-          <span className={realHardwareAvailable ? "operatorSourceBadge" : "operatorSourceBadge warning"}>
+          <h2>{simulatedMode ? t("Simulated test") : t("Real camera test")}</h2>
+          <span className={sourceAvailable ? "operatorSourceBadge" : "operatorSourceBadge warning"}>
             {t(sourceBadgeLabel)}
           </span>
         </div>
-        {!realHardwareAvailable ? (
+        {simulatedMode ? (
+          <div className="statusBlock warning">
+            {t("Simulated material debug mode is active. This is not real test data.")}
+          </div>
+        ) : null}
+        {!simulatedMode && !realHardwareAvailable ? (
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
@@ -2384,8 +2422,6 @@ function OperatorRunPage({
           activeRegionId={activeRegionId}
           disabled={operatorRunActive}
           measurement={normalizedMeasurement}
-          regionLiveStateById={liveRun?.regionLiveStateById ?? {}}
-          regionResultsById={regionResultsById}
           setActiveRegionId={setActiveRegionId}
           onMeasurement={onMeasurement}
           onPreviewAffectingChange={onPreviewAffectingChange}
@@ -2401,7 +2437,7 @@ function OperatorRunPage({
             className="primaryButton"
             disabled={probeCurrentFrameDisabled}
             onClick={onProbeRealCameraSetup}
-            title={!realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            title={!sourceAvailable ? t("Real hardware unavailable") : undefined}
             type="button"
           >
             <SquareDashedMousePointer size={16} aria-hidden="true" />
@@ -2423,7 +2459,7 @@ function OperatorRunPage({
           checkingTemperature={checkingTemperature}
           loadingSerialPorts={loadingSerialPorts}
           operatorRunActive={operatorRunActive}
-          mode={realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
+          mode={simulatedMode ? "offline_dataset" : realHardwareAvailable ? "real_camera_available" : "real_camera_unavailable"}
           onPatch={onOperatorSettingsPatch}
           onConfirm={onOperatorSettingsConfirm}
           onRefreshSerialPorts={onRefreshSerialPorts}
@@ -2439,20 +2475,26 @@ function OperatorRunPage({
             className="primaryButton"
             disabled={startDisabled}
             onClick={onOperatorStartRun}
-            title={!realHardwareAvailable ? t("Real hardware unavailable") : undefined}
+            title={!sourceAvailable ? t("Real hardware unavailable") : undefined}
             type="button"
           >
             <Play size={16} aria-hidden="true" />
-            {operatorRunActive ? t("Running") : t("Start live test")}
+            {operatorRunActive
+              ? liveRun?.status === "stopping"
+                ? t("Finalizing saved results")
+                : t("Running")
+              : simulatedMode
+                ? t("Start simulated test")
+                : t("Start live test")}
           </button>
-          <button className="secondaryButton" disabled={!operatorRunActive} onClick={onStopRun} type="button">
+          <button className="secondaryButton" disabled={!operatorRunActive || liveRun?.status === "stopping"} onClick={onStopRun} type="button">
             <Square size={16} aria-hidden="true" />
             {t("Stop test")}
           </button>
         </div>
       </section>
       <section className="operatorVisualStack">
-        {!realHardwareAvailable ? (
+        {!simulatedMode && !realHardwareAvailable ? (
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
@@ -2480,13 +2522,13 @@ function OperatorRunPage({
             readOnly={operatorRunActive}
           />
         ) : (
-          <PreviewPlaceholder
-            title={t("Real camera")}
+              <PreviewPlaceholder
+                title={runtimeFrameLabel}
             refreshStatus={cameraPreviewRefreshStatus}
             previewError={cameraPreviewError}
           />
         )}
-        {!realHardwareAvailable ? null : (
+        {!sourceAvailable ? null : (
         <section className="toolPanel operatorTrendPanel">
           <div className="runTrendHeader">
             <div>
@@ -2515,8 +2557,6 @@ function OperatorMeasurementPositionsPanel({
   activeRegionId,
   disabled,
   measurement,
-  regionLiveStateById,
-  regionResultsById,
   setActiveRegionId,
   onMeasurement,
   onPreviewAffectingChange,
@@ -2525,8 +2565,6 @@ function OperatorMeasurementPositionsPanel({
   activeRegionId: string;
   disabled: boolean;
   measurement: MeasurementDefinition;
-  regionLiveStateById: RegionLiveStateById;
-  regionResultsById: Record<string, RegionResult>;
   setActiveRegionId: (regionId: string) => void;
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
@@ -2566,14 +2604,6 @@ function OperatorMeasurementPositionsPanel({
       {disabled ? <div className="inlineWarning">{t("Test running positions locked")}</div> : null}
       <div className="operatorPositionList">
         {regions.map((region) => {
-          const result = regionResultsById[region.region_id];
-          const liveState = regionLiveStateById[region.region_id];
-          const pointCount = liveState?.formalPointCount ??
-            result?.live_point_status?.temperature_distance_point_count ??
-            0;
-          const missingPointMessage = livePointStatusMessage(
-            result?.live_point_status ?? liveState?.latestMissingReason
-          );
           const isActive = region.region_id === activeRegionId;
           const cannotDisable = region.enabled && enabledCount <= 1;
           return (
@@ -2626,20 +2656,6 @@ function OperatorMeasurementPositionsPanel({
                   }}
                 />
               </label>
-              <dl className="operatorPositionMetrics">
-                <Metric label="Current distance" value={formatDistance(result?.detection_result ?? null, "stabilized", language)} />
-                <Metric label="Current status" value={result?.detection_result.detection_status ?? t("No data")} />
-                <Metric label="Formal points" value={pointCount.toLocaleString()} />
-                <Metric
-                  label="Latest formal frame"
-                  value={liveState?.lastFormalFrameIndex ?? result?.curve_points.temperature_distance?.frame_index ?? t("No data")}
-                />
-              </dl>
-              {missingPointMessage ? (
-                <div className="operatorPositionEmpty">{t(missingPointMessage)}</div>
-              ) : !pointCount ? (
-                <div className="operatorPositionEmpty">{t("No formal points for this position")}</div>
-              ) : null}
               <div className="buttonPair operatorPositionActions">
                 <button
                   className="secondaryButton compactButton"
@@ -3593,6 +3609,7 @@ function OperatorResultsPage({
   const [exportMessage, setExportMessage] = useState("");
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [analysisOverride, setAnalysisOverride] = useState<AnalysisResult | null>(null);
+  const [selectedRegionId, setSelectedRegionId] = useState("");
   const currentAnalysis =
     runResult?.analysis_result ??
     (liveRun?.status === "stopped" || liveRun?.status === "complete" ? liveRun.analysis : null);
@@ -3671,11 +3688,21 @@ function OperatorResultsPage({
           <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
         )}
       </section>
+      {analysis ? (
+        <section className="toolPanel operatorAfasDetailPanel">
+          <MultiRegionAfasReview
+            analysis={analysis}
+            selectedRegionId={selectedRegionId}
+            onSelectedRegionId={setSelectedRegionId}
+          />
+        </section>
+      ) : null}
       {analysis && currentRunId ? (
         <section className="toolPanel operatorReanalysisPanel">
           <AfasParameterPanel
-            analysis={analysis}
-            buttonLabel="Re-analyze"
+            analysis={analysisForRegion(analysis, selectedRegionId) ?? analysis}
+            buttonLabel="Re-analyze current position"
+            regionId={selectedRegionId || analysis.regions?.[0]?.region_id}
             runId={currentRunId}
             onAnalysisUpdated={setAnalysisOverride}
           />
@@ -3863,16 +3890,24 @@ function ImportedRunSummary({ view }: { view: ImportedRunView }) {
 function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
   const t = useUiText();
   const analysis = view.analysis_result;
+  const [selectedRegionId, setSelectedRegionId] = useState("");
   return (
     <div className="operatorImportedChart">
       <h3>{t("Temperature-distance curve")}</h3>
       {analysis ? (
-        <MultiRegionTrendChart
-          sources={analysisRegionTrendSources(analysis)}
-          isRunning={false}
-          targetTemperature={null}
-          variant="result"
-        />
+        <>
+          <MultiRegionTrendChart
+            sources={analysisRegionTrendSources(analysis)}
+            isRunning={false}
+            targetTemperature={null}
+            variant="result"
+          />
+          <MultiRegionAfasReview
+            analysis={analysis}
+            selectedRegionId={selectedRegionId}
+            onSelectedRegionId={setSelectedRegionId}
+          />
+        </>
       ) : view.temperature_distance_image_data_url ? (
         <figure className="importedPngFigure">
           <img src={view.temperature_distance_image_data_url} alt={t("Distance - temperature")} />
@@ -3881,6 +3916,60 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
       ) : (
         <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>
       )}
+    </div>
+  );
+}
+
+function MultiRegionAfasReview({
+  analysis,
+  selectedRegionId,
+  onSelectedRegionId
+}: {
+  analysis: AnalysisResult;
+  selectedRegionId: string;
+  onSelectedRegionId: (regionId: string) => void;
+}) {
+  const language = useUiLanguage();
+  const t = useUiText();
+  const regions = analysis.regions ?? [];
+  const selectedRegion = regions.find((region) => region.region_id === selectedRegionId) ?? regions[0];
+  const selectedAnalysis = selectedRegion ? analysisForRegion(analysis, selectedRegion.region_id) : null;
+
+  useEffect(() => {
+    if (selectedRegion && selectedRegion.region_id !== selectedRegionId) {
+      onSelectedRegionId(selectedRegion.region_id);
+    }
+  }, [onSelectedRegionId, selectedRegion, selectedRegionId]);
+
+  if (!selectedRegion || !selectedAnalysis) {
+    return <div className="statusBlock">{t("No AFAS temperature-distance points")}</div>;
+  }
+  const summary = readRecord(selectedRegion.summary);
+  const failureReason = String(summary.failure_reason ?? selectedRegion.afas_analysis.reason ?? "");
+
+  return (
+    <div className="multiRegionAfasReview">
+      <div className="multiRegionAfasHeader">
+        <h2>{t("AFAS detailed analysis")}</h2>
+        <span>{t("Selected position")}: {measurementRegionDisplayLabel(regionAnalysisMeasurementRegion(selectedRegion), language)}</span>
+      </div>
+      <div className="multiRegionAfasTabs" role="tablist" aria-label={t("AFAS detailed analysis")}>
+        {regions.map((region) => (
+          <button
+            aria-selected={region.region_id === selectedRegion.region_id}
+            className={region.region_id === selectedRegion.region_id ? "active" : ""}
+            key={region.region_id}
+            onClick={() => onSelectedRegionId(region.region_id)}
+            role="tab"
+            type="button"
+          >
+            <span className="regionColorSwatch" style={{ backgroundColor: region.color }} />
+            {measurementRegionDisplayLabel(regionAnalysisMeasurementRegion(region), language)}
+          </button>
+        ))}
+      </div>
+      {failureReason ? <div className="inlineWarning">{localizeDisplayString(failureReason, language)}</div> : null}
+      <AnalysisAfasChart analysis={selectedAnalysis} />
     </div>
   );
 }
@@ -5838,11 +5927,13 @@ function readAfasAfValue(result: Record<string, unknown>): number | undefined {
 function AfasParameterPanel({
   analysis,
   buttonLabel = "Recalculate",
+  regionId,
   runId,
   onAnalysisUpdated
 }: {
   analysis: AnalysisResult;
   buttonLabel?: string;
+  regionId?: string;
   runId: string | null;
   onAnalysisUpdated: (analysis: AnalysisResult) => void;
 }) {
@@ -5881,7 +5972,7 @@ function AfasParameterPanel({
     });
   }
 
-  async function recalculateAnalysis() {
+  async function recalculateAnalysis(applyToAll = false) {
     if (!runId) return;
     setRecalculating(true);
     setError("");
@@ -5889,6 +5980,7 @@ function AfasParameterPanel({
       const nextPreprocessing = normalizeAfasPreprocessingParameters(preprocessing);
       const nextTangent = normalizeAfasAnalysisParameters(tangent);
       const nextAnalysis = await recomputeRunAnalysis(runId, {
+        ...(applyToAll ? {} : { region_id: regionId }),
         afas_preprocessing_parameters: nextPreprocessing,
         afas_analysis_parameters: nextTangent
       });
@@ -5907,15 +5999,25 @@ function AfasParameterPanel({
           <Settings size={15} aria-hidden="true" />
           {t("AFAS Parameters")}
         </h3>
-        <button
-          className="secondaryButton analysisRecalculateButton"
-          disabled={!runId || recalculating}
-          onClick={recalculateAnalysis}
-          type="button"
-        >
-          <RefreshCcw size={15} aria-hidden="true" />
-          {recalculating ? t("Recalculating") : t(buttonLabel)}
-        </button>
+        <div className="buttonPair analysisRecalculateActions">
+          <button
+            className="secondaryButton analysisRecalculateButton"
+            disabled={!runId || !regionId || recalculating}
+            onClick={() => recalculateAnalysis(false)}
+            type="button"
+          >
+            <RefreshCcw size={15} aria-hidden="true" />
+            {recalculating ? t("Recalculating") : t(buttonLabel)}
+          </button>
+          <button
+            className="secondaryButton analysisRecalculateButton"
+            disabled={!runId || recalculating}
+            onClick={() => recalculateAnalysis(true)}
+            type="button"
+          >
+            {t("Apply to all positions")}
+          </button>
+        </div>
       </div>
       <div className="analysisControlGrid">
         <fieldset>
@@ -7798,7 +7900,7 @@ function createInitialLiveRun(
     datasetId,
     operatorDataSource: "offline_dataset",
     provenance: null,
-    status: "running",
+    status: "stopping",
     statusMessage: "",
     frameIndex: startFrame,
     frameUrl: frameIndexImageUrl(datasetId, startFrame, { maxWidth: LIVE_FRAME_DISPLAY_MAX_WIDTH }),
@@ -7821,7 +7923,7 @@ function createInitialRealCameraLiveRun(measurement: MeasurementDefinition): Liv
     datasetId: "real_camera",
     operatorDataSource: "real_camera",
     provenance: null,
-    status: "running",
+    status: "stopping",
     statusMessage: "",
     frameIndex: 0,
     frameUrl: "",
@@ -8039,6 +8141,25 @@ function regionAnalysisMeasurementRegion(region: RegionAnalysisResult): Measurem
     enabled: true,
     roi: { type: "rotated_rect", center_x: 0, center_y: 0, width: 1, height: 1, angle_deg: 0 },
     color: region.color
+  };
+}
+
+function analysisForRegion(analysis: AnalysisResult, regionId: string): AnalysisResult | null {
+  const region = analysis.regions?.find((candidate) => candidate.region_id === regionId) ?? analysis.regions?.[0];
+  if (!region) return null;
+  return {
+    ...analysis,
+    all_frames: region.all_frames,
+    distance_time: region.distance_time,
+    raw_distance_time: region.raw_distance_time,
+    stabilized_distance_time: region.stabilized_distance_time,
+    temperature_time: region.temperature_time,
+    temperature_distance: region.temperature_distance,
+    raw_temperature_distance: region.raw_temperature_distance,
+    stabilized_temperature_distance: region.stabilized_temperature_distance,
+    afas_preprocessing: region.afas_preprocessing,
+    afas_analysis: region.afas_analysis,
+    regions: [region]
   };
 }
 

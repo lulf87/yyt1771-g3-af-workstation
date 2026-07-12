@@ -107,6 +107,10 @@
 | P-0089 | OPEN | P0 | backend / Hik MVS discovery / hardware setup | 后端在相机网卡激活前加载 MVS 后，后接入的真实相机可能持续枚举为空 | 2026-07-10 | 2026-07-10 | Codex | 当前现场通过重启后端恢复；待实现无需重启的 MVS 枚举恢复并复测先启动软件后接相机流程 |
 | P-0090 | FIXED_PENDING_BROWSER_RETEST | P0 | backend + frontend / multi-position measurement | 单 ROI 数据、检测、曲线、分析和导出链路需要扩展为可配置 1–6 个检测位置 | 2026-07-11 | 2026-07-11 | Codex | 自动化、配置预设、新旧导入及 Engineering Golden A/C 已通过；现场相机未枚举且温控串口缺失，Operator 真机多位置 Probe/Run 待补 |
 | P-0091 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / engineering live offline run | Engineering 离线实时测量按钮把 click event 当作 MeasurementDefinition 传入，启动前读取 detector_config 时报错 | 2026-07-11 | 2026-07-11 | Codex | 显式零参数按钮回调修复；Golden A/C 实时测量、停止、分析、导出与导入浏览器复测通过 |
+| P-0096 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / operator measurement positions | 检测位置卡片展示当前距离、状态、正式点数和最近帧等非必要信息 | 2026-07-12 | 2026-07-12 | Codex | 已移除位置卡片结果指标和空状态提示；保留位置编辑操作，Chromium 模拟模式复测通过 |
+| P-0097 | RESOLVED_BROWSER_VERIFIED | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 组合总览 + 按位置 AFAS 详情、当前位置/全部位置重分析已实现；3/6 位置 Chromium 流程通过 |
+| P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
+| P-0099 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / position result cards | 六个位置结果纵向占用过多，应在桌面端每行显示三个 | 2026-07-12 | 2026-07-12 | Codex | 桌面 3 列、中屏 2 列、手机 1 列；6 位置 Chromium 复测为两行 |
 
 ---
 
@@ -225,7 +229,7 @@ FIXED_PENDING_BROWSER_RETEST
 
 ### P-0089 — 后端在相机网卡激活前加载 MVS 后，后接入的真实相机可能持续枚举为空
 
-- Status: OPEN
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/services/hardware_setup_service.py`
 - Found date: 2026-07-10
@@ -9264,6 +9268,504 @@ Result: PASS, exit 0.
 
 RESOLVED_BROWSER_VERIFIED
 
+
+---
+
+### P-0092 — 产品界面仍可切换工程模式且运行来源由浏览器选择
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/core/runtime_policy.py`, `backend/src/yyt1771_g3/api/main.py`, `scripts/g3_start.sh`
+- Found date: 2026-07-11
+- Last update: 2026-07-11
+- Owner/tool: Codex
+
+#### Problem
+
+生产实际使用界面仍保留 Operator/Engineering 模式状态和历史入口，真实硬件与离线/模拟来源也仍可由浏览器状态决定，无法保证交付机器只运行启动命令指定的来源。
+
+#### Expected
+
+正常入口始终显示实际使用流程；运行来源只由启动环境或 `scripts/g3_start.sh real|sim` 决定；真实模式绝不 fallback 到模拟设备；模拟模式保留 1–6 ROI、检测、实时曲线和导出，但必须显著标为非真实数据。
+
+#### Actual
+
+修复前 `?mode=engineering` 和 localStorage 可恢复工程模式，前端保存 Operator 数据来源，后端没有统一的启动期 runtime policy。
+
+#### Fix summary
+
+- 新增启动期 `RuntimePolicy`、`/api/app/runtime` 和扩展 source-status。
+- 正常前端入口锁定 Operator，忽略旧 query/localStorage 模式，来源只读。
+- 新增真实/模拟跨源 acquisition guard、运行/导出来源字段和 `g3_start.sh real|sim`。
+- 快速启动复用条件新增 `/api/app/runtime` 和 runtime source 匹配检查，避免复用旧代码或错误来源的后端。
+
+#### Tests run
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python3 -m pytest backend/tests -q
+Result: PASS, 239 passed.
+
+cd frontend && npm test && npm run build
+Result: PASS, 141 passed; TypeScript/Vite production build passed.
+
+bash scripts/tests/test_g3_start.sh
+bash -n scripts/g3_start.sh scripts/g3_fast_start.sh scripts/tests/test_g3_start.sh
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-11
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/?mode=engineering`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`; real profile `hik_gige_mvs + lu92xx_modbus_rtu`
+- Page: Operator 实时测试 / 结果与导出 / 历史导入
+- Steps:
+  1. 执行 `scripts/g3_start.sh sim`，确认 `/api/app/runtime.runtime_source=simulated_material`。
+  2. 通过 `?mode=engineering` 打开页面，确认仍只有实际使用导航，没有模式或来源切换、设备设置入口。
+  3. 添加至 3 个检测位置，执行“检测当前帧”，确认 3 个位置都有独立结果和 A/B overlay。
+  4. 确认设置并开始模拟测试，观察 3 条实时曲线、逐位置正式点数和运行中位置锁定；手动停止。
+  5. 检查结果页 3 个位置卡片和组合曲线；生成 export，检查 `run_export.json` / `parameters.json` 的 runtime 字段和多 ROI 文件。
+  6. 将 ZIP 导入历史页，确认显示离线/模拟素材 badge、非真实数据警告、3 个位置和组合曲线。
+  7. 执行 `scripts/g3_start.sh real`，确认旧 sim 后端因 runtime 不匹配被重启，`/api/app/runtime.runtime_source=real_hardware`。
+  8. 在本机温控串口不可用状态检查真实硬件 guard、禁用 Probe/Start、保留设备设置、且不显示模拟画面。
+- Expected:
+  - query/localStorage 不得打开 Engineering；启动命令是唯一来源选择。
+  - sim 保留完整 Operator 多 ROI 流程并明确标为非真实数据。
+  - real 不 fallback，硬件不可用时只显示 guard 和设备设置。
+  - run/export/import 保留 `runtime_source`、`product_mode` 和模拟 provenance。
+- Actual:
+  - `?mode=engineering` 仍只显示 `实时测试 / 历史导入 / 结果与导出`，sim badge 为“模拟素材调试”，无模式/来源/设备设置切换。
+  - 3 个位置 Probe 均为 VALID、距离 `988.00 px`；live run 到 69 帧，每个位置 68 个正式点，三条组合曲线正常，Stop 后恢复可编辑。
+  - run manifest 为 `runtime_source=simulated_material`、`product_mode=development`、`operator_data_source=simulated_material`，包含 3 regions 和 207 个 region results。
+  - export 包含 legacy、long、wide、3 个 region CSV、组合/分位置 PNG；`run_export.json` 与 `parameters.json` 均保存模拟 runtime 字段。
+  - ZIP 历史导入显示“离线/模拟素材”和非真实数据警告，保留 3 个位置结果与组合曲线。
+  - real 模式检测到 `/dev/cu.usbserial-11210` 不存在，显示真实硬件不可用，Probe/Start 禁用，设备设置可用，无模拟画面；浏览器控制台的温控 503 与页面 guard 一致。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0092_sim_operator_three_roi.png`
+  - `output/playwright/p0092_sim_import_source_badge.png`
+  - `output/playwright/p0092_real_hardware_unavailable_guard.png`
+  - `output/playwright/p0092_sim_export.zip`
+  - `output/playwright/p0092_real_runtime.json`
+  - `output/playwright/p0092_real_source_status.json`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260711T125502726649Z/run_manifest.json`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260711T125502726649Z/exports/`
+  - `output/dev/g3-fast-start-backend-8022.log`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0093 — 模拟启动后未显示所选素材首帧
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+执行 `scripts/g3_start.sh sim` 后，页面能识别“模拟素材调试”运行来源，但图像区域为空并显示“相机不可用”，用户无法确认启动命令指定的素材已经加载。
+
+#### Expected
+
+模拟来源的实际使用页面在首次检测前就显示启动命令指定数据集的当前帧；“检测当前帧”仍负责执行正式检测和显示 A/B overlay。
+
+#### Actual
+
+后端 `/api/app/runtime` 正确返回 `golden_a_20260522_dev_lab`，数据集注册表也能读取 5807 帧，但前端没有把已经生成的离线首帧 URL 传入 Operator 图像区，并沿用了真实相机预览的 `unavailable` 占位状态。
+
+#### Fix summary
+
+- 将上层已解析的当前离线帧 URL 传给实际使用页面。
+- 模拟模式在没有 Probe、Run 或相机预览图时使用该素材帧作为安全 fallback；真实硬件模式仍禁止任何离线素材 fallback。
+- 新增前端回归测试，锁定“模拟启动、尚未 Probe 时显示所选素材”的行为。
+
+#### Tests run
+
+```bash
+cd frontend && npm test && npm run build
+Result: PASS, 142 passed; TypeScript/Vite production build passed.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试
+- Steps:
+  1. 保持后端 `runtime_source=simulated_material`，刷新实际使用页面。
+  2. 在未点击“检测当前帧”的状态检查右侧图像区。
+  3. 点击“检测当前帧”，检查检测状态和 A/B overlay。
+- Expected: 首次检测前显示启动指定素材；检测后仍显示正式 A/B overlay，且不出现“相机不可用”。
+- Actual: 页面加载后立即显示 `golden_a_20260522_dev_lab` 第 1 帧和位置 1 ROI；点击检测后状态为 VALID、距离 `988.00 px`，显示 A/B 与正式测宽带。浏览器控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0093_sim_material_loaded_before_probe.png`
+  - `output/playwright/p0093_sim_material_probe_overlay.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0094 — 多 ROI 停止后重复序列化完整检测对象导致长时间卡住
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/storage/run_store.py`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+模拟 run 使用 6 个 ROI、处理约 4816 帧后点击停止，页面数分钟仍保持“测量中”，无法进入结果与导出。
+
+#### Expected
+
+停止后立即停止采集/检测，只对已处理帧做一次轻量 finalize；结果页应通过 compact summary 或分页数据进入，不应重新检测已处理帧，也不应把全部重量级检测对象重复传回浏览器。
+
+#### Actual
+
+- 本次 run 的有效业务量为 4816 帧、6 个 ROI，即 28,896 条 region detection。
+- `run_manifest.json` 同时保存 legacy `detection_results` 和完整 `region_detection_results`；`analysis_result.json` 又在顶层 `all_frames` 与 `regions[].all_frames` 重复保存检测对象。
+- 本次 `run_manifest.json` 为 560,062,915 bytes，`analysis_result.json` 为 648,047,445 bytes，合计 1,208,110,360 bytes（约 1.13 GiB）。
+- 停止后的 `GET /api/runs/{run_id}` 会完整读取、校验、重新序列化并向浏览器返回这两个文件；现场后端持续约 96–97% CPU，连接长时间保持 ESTABLISHED。
+- 若 `waitForStoppedRun()` 在约 5.6 秒内没有发现完整结果，前端还会调用非流式 `/api/live-offline-runs`，按 `processedFrames` 从头重新检测作为 fallback，存在重复计算全部已处理帧的风险。
+
+#### Suspected cause
+
+停止协议把“停止采集”“落盘”“分析”“读取完整 run”“把完整 run 传给浏览器”绑定为一个同步流程，并叠加 legacy/multi-ROI 数据复制和重新检测 fallback。重量级 `debug_artifacts`、candidate 诊断信息随每帧每 ROI 多次复制，造成 O(frames × regions) 的大 JSON 体积和高昂解析/序列化成本。
+
+#### Fix summary
+
+已完成 Operator run v2 紧凑持久化和轻量停止协议：
+
+1. 新 run 使用 `run_meta.json` + `run_state.json` + `results.sqlite` + `analysis_summary.json`，逐帧逐 ROI 正式结果只保存一份。
+2. SQLite 在运行期间每 50 帧批量提交；停止只 flush 尾批次并构建最终曲线/AFAS 快照。
+3. 正常 VALID 帧不持久化完整 `debug_artifacts`、candidate metadata 和 rejected candidate 列表；异常事件单独写入 `diagnostic_events`。
+4. 统一 `POST /api/runs/{run_id}/stop`，停止请求幂等；状态为 RUNNING → STOP_REQUESTED → FINALIZING → READY/ERROR。
+5. 新增轻量 status/summary/分页 results/单帧 results 接口，停止后的 `complete` 事件只返回 `run_id` 和 `state`。
+6. 删除 Operator 模拟停止后调用 `createLiveOfflineRun(processedFrames)` 从头重检的 fallback。
+7. 前端停止时进入“正在整理并保存结果”，READY 后只加载 summary；页面重启可从最后保存的 run 恢复相同曲线。
+8. v2 导出只在用户点击后从 SQLite/summary 生成，ZIP 包含 v2 主文件和旧导入器可读的兼容视图；旧 v1 run/导出路径保留。
+
+#### Tests run
+
+- `PYTHONPATH=backend/src python3 -m pytest backend/tests -q` → `246 passed`。
+- `cd frontend && npm test` → `143 passed`。
+- `cd frontend && npm run build` → TypeScript + Vite build PASS。
+- 4816 帧 × 6 ROI 合成 SQLite 测试：28,896 条唯一 region result，数据库 `<20 MiB`。
+- 4816 帧 × 6 ROI 合成 analysis snapshot 测试：6 个 region，主存储 `<50 MiB`，summary 不含 `all_frames`。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chrome（用户现场截图）
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试
+- Steps: 6 ROI 模拟测试处理约 4816 帧后点击停止。
+- Expected: 快速停止并进入结果与导出。
+- Actual: 数分钟仍显示“测量中”；后端生成约 1.13 GiB JSON 并持续高 CPU 处理完整结果响应。
+- Result: FAIL
+- Evidence:
+  - `output/runs/run-golden_a_20260522_dev_lab-20260712T011223343269Z/run_manifest.json`
+  - `output/runs/run-golden_a_20260522_dev_lab-20260712T011223343269Z/analysis_result.json`
+  - `output/dev/g3-fast-start-backend-8022.log`
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright headed)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试 → 结果与导出
+- Steps:
+  1. 以 `runtime_source=simulated_material` 启动，添加并启用 6 个检测位置。
+  2. 开始模拟测试，确认 6 个位置独立增长正式点和组合曲线。
+  3. 在帧 56 点击停止，检查状态时间、v2 文件体积和结果页。
+  4. 整页重载，再打开结果与导出，比较 summary hash、6 个位置点数和组合曲线。
+  5. 显式生成 v2 ZIP 并重新导入。
+- Expected: 停止后不重检，快速 READY；不生成巨型 v1 JSON；重载和导入后仍显示相同 6 ROI 曲线。
+- Actual:
+  - `processed_frames=56`，`region_count=6`，SQLite 中 336 条逐 ROI 结果只保存一份。
+  - `stopped_at=03:10:14.235366Z`，`finalized_at=03:10:14.532968Z`，finalize 约 `0.298 s`。
+  - `results.sqlite=208,896 B`，`analysis_summary.json=277,919 B`，`run_meta.json=5,710 B`，`run_state.json=352 B`，run 主文件合计约 `493 KiB`（目录 `du` 约 `540 KiB`）；未生成 `run_manifest.json` / `analysis_result.json`。
+  - 停止前后每个位置均为 55 个正式点；重载后结果页恢复 6 个位置和组合曲线。
+  - 重载前后 `/summary` SHA-256 同为 `745dd53d43ec54935806366f8b7ddabaf281a373400b2872033c68d65cdcd3a6`。
+  - ZIP `242,538 B`，重新导入后为 6 regions，每个 region 55 点，`runtime_source=simulated_material`。
+  - 浏览器控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0094-v2-6roi-20260712/results-before-reload.png`
+  - `output/playwright/p0094-v2-6roi-20260712/results-page-after-reload.png`
+  - `output/playwright/p0094-v2-6roi-20260712/status.json`
+  - `output/playwright/p0094-v2-6roi-20260712/summary-before-reload.json`
+  - `output/playwright/p0094-v2-6roi-20260712/summary-after-reload.json`
+  - `output/playwright/p0094-v2-6roi-20260712/zip-contents.txt`
+  - `output/playwright/p0094-v2-6roi-20260712/imported-view.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0095 — 温度—距离正式曲线重复温度导致竖线和回折
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `afas_analysis`, `region_detection_service`, `curves.ts`, `multiRegionAnalysis.ts`, import/export
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+实时和历史温度—距离折线直接连接逐帧点；重复温度产生竖线，温度回摆产生向左回折。实时、停止、重开和导入还可能选择不同曲线层。
+
+#### Fix summary
+
+- 后端统一使用 `temperature_group_bin_celsius=0.01`和整数 canonical `bin_key`；每桶保存均值、sample count、min/max 和 first/last/representative frame。
+- 正式流程固定为 raw frame points → grouped → outlier repair → smoothed，不改现有 AFAS 数学。
+- 实时每 ROI 使用独立 Map，后端 O(1) upsert 当前温度桶并发送轻量 update。
+- 前端正式 path 只读 smoothed/repaired/grouped；旧 raw-only 数据先兼容分组。raw 点保留，不再连成正式折线。
+- 去除 grouped/smoothed 按 raw 数组同 index 继承 frame metadata 的错误映射。
+- v2 summary 持久化 grouped/repaired/smoothed 快照；导出 PNG 使用同一正式序列；v1 raw-only 导入由后端生成兼容 grouped 曲线。
+
+#### Tests run
+
+- Backend: `249 passed`.
+- Frontend: `145 passed`.
+- Frontend TypeScript/Vite build: PASS.
+- 新增重复 20 点、乱序 `1.20/1.30/1.20/1.40`、浮点误差、metadata、严格递增和 legacy fallback 测试。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright headed)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator 实时测试 → 结果与导出
+- Steps: 6 ROI 模拟运行 50 帧，停止后检查 summary，整页刷新重开，导出 ZIP 再导入。
+- Expected: 每 ROI 每温度桶一点，X 严格递增，无竖线/回折，重开和导入一致。
+- Actual: 每 ROI raw=49、grouped=4、smoothed=4、sample sum=49、duplicate X=0、strict increasing=true；6 ROI 独立结果一致。刷新前后 summary SHA-256 同为 `18b5f4ac41f846a52c8ad77c2ec68b30dfe34930248e5f8ba3f4f7ae2478b80d`。导入后每 ROI 仍为 grouped=4、smoothed=4。控制台 0 errors/0 warnings。
+- Result: PASS
+- Evidence: `output/playwright/p0095-temperature-grouping-20260712/results.png`, `results-after-reload.png`, `summary.json`, `summary-after-reload.json`, `export.zip`, `import.json`.
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0096 — 检测位置卡片包含非必要实时结果信息
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/main.tsx`, `frontend/tests/operatorMeasurementRegions.test.mjs`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+实际使用界面的“检测位置”卡片重复展示当前距离、当前状态、正式点数、最近正式点帧号和无正式点提示，占用较多纵向空间；这些结果信息不属于位置配置操作。
+
+#### Fix summary
+
+- 从每个位置卡片移除上述实时结果指标和空状态提示。
+- 保留位置颜色/名称、启用开关、名称输入、编辑测量区域、删除位置和添加位置。
+- 仅移除位置面板展示及其组件参数，不改变实时结果数据、检测、曲线或多 ROI 行为。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: 模拟相机 + 模拟温控，启动素材 `golden_a_20260522_dev_lab`
+- Page: 实时测试 / 检测位置
+- Steps: 打开模拟测试页面；检查默认位置卡片；点击“添加位置”；检查两个位置卡片及保留的操作按钮。
+- Expected: 不显示红框内的结果指标或无正式点提示；位置编辑操作保持可用。
+- Actual: 两个位置卡片均仅显示名称、启用、位置输入、编辑和删除操作；添加位置正常；控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence: `output/playwright/p0096-position-card-without-live-metrics.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0097 — 多位置结果缺少逐位置 AFAS 详细分析图
+
+- Status: OPEN
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/src/multiRegionAnalysis.ts`, analysis API/service and v2 summary
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+多位置改造后，操作员“结果与导出”和历史导入只渲染组合趋势图。后端仍保存每个位置的 AFAS preprocessing、analysis 和 summary，现有 `AnalysisAfasChart` 也仍完整，但结果页没有按位置接入低/高温基线、最大斜率切线、AS/AF 交点、垂直辅助线、marker、缩放和图层开关。现有参数面板还读取第一个位置的顶层兼容镜像，并把一套参数应用到全部位置。
+
+#### Expected
+
+保留多位置组合总览，并在当前结果、保存重开和历史导入中共用按位置切换的完整 AFAS 详细图；详细图和参数必须读取对应 region，保存后重开与导入不得重新检测或默认重算。当前位置重分析和应用全部位置必须具有真实后端作用域。
+
+#### Design
+
+`docs/superpowers/specs/2026-07-12-multi-region-afas-detail-design.md`
+
+#### Fix summary
+
+- 保留 `MultiRegionTrendChart` 作为 1–6 位置组合总览，在当前结果和历史导入中共用 `MultiRegionAfasReview`。
+- 位置标签把选中 `RegionAnalysisResult` 映射到既有 `AnalysisAfasChart`，恢复平滑曲线、原始诊断点开关、异常点、低/高温基线、最大斜率切线、AS/AF 交点和垂直辅助线、最大斜率点、缩放和图层开关。
+- 详细图和参数只读取选中 region 的 `afas_preprocessing`、`afas_analysis` 和曲线，不再读取顶层位置 1 兼容镜像。
+- 重分析 API 新增可选 `region_id`。指定位置时只重建并替换目标 region；不指定时继续应用到全部位置。v1 写回 `analysis_result.json`，v2 原子写回轻量 `analysis_summary.json`。
+- 历史导入保持只读，直接使用保存快照，不重新检测或默认重算。
+- 未恢复 v2 `all_frames`，未修改检测、温度同步、异常过滤或 AFAS 数学。
+
+#### Tests run
+
+- Backend: `PYTHONPATH=backend/src pytest -q backend/tests` → `249 passed in 105.38s`。
+- Frontend: `npm test` → `147 passed`。
+- Frontend: `npm run build` → TypeScript + Vite PASS。
+- 新增/更新覆盖：结果与导入详情挂载、选中 region 隔离、API `region_id` 序列化、位置 2 局部重分析后位置 1 深度一致、未知 region 返回 422。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: 实时测试 → 结果与导出；历史导入
+- Steps:
+  1. 以 simulated_material 启动，添加并启用 3 个位置，运行 203 帧后停止。
+  2. 打开结果与导出，检查组合总览和逐位置 AFAS 详情，切换到位置 2。
+  3. 将位置 2 的 tangent offset 从 0 改为 1，点击“仅重新分析当前位置”，读取保存后的 summary。
+  4. 导出该 v2 run 并导入 ZIP，确认历史页仍显示组合总览和逐位置详细图。
+  5. 导入已有 6 位置且 AFAS status=ok 的 v2 Golden A 导出，切换位置 2，检查完整构造线和 marker。
+- Expected: 组合图保留；每个位置独立显示详细 AFAS；局部重分析不改变其他位置；导入直接复现保存的图和 AS/AF。
+- Actual:
+  - 新 run 的 3 个位置各保存 202 个 raw points / 9 个 smoothed points，详情标签可独立切换。
+  - 局部重分析后 summary 参数为 `region_1=0, region_2=1, region_3=0`，证明只写回目标位置。
+  - 导出再导入保留 3 个位置、组合图和逐位置详情。
+  - 6 位置保存结果导入后，位置 2 显示 AS `12.21 °C`、AF `13.73 °C`、最大斜率温度 `13.73 °C`，SVG 中存在 AS/AF 基线、最大斜率切线、AS/AF 垂直构造线和 marker。
+  - 控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/results-position-2.png`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/import-position-2.png`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/valid-afas-position-2.png`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/export.zip`
+  - `output/playwright/p0097-multi-region-afas-detail-20260712/valid-afas-export.zip`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0098 — 结果页主栏宽度不一致且实时测试默认阈值需调整
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/styles.css`, `frontend/src/main.tsx`, `frontend/src/setupSources.ts`, `backend/src/yyt1771_g3/core/models.py`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Problem
+
+“结果与导出”使用两列网格，导致摘要和转变点分析参数缩在左列，组合曲线和详细图宽度不一致。实时测试新建测量的对比度阈值和最大允许跳变默认仍为 30 / 20。
+
+#### Fix summary
+
+- 结果页改为单列全宽，DOM 和视觉顺序固定为：结果与导出摘要 → 组合曲线 → AFAS 详细分析 → 转变点分析参数。
+- `operatorResultSummary`、`operatorResultChart`、`operatorAfasDetailPanel` 和 `operatorReanalysisPanel` 均占满结果网格宽度。
+- 前端运行默认配置、真实相机 setup 默认配置和后端 `DetectorConfig` 统一改为 `contrast_threshold=55`、`distance_outlier_max_jump_px=100`。
+- 已保存 run 的参数快照不迁移、不覆盖；只有新建测量和缺省配置使用新默认值。
+
+#### Tests run
+
+- Frontend: `npm test` → `148 passed`。
+- Frontend: `npm run build` → TypeScript + Vite PASS。
+- Backend: `PYTHONPATH=backend/src pytest -q backend/tests` → `249 passed in 94.91s`。
+- 新增结果页顺序和四栏全宽 CSS 回归测试；更新前后端默认配置断言。
+
+#### Browser retest log
+
+- Retest date: 2026-07-12
+- Browser: Chromium (Playwright)
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: 实时测试；结果与导出
+- Steps: 冷打开模拟实际使用页检查检测方案默认值；导入有效 6 位置 AFAS 保存结果检查全宽结果布局；再执行 108 点模拟 run，停止后检查当前 run 的四个主栏及最下方参数栏。
+- Expected: 新测量默认显示 55 / 100；结果摘要、组合曲线、AFAS 详情和参数按指定顺序全宽排列。
+- Actual: 实时测试首次加载显示对比度阈值 55、最大允许跳变 100；当前 run 结果 DOM 顺序正确，四个主栏均使用单列全宽网格；转变点分析参数位于 AFAS 详情下方；控制台 0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0098-results-layout-defaults-20260712/results-full-width.png`
+  - `output/playwright/p0098-results-layout-defaults-20260712/results-current-run-full-page.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0099 — 位置结果卡片需要桌面端每行三个
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P2
+- Module: `frontend/src/styles.css`, `frontend/tests/operatorRegionResults.test.mjs`
+- Found date: 2026-07-12
+- Last update: 2026-07-12
+- Owner/tool: Codex
+
+#### Fix summary
+
+- 桌面端 `operatorRegionResultGrid` 改为三列，6 个位置最多两行。
+- 视口不超过 1050px 时降为两列，不超过 640px 时降为一列，避免内容拥挤。
+- 不改变位置结果字段、顺序、颜色或 AFAS 数据。
+
+#### Verification
+
+- Frontend: `npm test` → `148 passed`。
+- Frontend: `npm run build` → TypeScript + Vite PASS。
+- Browser: Chromium，导入 `golden_a_20260522_dev_lab` 的 6 位置有效 AFAS 结果，在“结果与导出”页面确认位置 1–3 第一行、位置 4–6 第二行；控制台 0 errors、0 warnings。
+- Evidence: `output/playwright/p0099-three-column-region-results-20260712/results-six-regions.png`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
 
 ---
 

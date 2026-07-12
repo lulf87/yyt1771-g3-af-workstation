@@ -94,6 +94,15 @@ case "$MODE" in
     ;;
 esac
 
+HARDWARE_CONFIG="${YYT1771_G3_HARDWARE_CONFIG:-$HARDWARE_CONFIG}"
+if [[ -n "${YYT1771_G3_RUNTIME_SOURCE:-}" ]]; then
+  EXPECTED_RUNTIME_SOURCE="$YYT1771_G3_RUNTIME_SOURCE"
+elif [[ "$MODE" == "sim-sim" ]]; then
+  EXPECTED_RUNTIME_SOURCE="simulated_material"
+else
+  EXPECTED_RUNTIME_SOURCE="real_hardware"
+fi
+
 BACKEND_URL="http://$HOST:$BACKEND_PORT"
 FRONTEND_URL="http://$HOST:$FRONTEND_PORT/"
 LOG_DIR="$ROOT_DIR/output/dev"
@@ -197,6 +206,17 @@ print(
 ' <<<"$profile_json"
 }
 
+runtime_matches_mode() {
+  local runtime_json="$1"
+  python3 -c '
+import json
+import sys
+
+runtime = json.load(sys.stdin)
+raise SystemExit(0 if runtime.get("runtime_source") == sys.argv[1] else 1)
+' "$EXPECTED_RUNTIME_SOURCE" <<<"$runtime_json"
+}
+
 wait_for_backend() {
   local started_at now elapsed
   started_at="$(date +%s)"
@@ -237,12 +257,13 @@ ensure_backend() {
     exit 1
   fi
 
-  local pids profile_json
+  local pids profile_json runtime_json
   pids="$(port_pids "$BACKEND_PORT")"
   if [[ -n "$pids" ]]; then
     if curl -fsS --max-time 2 "$BACKEND_URL/api/health" >/dev/null 2>&1; then
       profile_json="$(curl -fsS --max-time 2 "$BACKEND_URL/api/hardware/profile" 2>/dev/null || true)"
-      if [[ "$FORCE_RESTART" -eq 0 && -n "$profile_json" ]] && profile_matches_mode "$profile_json"; then
+      runtime_json="$(curl -fsS --max-time 2 "$BACKEND_URL/api/app/runtime" 2>/dev/null || true)"
+      if [[ "$FORCE_RESTART" -eq 0 && -n "$profile_json" && -n "$runtime_json" ]] && profile_matches_mode "$profile_json" && runtime_matches_mode "$runtime_json"; then
         log "Reusing backend on $BACKEND_URL ($(profile_summary "$profile_json"))"
         return 0
       fi
@@ -314,7 +335,13 @@ PY
     log "Profile: $(profile_summary "$profile_json")"
     exit 1
   fi
+  runtime_json="$(curl -fsS --max-time 5 "$BACKEND_URL/api/app/runtime")"
+  if ! runtime_matches_mode "$runtime_json"; then
+    log "Backend started, but runtime source does not match requested mode"
+    exit 1
+  fi
   log "Backend profile: $(profile_summary "$profile_json")"
+  log "Backend runtime source: $EXPECTED_RUNTIME_SOURCE"
 }
 
 ensure_frontend() {
@@ -387,6 +414,8 @@ PY
 
 log "Mode: $MODE ($MODE_LABEL)"
 log "Hardware config: $HARDWARE_CONFIG"
+log "Runtime source: ${YYT1771_G3_RUNTIME_SOURCE:-legacy-default}"
+log "Product mode: ${YYT1771_G3_PRODUCT_MODE:-development}"
 ensure_backend
 ensure_frontend
 

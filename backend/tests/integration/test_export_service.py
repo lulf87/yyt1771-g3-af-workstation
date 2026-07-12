@@ -44,6 +44,8 @@ def _manifest() -> RunManifest:
     return RunManifest(
         run_id="run-export",
         dataset_id="golden_a_20260522_dev_lab",
+        runtime_source="simulated_material",
+        product_mode="development",
         measurement_definition=measurement,
         detection_results=[
             DetectionResult(
@@ -176,6 +178,10 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
     payload = json.loads((run_dir / "exports" / "run_export.json").read_text(encoding="utf-8"))
     assert "operator_data_source" in payload
     assert "provenance" in payload
+    assert payload["runtime_source"] == "simulated_material"
+    assert payload["product_mode"] == "development"
+    assert payload["run_manifest"]["runtime_source"] == "simulated_material"
+    assert payload["analysis_result"]["runtime_source"] == "simulated_material"
     assert payload["run_manifest"]["measurement_definition"]["detector_mode"] == "contrast_widest_span"
     assert payload["run_manifest"]["config_snapshot"]["mode"] == "test-export"
     assert [point["frame_index"] for point in payload["analysis_result"]["temperature_distance"]] == [1]
@@ -185,10 +191,12 @@ def test_export_run_writes_csv_json_png_overlay_and_parameters(tmp_path: Path) -
     assert parameters["measurement_definition"]["detector_config"]["contrast_threshold"] == 42.0
     assert parameters["measurement_definition"]["detector_config"]["distance_outlier_filter_enabled"] is True
     assert parameters["measurement_definition"]["detector_config"]["distance_outlier_reference_count"] == 5
-    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_max_jump_px"] == 20.0
+    assert parameters["measurement_definition"]["detector_config"]["distance_outlier_max_jump_px"] == 100.0
     assert parameters["measurement_definition"]["detector_config"]["distance_outlier_baseline"] == "median"
     assert "operator_data_source" in parameters
     assert "provenance" in parameters
+    assert parameters["runtime_source"] == "simulated_material"
+    assert parameters["product_mode"] == "development"
 
     for filename in ["temperature_distance.png", "roi_ab_overlay.png"]:
         with Image.open(run_dir / "exports" / filename) as image:

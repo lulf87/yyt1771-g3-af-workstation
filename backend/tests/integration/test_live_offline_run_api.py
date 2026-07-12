@@ -253,9 +253,16 @@ def test_live_offline_run_stream_api_emits_frame_events_and_final_run(tmp_path: 
     assert "diagnostic_images" not in debug_artifacts
     assert frame_events[0]["curve_points"]["distance_time"]["frame_index"] == 1
     assert len(complete_events) == 1
-    assert len(complete_events[0]["run_manifest"]["detection_results"]) == 2
+    assert set(complete_events[0]) == {"event", "run_id", "state"}
+    assert len(json.dumps(complete_events[0])) < 4096
 
-    run_id = complete_events[0]["run_manifest"]["run_id"]
-    read_response = client.get(f"/api/runs/{run_id}")
-    assert read_response.status_code == 200
-    assert read_response.json()["run_manifest"]["run_id"] == run_id
+    run_id = complete_events[0]["run_id"]
+    status_response = client.get(f"/api/runs/{run_id}/status")
+    assert status_response.status_code == 200
+    assert status_response.json()["state"] == "READY"
+    summary_response = client.get(f"/api/runs/{run_id}/summary")
+    assert summary_response.status_code == 200
+    assert summary_response.json()["analysis_summary"]["counts"]["region_results"] == 2
+    detail_response = client.get(f"/api/runs/{run_id}/results?limit=1")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["total"] == 2

@@ -173,6 +173,11 @@ export type SourceProvenance = {
 };
 
 export type OperatorSourceStatus = {
+  runtime_source: "real_hardware" | "simulated_material";
+  product_mode: "production" | "development";
+  configuration_valid: boolean;
+  configuration_error_zh: string;
+  configuration_error_en: string;
   real_hardware_available: boolean;
   real_camera_available: boolean;
   real_temperature_available: boolean;
@@ -187,6 +192,17 @@ export type OperatorSourceStatus = {
   errors: string[];
   warnings: string[];
   provenance?: SourceProvenance;
+};
+
+export type AppRuntime = {
+  runtime_source: "real_hardware" | "simulated_material";
+  display_label_zh: string;
+  display_label_en: string;
+  simulation_enabled: boolean;
+  simulation_allowed: boolean;
+  product_mode: "production" | "development";
+  production_mode: boolean;
+  simulated_dataset_id: string;
 };
 
 export type HardwareSetupCheckStatus = "passed" | "failed" | "warning" | string;
@@ -405,6 +421,8 @@ export type RunManifest = {
   run_id: string;
   dataset_id: string;
   measurement_definition: MeasurementDefinition;
+  runtime_source?: "real_hardware" | "simulated_material" | string;
+  product_mode?: "production" | "development" | string;
   operator_data_source?: "real_camera" | "offline_dataset" | string;
   provenance?: SourceProvenance;
   frame_records: FrameRecord[];
@@ -422,6 +440,19 @@ export type CurvePoint = {
   y: number;
   frame_index: number;
   sync_status: string | null;
+};
+
+export type GroupedTemperaturePoint = {
+  bin_key: number;
+  temperature_celsius: number;
+  distance_px: number;
+  sample_count: number;
+  minimum_distance_px: number;
+  maximum_distance_px: number;
+  first_frame_index: number;
+  last_frame_index: number;
+  representative_frame_index: number;
+  temperature_group_bin_celsius: number;
 };
 
 export type LivePointStatus = {
@@ -456,6 +487,7 @@ export type RegionResult = {
   curve_points: RegionCurvePoints;
   live_point_status?: LivePointStatus;
   afas_preprocessing?: Record<string, unknown>;
+  grouped_temperature_point_update?: GroupedTemperaturePoint | null;
 };
 
 export type RegionOverlay = {
@@ -483,6 +515,8 @@ export type ExportArtifact = {
 export type AnalysisResult = {
   analysis_id: string;
   run_id: string;
+  runtime_source?: "real_hardware" | "simulated_material" | string;
+  product_mode?: "production" | "development" | string;
   operator_data_source?: "real_camera" | "offline_dataset" | string;
   provenance?: SourceProvenance;
   all_frames: DetectionResult[];
@@ -595,8 +629,51 @@ export type LiveOfflineFrameEvent = {
 
 export type LiveOfflineCompleteEvent = {
   event: "complete";
-  run_manifest: RunManifest;
-  analysis_result: AnalysisResult;
+  run_id: string;
+  state: "READY" | string;
+  run_manifest?: RunManifest;
+  analysis_result?: AnalysisResult;
+};
+
+export type RunCompletion = { run_id: string; state: string };
+
+export type RunStateV2 = {
+  schema_version: 2;
+  run_id: string;
+  state: "RUNNING" | "STOP_REQUESTED" | "FINALIZING" | "READY" | "ERROR";
+  stage: string;
+  processed_frames: number;
+  region_count: number;
+  stop_reason: string;
+  error: string | null;
+};
+
+export type RunSummaryV2 = {
+  run_meta: {
+    schema_version: 2;
+    run_id: string;
+    dataset_id: string;
+    runtime_source: string;
+    product_mode: string;
+    operator_data_source: string;
+    provenance: SourceProvenance;
+    measurement_definition: MeasurementDefinition;
+    config_snapshot: Record<string, unknown>;
+    software: Record<string, unknown>;
+    created_at: string;
+  };
+  run_state: RunStateV2;
+  analysis_summary: {
+    analysis_id: string;
+    run_id: string;
+    runtime_source: string;
+    product_mode: string;
+    operator_data_source: string;
+    provenance: SourceProvenance;
+    regions: RegionAnalysisResult[];
+    counts: Record<string, number>;
+    created_at: string;
+  };
 };
 
 export type LiveOfflineProgressEvent = {
@@ -688,6 +765,8 @@ export type ImportedFrameSummary = {
 export type ImportedRunView = {
   filename: string;
   warnings: string[];
+  runtime_source?: "real_hardware" | "simulated_material" | string;
+  product_mode?: "production" | "development" | string;
   operator_data_source?: "real_camera" | "offline_dataset" | string;
   provenance?: SourceProvenance;
   run_manifest: RunManifest | null;
@@ -1010,7 +1089,7 @@ export async function streamLiveOfflineRun(
   measurementDefinition: MeasurementDefinition,
   options: { startFrame: number; maxFrames?: number; targetFps: number; signal?: AbortSignal },
   onEvent: (event: LiveOfflineRunStreamEvent) => void
-): Promise<RunResponse> {
+): Promise<RunCompletion> {
   const response = await fetch(`${API_BASE}/api/live-offline-runs/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1034,7 +1113,7 @@ export async function streamLiveOfflineRun(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
-  let complete: RunResponse | null = null;
+  let complete: RunCompletion | null = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -1050,10 +1129,7 @@ export async function streamLiveOfflineRun(
         throw new Error(event.message);
       }
       if (event.event === "complete") {
-        complete = {
-          run_manifest: event.run_manifest,
-          analysis_result: event.analysis_result
-        };
+        complete = { run_id: event.run_id, state: event.state };
       }
     }
 
@@ -1067,10 +1143,7 @@ export async function streamLiveOfflineRun(
       throw new Error(event.message);
     }
     if (event.event === "complete") {
-      complete = {
-        run_manifest: event.run_manifest,
-        analysis_result: event.analysis_result
-      };
+      complete = { run_id: event.run_id, state: event.state };
     }
   }
 
@@ -1086,6 +1159,10 @@ export async function previewRealCamera(): Promise<CameraPreviewResponse> {
 
 export async function getOperatorSourceStatus(options: { signal?: AbortSignal } = {}): Promise<OperatorSourceStatus> {
   return requestJson<OperatorSourceStatus>("/api/operator/source-status", { signal: options.signal });
+}
+
+export async function getAppRuntime(): Promise<AppRuntime> {
+  return requestJson<AppRuntime>("/api/app/runtime");
 }
 
 export async function getHardwareProfile(): Promise<Record<string, unknown>> {
@@ -1215,7 +1292,7 @@ export async function streamRealCameraRun(
     operatorDataSource?: "real_camera" | "offline_dataset";
   },
   onEvent: (event: RealCameraRunStreamEvent) => void
-): Promise<RunResponse> {
+): Promise<RunResponse | RunCompletion> {
   const response = await fetch(`${API_BASE}/api/real-camera-runs/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1240,7 +1317,7 @@ export async function streamRealCameraRun(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
-  let complete: RunResponse | null = null;
+  let complete: RunResponse | RunCompletion | null = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -1256,10 +1333,9 @@ export async function streamRealCameraRun(
         throw new Error(event.message);
       }
       if (event.event === "complete") {
-        complete = {
-          run_manifest: event.run_manifest,
-          analysis_result: event.analysis_result
-        };
+        complete = event.run_manifest && event.analysis_result
+          ? { run_manifest: event.run_manifest, analysis_result: event.analysis_result }
+          : { run_id: event.run_id, state: event.state };
       }
     }
 
@@ -1273,10 +1349,9 @@ export async function streamRealCameraRun(
       throw new Error(event.message);
     }
     if (event.event === "complete") {
-      complete = {
-        run_manifest: event.run_manifest,
-        analysis_result: event.analysis_result
-      };
+      complete = event.run_manifest && event.analysis_result
+        ? { run_manifest: event.run_manifest, analysis_result: event.analysis_result }
+        : { run_id: event.run_id, state: event.state };
     }
   }
 
@@ -1461,6 +1536,7 @@ function normalizeStreamEvent(
     };
   }
   if (event.event === "complete") {
+    if (!event.run_manifest || !event.analysis_result) return event;
     return {
       ...event,
       run_manifest: normalizeRunManifest(event.run_manifest),
@@ -1559,6 +1635,68 @@ export async function getRun(runId: string): Promise<RunResponse> {
   return normalizeRunResponse(await requestJson<RunResponse>(`/api/runs/${runId}`));
 }
 
+export async function stopRun(runId: string): Promise<RunStateV2 & { stop_requested: boolean }> {
+  return requestJson<RunStateV2 & { stop_requested: boolean }>(`/api/runs/${runId}/stop`, { method: "POST" });
+}
+
+export async function getRunStatus(runId: string): Promise<RunStateV2> {
+  return requestJson<RunStateV2>(`/api/runs/${runId}/status`);
+}
+
+export async function getRunSummary(runId: string): Promise<RunSummaryV2> {
+  return requestJson<RunSummaryV2>(`/api/runs/${runId}/summary`);
+}
+
+export function runResponseFromSummary(summary: RunSummaryV2): RunResponse {
+  const regions = summary.analysis_summary.regions.map((region) => normalizeRegionAnalysis(region));
+  const first = [...regions].sort((left, right) => left.region_index - right.region_index)[0];
+  const analysis = normalizeAnalysisRegions({
+    analysis_id: summary.analysis_summary.analysis_id,
+    run_id: summary.analysis_summary.run_id,
+    runtime_source: summary.analysis_summary.runtime_source,
+    product_mode: summary.analysis_summary.product_mode,
+    operator_data_source: summary.analysis_summary.operator_data_source,
+    provenance: summary.analysis_summary.provenance,
+    all_frames: [],
+    distance_time: first?.distance_time ?? [],
+    raw_distance_time: first?.raw_distance_time ?? [],
+    stabilized_distance_time: first?.stabilized_distance_time ?? [],
+    temperature_time: first?.temperature_time ?? [],
+    temperature_distance: first?.temperature_distance ?? [],
+    raw_temperature_distance: first?.raw_temperature_distance ?? [],
+    stabilized_temperature_distance: first?.stabilized_temperature_distance ?? [],
+    afas_preprocessing: first?.afas_preprocessing ?? {},
+    afas_analysis: first?.afas_analysis ?? {},
+    regions,
+    export_artifacts: [],
+    created_at: summary.analysis_summary.created_at
+  });
+  return {
+    run_manifest: {
+      run_id: summary.run_meta.run_id,
+      dataset_id: summary.run_meta.dataset_id,
+      measurement_definition: normalizeApiMeasurementDefinition(summary.run_meta.measurement_definition),
+      runtime_source: summary.run_meta.runtime_source,
+      product_mode: summary.run_meta.product_mode,
+      operator_data_source: summary.run_meta.operator_data_source,
+      provenance: summary.run_meta.provenance,
+      frame_records: [],
+      temperature_records: [],
+      detection_results: [],
+      region_detection_results: [],
+      export_artifacts: [],
+      created_at: summary.run_meta.created_at,
+      config_snapshot: {
+        ...summary.run_meta.config_snapshot,
+        processed_frames: summary.run_state.processed_frames,
+        stop_reason: summary.run_state.stop_reason
+      },
+      software: summary.run_meta.software
+    },
+    analysis_result: analysis
+  };
+}
+
 export async function getRunAvailability(runId: string): Promise<RunAvailability> {
   return requestJson<RunAvailability>(`/api/runs/${runId}/availability`);
 }
@@ -1566,6 +1704,7 @@ export async function getRunAvailability(runId: string): Promise<RunAvailability
 export async function recomputeRunAnalysis(
   runId: string,
   parameters: {
+    region_id?: string;
     afas_preprocessing_parameters: AfasPreprocessingParameters;
     afas_analysis_parameters: AfasAnalysisParameters;
   }

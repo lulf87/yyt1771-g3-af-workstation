@@ -131,14 +131,28 @@ def preprocess_temperature_distance(
     raw_values = np.asarray([point.y for point in temperature_distance], dtype=float)
     raw_frame_indexes = [int(point.frame_index) for point in temperature_distance]
 
-    grouped_temperatures = raw_temperatures
-    grouped_values = raw_values
+    grouped_points = [
+        {
+            "bin_key": index,
+            "temperature_celsius": float(point.x),
+            "distance_px": float(point.y),
+            "sample_count": 1,
+            "minimum_distance_px": float(point.y),
+            "maximum_distance_px": float(point.y),
+            "first_frame_index": int(point.frame_index),
+            "last_frame_index": int(point.frame_index),
+            "representative_frame_index": int(point.frame_index),
+        }
+        for index, point in enumerate(temperature_distance)
+        if np.isfinite(point.x) and np.isfinite(point.y)
+    ]
     if parameters.group_by_temperature:
-        grouped_temperatures, grouped_values = group_by_temperature(
-            raw_temperatures,
-            raw_values,
+        grouped_points = group_temperature_curve_points(
+            temperature_distance,
             bin_celsius=parameters.temperature_group_bin_celsius,
         )
+    grouped_temperatures = np.asarray([point["temperature_celsius"] for point in grouped_points], dtype=float)
+    grouped_values = np.asarray([point["distance_px"] for point in grouped_points], dtype=float)
 
     repaired_temperatures, repaired_values, outlier_mask = remove_outliers(
         grouped_temperatures,
@@ -191,9 +205,22 @@ def preprocess_temperature_distance(
     if smoothing_warning is not None:
         warnings.append(smoothing_warning)
 
+    repaired_points = [
+        {**point, "distance_px": float(repaired_values[index]), "outlier": bool(outlier_mask[index])}
+        for index, point in enumerate(grouped_points)
+    ]
+    smoothed_points = [
+        {**point, "distance_px": float(smoothed_values[index])}
+        for index, point in enumerate(grouped_points)
+    ]
     return {
         "schema_version": AFAS_PREPROCESSING_SCHEMA_VERSION,
         "parameters": parameters.to_payload(),
+        "raw_point_count": len(raw_temperatures),
+        "grouped_point_count": len(grouped_points),
+        "grouped_temperature_points": grouped_points,
+        "repaired_temperature_points": repaired_points,
+        "smoothed_temperature_points": smoothed_points,
         "analysis_defaults": dict(DEFAULT_AFAS_ANALYSIS_PARAMETERS),
         "raw": {
             "temperature_celsius": raw_temperatures.tolist(),
@@ -398,6 +425,75 @@ def group_by_temperature(
     sums = np.zeros(len(unique_temperatures), dtype=float)
     np.add.at(sums, inverse_indexes, sorted_values)
     return unique_temperatures, sums / counts
+
+
+def canonical_temperature_bin_key(temperature_celsius: float, bin_celsius: float) -> int:
+    """Return the stable integer key used by backend, stream payloads, and persisted summaries."""
+    bin_size = float(bin_celsius)
+    if not np.isfinite(temperature_celsius) or not np.isfinite(bin_size) or bin_size <= 0:
+        raise ValueError("temperature and bin_celsius must be finite, with bin_celsius > 0")
+    return int(np.rint(float(temperature_celsius) / bin_size))
+
+
+def group_temperature_curve_points(
+    points: Sequence[CurvePoint],
+    *,
+    bin_celsius: float = DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS,
+) -> list[dict[str, Any]]:
+    """Aggregate formal frame points once per canonical temperature bucket."""
+    bins: dict[int, list[CurvePoint]] = {}
+    for point in points:
+        if not np.isfinite(point.x) or not np.isfinite(point.y):
+            continue
+        key = canonical_temperature_bin_key(float(point.x), bin_celsius)
+        bins.setdefault(key, []).append(point)
+    grouped: list[dict[str, Any]] = []
+    decimals = max(0, int(np.ceil(-np.log10(float(bin_celsius)))) + 2)
+    for key in sorted(bins):
+        samples = bins[key]
+        values = [float(point.y) for point in samples]
+        frames = [int(point.frame_index) for point in samples]
+        grouped.append({
+            "bin_key": key,
+            "temperature_celsius": float(round(key * float(bin_celsius), decimals)),
+            "distance_px": float(sum(values) / len(values)),
+            "sample_count": len(values),
+            "minimum_distance_px": min(values),
+            "maximum_distance_px": max(values),
+            "first_frame_index": min(frames),
+            "last_frame_index": max(frames),
+            "representative_frame_index": int(round(sum(frames) / len(frames))),
+        })
+    return grouped
+
+
+def upsert_grouped_temperature_point(
+    current: Mapping[str, Any] | None,
+    point: CurvePoint,
+    *,
+    bin_celsius: float = DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS,
+) -> dict[str, Any]:
+    key = canonical_temperature_bin_key(float(point.x), bin_celsius)
+    frame_index = int(point.frame_index)
+    if current is None:
+        return group_temperature_curve_points([point], bin_celsius=bin_celsius)[0]
+    if int(current["bin_key"]) != key:
+        raise ValueError("cannot update a grouped point with a different temperature bin")
+    count = int(current["sample_count"])
+    distance = float(point.y)
+    next_count = count + 1
+    return {
+        **dict(current),
+        "distance_px": (float(current["distance_px"]) * count + distance) / next_count,
+        "sample_count": next_count,
+        "minimum_distance_px": min(float(current["minimum_distance_px"]), distance),
+        "maximum_distance_px": max(float(current["maximum_distance_px"]), distance),
+        "first_frame_index": min(int(current["first_frame_index"]), frame_index),
+        "last_frame_index": max(int(current["last_frame_index"]), frame_index),
+        "representative_frame_index": int(round(
+            (int(current["representative_frame_index"]) * count + frame_index) / next_count
+        )),
+    }
 
 
 def remove_outliers(

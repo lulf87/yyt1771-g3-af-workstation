@@ -115,3 +115,17 @@ run:
     assert config.temp.simulated_start_celsius == 23.5
     assert config.temp.simulated_step_celsius == 0.25
     assert config.run.temp_sync_target_ms == 10.0
+
+
+def test_simulated_dataset_environment_overrides_profile_dataset(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    config_path = tmp_path / "simulated.yaml"
+    config_path.write_text(
+        "camera:\n  backend: simulated\n  simulated_dataset_id: golden_a_20260522_dev_lab\n"
+        "temp:\n  backend: simulated\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YYT1771_G3_SIMULATED_DATASET_ID", "golden_c_20260529_dev_lab")
+
+    config = load_hardware_config(config_path)
+
+    assert config.camera.simulated_dataset_id == "golden_c_20260529_dev_lab"

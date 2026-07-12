@@ -13,9 +13,24 @@ from matplotlib import pyplot as plt  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
 from yyt1771_g3.core.coordinates import roi_local_to_measurement_point
-from yyt1771_g3.core.enums import CurvePointStatus, DetectionStatus
-from yyt1771_g3.core.models import AnalysisResult, DetectionResult, ExportArtifact, RegionAnalysisResult, RunManifest
+from yyt1771_g3.core.enums import CurvePointStatus, DetectionStatus, TemperatureSyncStatus
+from yyt1771_g3.core.models import (
+    ABPoint,
+    ABPoints,
+    AnalysisResult,
+    DetectionCandidate,
+    DetectionQuality,
+    DetectionResult,
+    ExportArtifact,
+    FrameRecord,
+    MeasurementDefinition,
+    RegionAnalysisResult,
+    RunManifest,
+    TemperatureRecord,
+)
 from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.afas_analysis import group_temperature_curve_points
+from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 from yyt1771_g3.storage.run_store import RunStore
 
 
@@ -50,11 +65,15 @@ REGION_CSV_FIELDS = ["region_id", "region_index", "region_label", "region_color"
 
 
 def export_run(run_store: RunStore, run_id: str) -> list[ExportArtifact]:
-    manifest = run_store.read_run_manifest(run_id)
-    try:
-        analysis = run_store.read_analysis_result(run_id)
-    except FileNotFoundError:
-        analysis = build_analysis_result(manifest)
+    is_v2 = run_store.schema_version(run_id) == 2
+    if is_v2:
+        manifest, analysis = load_v2_export_models(run_store, run_id)
+    else:
+        manifest = run_store.read_run_manifest(run_id)
+        try:
+            analysis = run_store.read_analysis_result(run_id)
+        except FileNotFoundError:
+            analysis = build_analysis_result(manifest)
     export_dir = run_store.run_dir(run_id) / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -74,9 +93,134 @@ def export_run(run_store: RunStore, run_id: str) -> list[ExportArtifact]:
     artifacts.extend(_write_region_curve_pngs(export_dir, analysis))
     manifest = manifest.model_copy(update={"export_artifacts": artifacts})
     analysis = analysis.model_copy(update={"export_artifacts": artifacts})
-    run_store.write_run_manifest(manifest)
-    run_store.write_analysis_result(analysis)
+    if not is_v2:
+        run_store.write_run_manifest(manifest)
+        run_store.write_analysis_result(analysis)
     return artifacts
+
+
+def load_v2_export_models(run_store: RunStore, run_id: str) -> tuple[RunManifest, AnalysisResult]:
+    meta = run_store.read_run_meta(run_id)
+    state = run_store.read_run_state(run_id)
+    summary = run_store.read_analysis_summary(run_id)
+    measurement = MeasurementDefinition.model_validate(meta.measurement_definition)
+    regions_by_id = {region.region_id: region for region in measurement.enabled_regions}
+    frame_records: list[FrameRecord] = []
+    temperature_records: list[TemperatureRecord] = []
+    detections: list[DetectionResult] = []
+    with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
+        for row in database.all_frames():
+            frame_records.append(FrameRecord(
+                frame_index=row["frame_index"],
+                shape=json.loads(row["shape_json"]),
+                dtype=row["dtype"],
+                source=row["frame_source"],
+                frame_path=row["frame_path"],
+                raw_frame_saved=bool(row["raw_frame_saved"]),
+                preview_path=row["preview_path"],
+                timestamp_ms=row["frame_timestamp_ms"],
+            ))
+            temperature_records.append(TemperatureRecord(
+                timestamp_ms=row["temperature_timestamp_ms"],
+                celsius=row["temperature_celsius"],
+                source=row["temperature_source"],
+                sampled_this_frame=bool(row["sampled_this_frame"]),
+            ))
+        for region in measurement.enabled_regions:
+            detections.extend(
+                _v2_detection_from_row(row, region)
+                for row in database.iter_region_results(region.region_id)
+            )
+    first_region_id = measurement.enabled_regions[0].region_id
+    legacy = [result for result in detections if result.region_id == first_region_id]
+    manifest = RunManifest(
+        run_id=run_id,
+        dataset_id=meta.dataset_id,
+        measurement_definition=measurement,
+        runtime_source=meta.runtime_source,
+        product_mode=meta.product_mode,
+        operator_data_source=meta.operator_data_source,
+        provenance=meta.provenance,
+        frame_records=frame_records,
+        temperature_records=temperature_records,
+        detection_results=legacy,
+        region_detection_results=detections,
+        config_snapshot={**meta.config_snapshot, "schema_version": 2, "processed_frames": state.processed_frames, "stop_reason": state.stop_reason},
+        software=meta.software,
+    )
+    region_analyses = [
+        RegionAnalysisResult.model_validate({
+            "all_frames": [],
+            **{key: value for key, value in region.items() if key not in {"latest_result", "status_events"}},
+        })
+        for region in summary.regions
+    ]
+    analysis = AnalysisResult(
+        analysis_id=summary.analysis_id,
+        run_id=run_id,
+        runtime_source=summary.runtime_source,
+        product_mode=summary.product_mode,
+        operator_data_source=summary.operator_data_source,
+        provenance=summary.provenance,
+        regions=region_analyses,
+    )
+    return manifest, analysis
+
+
+def _v2_detection_from_row(row: dict[str, object], region) -> DetectionResult:  # noqa: ANN001
+    def points(prefix: str) -> ABPoints | None:
+        values = [row.get(f"{prefix}_{suffix}") for suffix in ("a_x", "a_y", "b_x", "b_y")]
+        if any(value is None for value in values):
+            return None
+        return ABPoints(
+            a=ABPoint(x=float(values[0]), y=float(values[1])),
+            b=ABPoint(x=float(values[2]), y=float(values[3])),
+        )
+
+    formal = points("formal")
+    status = DetectionStatus(str(row["detection_status"]))
+    candidate = None
+    if status == DetectionStatus.VALID and formal is not None:
+        candidate = DetectionCandidate(
+            candidate_id=f"v2-{row['frame_index']}-{row['region_id']}",
+            axis_position_px=0.0,
+            width_px=float(row["formal_distance_px"]),
+            a=formal.a,
+            b=formal.b,
+            confidence=float(row.get("confidence") or 0.0),
+        )
+    return DetectionResult(
+        frame_index=int(row["frame_index"]),
+        region_id=str(row["region_id"]),
+        region_index=region.index,
+        region_label=region.label,
+        region_color=region.color,
+        detection_status=status,
+        ab_points=formal,
+        distance_px=row.get("formal_distance_px"),
+        raw_ab_points=points("raw"),
+        raw_distance_px=row.get("raw_distance_px"),
+        stabilized_ab_points=points("stabilized"),
+        stabilized_distance_px=row.get("stabilized_distance_px"),
+        result_display_source=str(row["result_display_source"]),
+        selected_candidate=candidate,
+        quality=DetectionQuality(confidence=float(row.get("confidence") or 0.0)),
+        curve_point_status=CurvePointStatus(str(row["curve_point_status"])),
+        curve_exclusion_reason=str(row.get("curve_exclusion_reason") or ""),
+        rejected_reason=str(row.get("rejected_reason") or ""),
+        distance_outlier_filtered=bool(row.get("distance_outlier_filtered")),
+        distance_outlier_baseline_px=row.get("distance_outlier_baseline_px"),
+        distance_outlier_deviation_px=row.get("distance_outlier_deviation_px"),
+        distance_outlier_max_jump_px=row.get("distance_outlier_max_jump_px"),
+        distance_outlier_reference_count=row.get("distance_outlier_reference_count"),
+        frame_timestamp_ms=row.get("frame_timestamp_ms"),
+        temperature_timestamp_ms=row.get("temperature_timestamp_ms"),
+        temperature_celsius=row.get("temperature_celsius"),
+        temperature_delta_ms=row.get("temperature_delta_ms"),
+        temperature_source=str(row.get("temperature_source") or ""),
+        temperature_sampled_this_frame=bool(row.get("sampled_this_frame")),
+        temperature_sync_status=TemperatureSyncStatus(str(row.get("temperature_sync_status") or "TEMP_SYNC_MISSING")),
+    )
 
 
 def export_run_bundle(run_store: RunStore, run_id: str) -> Path:
@@ -89,6 +233,14 @@ def export_run_bundle(run_store: RunStore, run_id: str) -> Path:
             if not artifact_path.is_file():
                 raise FileNotFoundError(f"Export artifact missing: {artifact_path}")
             archive.write(artifact_path, arcname=str(artifact_path.relative_to(export_dir)))
+        if run_store.schema_version(run_id) == 2:
+            for core_path in (
+                run_store.run_meta_path(run_id),
+                run_store.run_state_path(run_id),
+                run_store.results_database_path(run_id),
+                run_store.analysis_summary_path(run_id),
+            ):
+                archive.write(core_path, arcname=core_path.name)
     return bundle_path
 
 
@@ -219,10 +371,17 @@ def _all_region_results(manifest: RunManifest) -> list[DetectionResult]:
 
 def _write_json(export_dir: Path, manifest: RunManifest, analysis: AnalysisResult) -> ExportArtifact:
     path = export_dir / "run_export.json"
+    schema_version = int(manifest.config_snapshot.get("schema_version", 1))
+    export_manifest = manifest
+    if schema_version == 2:
+        export_manifest = manifest.model_copy(update={"detection_results": [], "region_detection_results": []})
     payload = {
+        "schema_version": schema_version,
+        "runtime_source": manifest.runtime_source,
+        "product_mode": manifest.product_mode,
         "operator_data_source": manifest.operator_data_source,
         "provenance": manifest.provenance,
-        "run_manifest": manifest.model_dump(mode="json"),
+        "run_manifest": export_manifest.model_dump(mode="json"),
         "analysis_result": analysis.model_dump(mode="json"),
     }
     source_notice = _source_notice(manifest)
@@ -262,10 +421,11 @@ def _write_analysis_by_region_json(export_dir: Path, analysis: AnalysisResult) -
 def _write_curve_png(export_dir: Path, analysis: AnalysisResult) -> ExportArtifact:
     path = export_dir / "temperature_distance.png"
     fig, ax = plt.subplots(figsize=(6, 4), dpi=140)
-    if analysis.temperature_distance:
+    points = _formal_plot_points(analysis.afas_preprocessing, analysis.temperature_distance)
+    if points:
         ax.plot(
-            [point.x for point in analysis.temperature_distance],
-            [point.y for point in analysis.temperature_distance],
+            [point[0] for point in points],
+            [point[1] for point in points],
             color="#2563eb",
             linewidth=1.8,
         )
@@ -296,25 +456,14 @@ def _write_region_curve_pngs(export_dir: Path, analysis: AnalysisResult) -> list
 def _save_region_curve_figure(path: Path, regions: list[RegionAnalysisResult]) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5), dpi=140)
     for region in sorted(regions, key=lambda item: item.region_index):
-        if region.temperature_distance:
+        points = _formal_plot_points(region.afas_preprocessing, region.temperature_distance)
+        if points:
             ax.plot(
-                [point.x for point in region.temperature_distance],
-                [point.y for point in region.temperature_distance],
+                [point[0] for point in points],
+                [point[1] for point in points],
                 color=region.color,
                 linewidth=1.8,
                 label=_plot_region_label(region),
-            )
-        smoothed = region.afas_preprocessing.get("smoothed", {})
-        temperatures = smoothed.get("temperature_celsius")
-        values = smoothed.get("values")
-        if isinstance(temperatures, list) and isinstance(values, list) and temperatures and values:
-            ax.plot(
-                temperatures,
-                values,
-                color=region.color,
-                linewidth=2.2,
-                alpha=0.55,
-                linestyle="--",
             )
     ax.set_xlabel("temperature_celsius")
     ax.set_ylabel("distance_px")
@@ -324,6 +473,23 @@ def _save_region_curve_figure(path: Path, regions: list[RegionAnalysisResult]) -
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
+
+
+def _formal_plot_points(preprocessing: dict[str, Any], raw_points: list[CurvePoint]) -> list[tuple[float, float]]:
+    for key in ("smoothed_temperature_points", "repaired_temperature_points", "grouped_temperature_points"):
+        series = preprocessing.get(key)
+        if isinstance(series, list) and series:
+            return [
+                (float(point["temperature_celsius"]), float(point["distance_px"]))
+                for point in series if isinstance(point, dict)
+            ]
+    smoothed = preprocessing.get("smoothed", {})
+    temperatures = smoothed.get("temperature_celsius") if isinstance(smoothed, dict) else None
+    values = smoothed.get("values") if isinstance(smoothed, dict) else None
+    if isinstance(temperatures, list) and isinstance(values, list) and temperatures and values:
+        return [(float(x), float(y)) for x, y in zip(temperatures, values)]
+    grouped = group_temperature_curve_points(raw_points)
+    return [(point["temperature_celsius"], point["distance_px"]) for point in grouped]
 
 
 def _write_overlay_png(export_dir: Path, manifest: RunManifest) -> ExportArtifact:
@@ -416,7 +582,10 @@ def _write_parameters_json(
 ) -> ExportArtifact:
     path = export_dir / "parameters.json"
     payload = {
+        "schema_version": int(manifest.config_snapshot.get("schema_version", 1)),
         "measurement_definition": manifest.measurement_definition.model_dump(mode="json"),
+        "runtime_source": manifest.runtime_source,
+        "product_mode": manifest.product_mode,
         "operator_data_source": manifest.operator_data_source,
         "provenance": manifest.provenance,
         "afas_parameters_by_region": [

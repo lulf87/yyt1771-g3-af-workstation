@@ -29,7 +29,7 @@ test("operator mode has a fresh current-frame probe handler", () => {
   assert.doesNotMatch(handler, /requireSetupFrameDataUrl/);
 });
 
-test("operator current-frame probe dispatches real camera only", () => {
+test("operator current-frame probe dispatches the startup-selected runtime source", () => {
   const dispatcher = sourceSlice(
     "async function runOperatorProbeCurrentFrame()",
     "async function startLiveOfflineRun("
@@ -37,7 +37,8 @@ test("operator current-frame probe dispatches real camera only", () => {
 
   assert.match(mainSource, /function readInitialOperatorDataSource\(\): OperatorDataSource \{\s+return "real_camera";\s+\}/);
   assert.doesNotMatch(dispatcher, /operatorDataSource === "offline_dataset"/);
-  assert.doesNotMatch(dispatcher, /await runProbe\(frameIndex\);/);
+  assert.match(dispatcher, /appRuntime\?\.runtime_source === "simulated_material"/);
+  assert.match(dispatcher, /await runProbe\(frameIndex\);/);
   assert.match(dispatcher, /if \(!operatorRealHardwareAvailable\)/);
   assert.match(dispatcher, /await runOperatorRealCameraSetupProbe\(\);/);
 });
@@ -58,7 +59,7 @@ test("operator run page receives probe state and wires the current-frame probe b
   assert.match(operatorPage, /const operatorRunActive = runningCamera \|\| runningOffline;/);
   assert.match(
     operatorPage,
-    /const probeCurrentFrameDisabled =\s+probing \|\| operatorRunActive \|\| !hasMeasurementRoi \|\| !realHardwareAvailable;/
+    /const probeCurrentFrameDisabled =\s+probing \|\| operatorRunActive \|\| !hasMeasurementRoi \|\| !sourceAvailable;/
   );
   assert.match(operatorPage, /disabled=\{probeCurrentFrameDisabled\}/);
   assert.match(operatorPage, /onClick=\{onProbeRealCameraSetup\}/);
@@ -81,10 +82,10 @@ test("operator real-camera mode requires real hardware before showing frames or 
   assert.match(operatorPage, /const realHardwareAvailable = operatorSourceStatus\?\.real_hardware_available === true && !temperatureHardwareUnavailable;/);
   assert.doesNotMatch(operatorPage, /canUseOfflineDataset/);
   assert.doesNotMatch(operatorPage, /isOfflineSource/);
-  assert.match(operatorPage, /!realHardwareAvailable \? \(/);
+  assert.match(operatorPage, /!simulatedMode && !realHardwareAvailable \? \(/);
   assert.match(operatorPage, /<RealHardwareUnavailableCard/);
-  assert.match(operatorPage, /const startDisabled = operatorRunActive \|\| !realHardwareAvailable/);
-  assert.match(operatorPage, /title=\{!realHardwareAvailable \? t\("Real hardware unavailable"\) : undefined\}/);
+  assert.match(operatorPage, /const startDisabled = operatorRunActive \|\| !sourceAvailable/);
+  assert.match(operatorPage, /title=\{!sourceAvailable \? t\("Real hardware unavailable"\) : undefined\}/);
   assert.doesNotMatch(operatorPage, /activeFrameUrl/);
 });
 
@@ -107,6 +108,38 @@ test("operator current-frame probe result drives image overlay without engineeri
   assert.doesNotMatch(operatorPage, /operatorSourceWarning/);
   assert.doesNotMatch(operatorPage, /SetupProbeStatus/);
   assert.doesNotMatch(operatorPage, /Probe Result/);
+});
+
+test("simulated operator startup displays the selected material before probing", () => {
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(mainSource, /startupFrameUrl=\{activeFrameUrl\}/);
+  assert.match(operatorPage, /startupFrameUrl: string;/);
+  assert.match(
+    operatorPage,
+    /cameraPreviewUrl \|\| \(simulatedMode \? startupFrameUrl : ""\)/
+  );
+});
+
+test("simulated stop finalizes the existing run without replaying processed frames", () => {
+  const startHandler = sourceSlice(
+    "async function startLiveOfflineRun(",
+    "function stopLiveOfflineRun()"
+  );
+  const stopHandler = sourceSlice(
+    "function stopLiveOfflineRun()",
+    "function chooseSetupSource("
+  );
+
+  assert.doesNotMatch(startHandler, /waitForStoppedRun/);
+  assert.doesNotMatch(startHandler, /createLiveOfflineRun/);
+  assert.match(startHandler, /getRunSummary\(completion\.run_id\)/);
+  assert.match(stopHandler, /stopRun\(runId\)/);
+  assert.doesNotMatch(stopHandler, /runAbortRef\.current\?\.abort\(\);\s*$/m);
+  assert.match(mainSource, /Finalizing saved results/);
 });
 
 test("imported simulated exports keep a visible source warning", () => {

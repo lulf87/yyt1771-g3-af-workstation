@@ -1,5 +1,23 @@
 # G3 Production Device Setup
 
+## Production Runtime Contract
+
+Production delivery uses one actual-use Operator UI and selects acquisition source before backend startup. Engineering mode, offline dataset selection, and source switching are not exposed in the normal browser entry.
+
+```bash
+YYT1771_G3_RUNTIME_SOURCE=real_hardware \
+YYT1771_G3_PRODUCT_MODE=production \
+scripts/g3_start.sh real
+```
+
+For development demonstrations only:
+
+```bash
+YYT1771_G3_PRODUCT_MODE=development scripts/g3_start.sh sim
+```
+
+Production rejects simulated-material startup. Real-hardware mode requires a real camera and real temperature backend and never falls back to simulated devices. If either device is unavailable or the profile is simulated, Probe and Start stay disabled and Device setup remains available.
+
 This document describes the production first-run binding flow for a new G3 workstation computer.
 
 ## When To Run Device Setup
@@ -17,7 +35,7 @@ Run `设备设置 / Device setup` the first time the software is installed on a 
 - Bind Hikrobot cameras by `serial_number` first.
 - Save the camera IP as diagnostic connection metadata, but do not rely on IP as the primary identity when a serial number is available.
 - Production Operator mode only accepts supported camera models from `camera.allowed_models`.
-- Engineering mode may still be used for diagnostics and broader hardware investigation.
+- Engineering implementation may remain in development branches, but production UI has no Engineering entry.
 - Do not manually edit `configs/hardware/*.example.yaml`.
 - Do not commit local hardware YAML to Git.
 
