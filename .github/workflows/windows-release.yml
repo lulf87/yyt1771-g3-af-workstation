@@ -8,6 +8,8 @@ on:
         required: true
         default: 0.1.0
   push:
+    branches:
+      - codex/windows-zero-env-installer
     tags:
       - "v*"
 
@@ -31,7 +33,10 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ inputs.version }}"
-          if (-not $version) { $version = "${{ github.ref_name }}".TrimStart("v") }
+          if (-not $version -and "${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}".TrimStart("v")
+          }
+          if (-not $version) { $version = "0.1.0-dev.${{ github.run_number }}" }
           "G3_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build portable package and installer
         shell: pwsh
