@@ -51,6 +51,7 @@ from yyt1771_g3.services.hardware_setup_service import (
     build_hardware_environment_report,
     discover_hardware_cameras,
     save_hardware_binding,
+    save_hardware_sdk_paths,
 )
 from yyt1771_g3.services.import_service import RunExportImportError, import_run_export_bytes
 from yyt1771_g3.services.run_control_service import run_controls
@@ -440,6 +441,12 @@ class HardwareTemperatureBindingRequest(BaseModel):
 class HardwareBindingRequest(BaseModel):
     camera: HardwareCameraBindingRequest
     temperature: HardwareTemperatureBindingRequest
+    config_path: str | None = None
+
+
+class HardwareSdkPathsRequest(BaseModel):
+    sdk_python_paths: list[str]
+    sdk_library_path: str
     config_path: str | None = None
 
 
@@ -1008,6 +1015,28 @@ def get_hardware_profile() -> dict[str, Any]:
 @app.get("/api/hardware/setup/environment")
 def get_hardware_setup_environment() -> dict[str, Any]:
     return build_hardware_environment_report(_hardware_config())
+
+
+@app.post("/api/hardware/setup/sdk-paths")
+def save_hardware_sdk_paths_endpoint(request: HardwareSdkPathsRequest) -> dict[str, Any]:
+    try:
+        result = save_hardware_sdk_paths(
+            sdk_python_paths=request.sdk_python_paths,
+            sdk_library_path=request.sdk_library_path,
+            path=request.config_path,
+        )
+        saved_config_path = str(result["config_path"])
+        os.environ[HARDWARE_CONFIG_ENV] = saved_config_path
+        saved_config = load_hardware_config(saved_config_path)
+        return {
+            **result,
+            "environment": build_hardware_environment_report(saved_config),
+        }
+    except HardwareSetupError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "details": exc.details},
+        ) from exc
 
 
 @app.get("/api/hardware/cameras")

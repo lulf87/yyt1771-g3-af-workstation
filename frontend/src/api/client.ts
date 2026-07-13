@@ -221,6 +221,14 @@ export type HardwareSetupEnvironment = {
   checks: HardwareSetupCheck[];
 };
 
+export type HardwareSdkPathsSaveResponse = {
+  saved: boolean;
+  config_path: string;
+  sdk_python_paths: string[];
+  sdk_library_path: string;
+  environment: HardwareSetupEnvironment;
+};
+
 export type HardwareCameraDevice = {
   backend: string;
   transport: string;
@@ -1171,6 +1179,21 @@ export async function getHardwareProfile(): Promise<Record<string, unknown>> {
 
 export async function getHardwareSetupEnvironment(): Promise<HardwareSetupEnvironment> {
   return requestJson<HardwareSetupEnvironment>("/api/hardware/setup/environment");
+}
+
+export async function saveHardwareSdkPaths(request: {
+  sdk_python_paths: string[];
+  sdk_library_path: string;
+}): Promise<HardwareSdkPathsSaveResponse> {
+  const response = await fetch(`${API_BASE}/api/hardware/setup/sdk-paths`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  return response.json() as Promise<HardwareSdkPathsSaveResponse>;
 }
 
 export async function listHardwareCameras(): Promise<HardwareCameraDevice[]> {

@@ -49,6 +49,7 @@ import {
   recomputeRunAnalysis,
   runFrameImageUrl,
   saveHardwareBinding,
+  saveHardwareSdkPaths,
   runResponseFromSummary,
   stopRun,
   streamLiveOfflineRun,
@@ -75,6 +76,7 @@ import {
   type HardwareBindingTestResponse,
   type HardwareCameraDevice,
   type HardwareSetupEnvironment,
+  type HardwareSdkPathsSaveResponse,
   type HardwareTemperatureTestResponse,
   type ImportedRunView,
   type LiveOfflineAnalysisRegionEvent,
@@ -2896,11 +2898,15 @@ function DeviceSetupWizard({
   const [temperatureTestResult, setTemperatureTestResult] = useState<HardwareTemperatureTestResponse | null>(null);
   const [testResult, setTestResult] = useState<HardwareBindingTestResponse | null>(null);
   const [saveResult, setSaveResult] = useState<HardwareBindingSaveResponse | null>(null);
+  const [sdkPathResult, setSdkPathResult] = useState<HardwareSdkPathsSaveResponse | null>(null);
+  const [sdkPythonPath, setSdkPythonPath] = useState("");
+  const [sdkLibraryPath, setSdkLibraryPath] = useState("");
   const [loadingWizard, setLoadingWizard] = useState(false);
   const [testingCamera, setTestingCamera] = useState(false);
   const [testingTemperature, setTestingTemperature] = useState(false);
   const [testingBinding, setTestingBinding] = useState(false);
   const [savingBinding, setSavingBinding] = useState(false);
+  const [savingSdkPaths, setSavingSdkPaths] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -2910,6 +2916,9 @@ function DeviceSetupWizard({
     setTemperatureTestResult(null);
     setTestResult(null);
     setSaveResult(null);
+    setSdkPathResult(null);
+    setSdkPythonPath("");
+    setSdkLibraryPath("");
     setError("");
     void refreshWizardData();
   }, [open]);
@@ -2959,6 +2968,7 @@ function DeviceSetupWizard({
     ]);
     if (environmentResult.status === "fulfilled") {
       setEnvironment(environmentResult.value);
+      applyDetectedSdkPaths(environmentResult.value);
     } else {
       setEnvironment(null);
       setError(environmentResult.reason instanceof Error ? environmentResult.reason.message : String(environmentResult.reason));
@@ -2989,12 +2999,48 @@ function DeviceSetupWizard({
     setLoadingWizard(true);
     setError("");
     try {
-      setEnvironment(await getHardwareSetupEnvironment());
+      const nextEnvironment = await getHardwareSetupEnvironment();
+      setEnvironment(nextEnvironment);
+      applyDetectedSdkPaths(nextEnvironment);
     } catch (err) {
       setEnvironment(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoadingWizard(false);
+    }
+  }
+
+  function applyDetectedSdkPaths(nextEnvironment: HardwareSetupEnvironment) {
+    const pythonPaths = hardwareEnvironmentStringList(nextEnvironment, [
+      "resolved_sdk_python_paths",
+      "current_sdk_python_paths"
+    ]);
+    const libraryPath = hardwareEnvironmentString(nextEnvironment, [
+      "resolved_mvs_dynamic_library_path",
+      "current_mvs_dynamic_library_path"
+    ]);
+    setSdkPythonPath(pythonPaths[0] ?? "");
+    setSdkLibraryPath(libraryPath);
+    setSdkPathResult(null);
+  }
+
+  async function validateAndSaveSdkPaths() {
+    setSavingSdkPaths(true);
+    setError("");
+    setSdkPathResult(null);
+    try {
+      const result = await saveHardwareSdkPaths({
+        sdk_python_paths: [sdkPythonPath],
+        sdk_library_path: sdkLibraryPath
+      });
+      setSdkPathResult(result);
+      setEnvironment(result.environment);
+      setSdkPythonPath(result.sdk_python_paths[0] ?? "");
+      setSdkLibraryPath(result.sdk_library_path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingSdkPaths(false);
     }
   }
 
@@ -3150,6 +3196,43 @@ function DeviceSetupWizard({
             <section className="wizardStepPanel">
               <h3>{t("Environment check")}</h3>
               <HardwareCheckList checks={environment?.checks ?? []} />
+              <section className="sdkPathEditor">
+                <div>
+                  <strong>{t("MVS SDK path configuration")}</strong>
+                  <small>{t("Standard MVS installations are detected automatically. Edit these paths only for a non-standard installation.")}</small>
+                </div>
+                <label className="field">
+                  <span>{t("MVS Python binding path")}</span>
+                  <input
+                    onChange={(event) => setSdkPythonPath(event.target.value)}
+                    placeholder={String.raw`C:\Program Files (x86)\MVS\Development\Samples\Python\MvImport`}
+                    value={sdkPythonPath}
+                  />
+                </label>
+                <label className="field">
+                  <span>{t("MVS x64 runtime DLL path")}</span>
+                  <input
+                    onChange={(event) => setSdkLibraryPath(event.target.value)}
+                    placeholder={String.raw`C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll`}
+                    value={sdkLibraryPath}
+                  />
+                </label>
+                {sdkPathResult ? (
+                  <div className={sdkPathResult.environment.overall_status === "passed" ? "inlineSuccess" : "inlineWarning"}>
+                    {t("SDK paths saved")}: {sdkPathResult.config_path}
+                  </div>
+                ) : null}
+                <div className="buttonPair">
+                  <button className="secondaryButton" disabled={loadingWizard || !environment} onClick={() => environment && applyDetectedSdkPaths(environment)} type="button">
+                    <RefreshCcw size={16} aria-hidden="true" />
+                    {t("Use auto-detected paths")}
+                  </button>
+                  <button className="primaryButton" disabled={savingSdkPaths || !sdkPythonPath.trim() || !sdkLibraryPath.trim()} onClick={validateAndSaveSdkPaths} type="button">
+                    <Settings size={16} aria-hidden="true" />
+                    {savingSdkPaths ? t("Validating") : t("Validate and save paths")}
+                  </button>
+                </div>
+              </section>
               <button className="secondaryButton" disabled={loadingWizard} onClick={refreshEnvironmentChecks} type="button">
                 <RefreshCcw size={16} aria-hidden="true" />
                 {t("Refresh checks")}
@@ -3296,11 +3379,32 @@ const HARDWARE_CHECK_DETAIL_FIELDS: Array<[string, string]> = [
   ["current_sdk_python_path_env", "Current SDK Python path env"],
   ["current_mvs_dynamic_library_path", "Current MVS dynamic library path"],
   ["current_mvs_dynamic_library_path_env", "Current MVS dynamic library path env"],
+  ["resolved_sdk_python_paths", "Resolved SDK Python path"],
+  ["resolved_mvs_dynamic_library_path", "Resolved MVS dynamic library path"],
   ["suggested_sdk_python_paths", "Suggested SDK Python path"],
   ["suggested_mvs_dynamic_library_paths", "Suggested MVS dynamic library path"],
+  ["windows_runtime_library_dir", "Windows MVS runtime dir"],
   ["windows_sdk_library_dir", "Windows SDK library dir"],
   ["fix_instructions", "Fix instructions"]
 ];
+
+function hardwareEnvironmentStringList(environment: HardwareSetupEnvironment, keys: string[]): string[] {
+  for (const key of keys) {
+    for (const check of environment.checks) {
+      const value = check.details[key];
+      if (Array.isArray(value)) {
+        const values = value.map((item) => String(item ?? "").trim()).filter(Boolean);
+        if (values.length) return values;
+      }
+      if (typeof value === "string" && value.trim()) return [value.trim()];
+    }
+  }
+  return [];
+}
+
+function hardwareEnvironmentString(environment: HardwareSetupEnvironment, keys: string[]): string {
+  return hardwareEnvironmentStringList(environment, keys)[0] ?? "";
+}
 
 function HardwareCheckDetails({ details }: { details: Record<string, unknown> }) {
   const language = useUiLanguage();

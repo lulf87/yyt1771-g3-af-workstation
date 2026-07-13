@@ -18,6 +18,8 @@ HIK_MVS_PYTHON_MODULE = "MvCameraControl_class"
 HIK_MVS_PYTHON_PATH_ENV = "HIK_MVS_PYTHON_PATH"
 HIK_MVS_LIBRARY_PATH_ENV = "HIK_MVS_LIBRARY_PATH"
 _HIK_MVS_SOURCE_CACHE: dict[tuple[str, str], Any] = {}
+_HIK_MVS_WINDOWS_DLL_DIRECTORY_HANDLES: dict[str, Any] = {}
+_HIK_MVS_WINDOWS_PRELOADED_LIBRARIES: dict[str, Any] = {}
 _HIK_MVS_SIDE_CAR_STAGING_DIR = Path("/tmp/mvs")
 _HIK_MVS_SIDE_CAR_LIBRARIES = (
     "libMVGigEVisionSDK.dylib",
@@ -72,6 +74,7 @@ class HikMvsCameraSource:
         profile = profile or {}
         _prepend_sdk_python_paths(profile)
         try:
+            _prepare_windows_runtime(profile)
             return importlib.import_module(HIK_MVS_PYTHON_MODULE)
         except (ModuleNotFoundError, ImportError, OSError) as exc:
             try:
@@ -354,13 +357,9 @@ class _DeviceDescriptor:
 
 
 def _prepend_sdk_python_paths(profile: dict[str, Any]) -> None:
-    raw_paths = os.environ.get(HIK_MVS_PYTHON_PATH_ENV, "")
-    paths = [Path(part).expanduser() for part in raw_paths.split(os.pathsep) if part.strip()]
-    profile_paths = profile.get("sdk_python_paths")
-    if isinstance(profile_paths, list):
-        paths.extend(Path(str(part)).expanduser() for part in profile_paths if str(part).strip())
+    paths = _configured_sdk_python_paths(profile)
     for path in reversed(paths):
-        if path.exists() and str(path) not in sys.path:
+        if str(path) not in sys.path:
             sys.path.insert(0, str(path))
     if paths:
         importlib.invalidate_caches()
@@ -373,23 +372,46 @@ def _import_sdk_with_library_override(profile: dict[str, Any]) -> Any | None:
     module_source = _find_sdk_module_source(profile)
     if module_source is None:
         return None
+    _prepare_windows_runtime(profile, library_path=library_path)
     _ensure_hik_runtime_sidecar_symlinks(library_path.parent)
     sys.modules.pop(HIK_MVS_PYTHON_MODULE, None)
     return _load_sdk_module_from_source(module_source, library_path)
 
 
 def _configured_sdk_library_path(profile: dict[str, Any]) -> Path | None:
+    candidates: list[Path] = []
     profile_path = str(profile.get("sdk_library_path", "") or "").strip()
     if profile_path:
-        candidate = Path(profile_path).expanduser()
-        if candidate.is_file():
-            return candidate
+        candidates.append(Path(profile_path).expanduser())
     env_path = os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "").strip()
     if env_path:
-        candidate = Path(env_path).expanduser()
+        candidates.append(Path(env_path).expanduser())
+    candidates.extend(_windows_default_sdk_library_paths())
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None
+
+
+def _prepare_windows_runtime(profile: dict[str, Any], *, library_path: Path | None = None) -> None:
+    if sys.platform != "win32":
+        return
+    resolved_library = library_path or _configured_sdk_library_path(profile)
+    if resolved_library is None:
+        return
+    resolved_library = resolved_library.resolve()
+    runtime_dir = resolved_library.parent
+    runtime_key = str(runtime_dir)
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if callable(add_dll_directory) and runtime_key not in _HIK_MVS_WINDOWS_DLL_DIRECTORY_HANDLES:
+        _HIK_MVS_WINDOWS_DLL_DIRECTORY_HANDLES[runtime_key] = add_dll_directory(runtime_key)
+    library_key = str(resolved_library)
+    if library_key in _HIK_MVS_WINDOWS_PRELOADED_LIBRARIES:
+        return
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if not callable(win_dll):
+        raise OSError("ctypes.WinDLL is unavailable in the Windows runtime")
+    _HIK_MVS_WINDOWS_PRELOADED_LIBRARIES[library_key] = win_dll(library_key)
 
 
 def _find_sdk_module_source(profile: dict[str, Any]) -> Path | None:
@@ -413,6 +435,7 @@ def _configured_sdk_python_paths(profile: dict[str, Any]) -> list[Path]:
     profile_paths = profile.get("sdk_python_paths")
     if isinstance(profile_paths, list):
         paths.extend(Path(str(part)).expanduser() for part in profile_paths if str(part).strip())
+    paths.extend(_windows_default_sdk_python_paths())
     seen: set[Path] = set()
     existing: list[Path] = []
     for path in paths:
@@ -424,6 +447,32 @@ def _configured_sdk_python_paths(profile: dict[str, Any]) -> list[Path]:
         seen.add(resolved)
         existing.append(path)
     return existing
+
+
+def _windows_default_sdk_python_paths() -> list[Path]:
+    if sys.platform != "win32":
+        return []
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    return [
+        Path(program_files_x86) / "MVS" / "Development" / "Samples" / "Python" / "MvImport",
+        Path(program_files) / "MVS" / "Development" / "Samples" / "Python" / "MvImport",
+    ]
+
+
+def _windows_default_sdk_library_paths() -> list[Path]:
+    if sys.platform != "win32":
+        return []
+    common_files_x86 = os.environ.get("CommonProgramFiles(x86)", r"C:\Program Files (x86)\Common Files")
+    common_files = os.environ.get("CommonProgramFiles", r"C:\Program Files\Common Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    windows_dir = os.environ.get("WINDIR", r"C:\Windows")
+    return [
+        Path(common_files_x86) / "MVS" / "Runtime" / "Win64_x64" / "MvCameraControl.dll",
+        Path(common_files) / "MVS" / "Runtime" / "Win64_x64" / "MvCameraControl.dll",
+        Path(program_files_x86) / "MVS" / "Development" / "Libraries" / "win64" / "MvCameraControl.dll",
+        Path(windows_dir) / "System32" / "MvCameraControl.dll",
+    ]
 
 
 def _load_sdk_module_from_source(module_source: Path, library_path: Path) -> Any:
@@ -454,7 +503,7 @@ def _load_sdk_module_from_source(module_source: Path, library_path: Path) -> Any
 
 
 def _ensure_hik_runtime_sidecar_symlinks(runtime_lib_dir: Path) -> None:
-    if not runtime_lib_dir.is_dir():
+    if sys.platform != "darwin" or not runtime_lib_dir.is_dir():
         return
     _HIK_MVS_SIDE_CAR_STAGING_DIR.mkdir(parents=True, exist_ok=True)
     for library_name in _HIK_MVS_SIDE_CAR_LIBRARIES:

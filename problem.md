@@ -114,6 +114,8 @@
 | P-0100 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows distribution / runtime | Windows 目标机仍需 Python、Node 和 Git Bash，无法零环境安装运行 | 2026-07-12 | 2026-07-12 | Codex | Mac 自动化待完成；Windows x64 CI 打包、干净机安装和真实硬件浏览器复测待补 |
 | P-0101 | RESOLVED_BROWSER_VERIFIED | P0 | Windows / PyInstaller / launcher | portable G3Workstation.exe 启动报 `No module named yyt1771_g3.api` | 2026-07-12 | 2026-07-13 | Codex | Windows 11 + Chrome 已确认重建 EXE 能启动单端口应用；新 registry 错误另见 P-0102 |
 | P-0102 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / offline dataset registry / operator startup | Windows 真实硬件包启动后因缺少开发机离线数据 registry 显示 500 | 2026-07-13 | 2026-07-13 | Codex | 生产真实硬件模式已移除离线 registry 启动依赖；Mac Chromium 预检通过，待 Windows dev.3 复测 |
+| P-0103 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / Hik MVS SDK discovery / GigE network | Windows dev.3 已安装 MVS 且 MVS 客户端可枚举相机，但 G3 无法导入 `MvCameraControl_class` | 2026-07-13 | 2026-07-14 | Codex | Windows loader 已自动发现 MvImport/Win64_x64、注册 DLL 目录并预加载 x64 runtime；待新 Windows 包真机复测 |
+| P-0104 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows installer / hardware setup / MVS path configuration | 干净 Win11 前置边界不清，非标准 MVS 路径只能手工改 YAML/环境变量 | 2026-07-14 | 2026-07-14 | Codex | 标准 MVS 自动检测；设备向导新增 SDK 路径验证与保存；安装器新增真实硬件前置检查页；待 Windows 新包复测 |
 
 ---
 
@@ -6511,7 +6513,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0047 — Playwright 复测中点击 Stop 后 Run 页面仍显示 Running
 
-- Status: OPEN
+- Status: FIXED_PENDING_BROWSER_RETEST
 - Priority: P1
 - Module: `frontend/src/main.tsx`, `frontend/src/api/client.ts`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`
 - Found date: 2026-06-08
@@ -9905,7 +9907,7 @@ RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/services/offline_dataset.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/main.tsx`, Windows packaged runtime
 - Found date: 2026-07-13
-- Last update: 2026-07-13
+- Last update: 2026-07-14
 - Owner/tool: Codex / investigate
 
 #### Problem
@@ -9978,6 +9980,146 @@ Mac source-runtime production + real_hardware + missing explicit registry: /api/
 - Actual: root 200; `/api/offline-datasets` 200 with 15-byte empty-list payload; page rendered real camera workflow and device setup entry. LU92XX 503 is expected because the Mac test host has no connected controller.
 - Result: PASS for source-runtime precheck; Windows dev.3 remains required.
 - Evidence: `output/playwright/p0102-windows-real-hardware-no-offline-registry-20260713.png`
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0103 — Windows dev.3 未自动发现 MVS Python binding，且 GigE 网卡与相机不同网段
+
+- Status: OPEN
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/services/hardware_setup_service.py`, Windows packaged runtime / GigE network configuration
+- Found date: 2026-07-13
+- Last update: 2026-07-13
+- Owner/tool: Codex / investigate
+
+#### Problem
+
+Windows 11 x64 目标机已经安装 Windows dev.3 G3 包和 Hikrobot MVS。MVS 客户端能够枚举真实相机 `MV-CA060-11GM / 00J67378626 / 192.168.3.211`，但 G3 设备设置的环境检查显示：
+
+```text
+Backend: passed
+Operating system: Windows / passed
+Python architecture: 64-bit / passed
+MvCameraControl_class: failed
+MVS dynamic library path: passed
+Temperature serial ports: passed
+```
+
+MVS 客户端中相机带黄色警告标记；承载相机的 Windows 网卡地址为 `192.168.188.11`，相机地址为 `192.168.3.211/24`。
+
+#### Root cause evidence
+
+- `HikMvsCameraSource._load_sdk()` 只在普通 import 前调用 `_prepend_sdk_python_paths()`。
+- `_prepend_sdk_python_paths()` 和 `_configured_sdk_python_paths()` 只读取 `HIK_MVS_PYTHON_PATH` 或硬件 profile 的 `camera.sdk_python_paths`，不会自动尝试 UI 中列出的 Windows 默认路径 `C:\Program Files (x86)\MVS\Development\Samples\Python\MvImport`。
+- 环境检查的 Windows 路径当前只是 `suggested_sdk_python_paths` 提示项，并没有进入实际 loader。
+- 因此在新安装的生产包没有预配置 `sdk_python_paths` 时，MVS 动态库存在也不足以导入 `MvCameraControl_class.py`。
+- MVS 照片同时确认 Windows 网卡 `192.168.188.11` 与相机 `192.168.3.211/24` 不同网段；MVS 可通过 GigE 发现协议枚举设备，但相机仍显示网络警告，后续打开/取流也会失败。
+- 2026-07-14 目标机 PowerShell 已找到 `C:\Program Files (x86)\MVS\Development\Samples\Python\MvImport\MvCameraControl_class.py`，并成功写入用户级 `HIK_MVS_PYTHON_PATH`；但 `Test-Path C:\Windows\System32\MvCameraControl.dll` 返回 `False`，说明当前 MVS 版本的 x64 runtime DLL 不在此前假设的 System32 路径，需要按实际安装目录继续定位。
+- 2026-07-14 进一步搜索确认 MVS 同时安装了 `Runtime\Win32_i86\MvCameraControl.dll` 与 `Runtime\Win64_x64\MvCameraControl.dll`；G3/PyInstaller Python 为 64 位，唯一匹配路径为 `C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll`，不得使用 Win32_i86 版本。
+- 2026-07-14 用户重启并重新检查后，dev.3 仍显示 `MvCameraControl_class` 未通过，而动态库路径通过；新增回归测试以官方 binding 的 `ctypes.WinDLL("MvCameraControl.dll")` 行为复现同样失败，确认仅配置文件路径仍不足以让冻结 Python 找到 DLL 及其依赖。
+
+#### Expected
+
+Windows 正式包在安装标准 MVS 后应自动发现有效的 x64 MVS Python binding 和动态库，无需操作者编辑 YAML 或环境变量；设备设置应能枚举、测试并绑定同网段的真实 GigE 相机。
+
+#### Fix summary
+
+1. Windows loader 自动发现标准 MVS Python binding 路径 `Program Files (x86)\MVS\Development\Samples\Python\MvImport`。
+2. 自动发现当前 MVS x64 runtime 路径 `Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll`，保留开发库与 System32 旧布局作为后备候选。
+3. import 前调用 `os.add_dll_directory()` 注册 Win64_x64 目录，并持有返回 handle，避免目录注册过早失效。
+4. 使用绝对路径 `ctypes.WinDLL()` 预加载 x64 runtime，确保官方 binding 后续的裸文件名加载可以复用已加载模块。
+5. 环境检查展示实际解析到的 Python/DLL 路径，不再把“配置字符串存在”误报为动态库可用。
+6. macOS sidecar symlink staging 明确只在 Darwin 执行，Windows 不再创建无意义的 `/tmp/mvs` staging。
+
+#### Tests run
+
+```text
+Regression before fix: 1 failed (runtime directory is not registered: MvCameraControl.dll)
+Targeted after fix: 20 passed
+Backend full suite: 261 passed
+git diff --check: PASS
+```
+
+#### Windows retest required
+
+1. 构建并安装包含本修复的新 Windows x64 包。
+2. 保持相机网卡与 `192.168.3.211/24` 同网段，并关闭可能占用相机的 MVS 客户端。
+3. 设备设置重新检查应显示 `MvCameraControl_class` 与 MVS 动态库均通过。
+4. 扫描相机应显示 `MV-CA060-11GM / 00J67378626 / 192.168.3.211`，测试相机应取得真实预览。
+5. 复测直接访问 `/api/hardware/setup/environment`；dev.3 照片曾返回 `API endpoint not found`，需确认新包路由与向导调用一致。
+
+#### Evidence
+
+- `/Users/lulingfeng/Downloads/IMG_2817.HEIC`
+- `/Users/lulingfeng/Downloads/IMG_2818.HEIC`
+- `/Users/lulingfeng/Downloads/IMG_2820.HEIC`
+- `/Users/lulingfeng/Downloads/IMG_2821.HEIC`
+- `/Users/lulingfeng/Downloads/IMG_2822.HEIC`
+- `/Users/lulingfeng/Downloads/IMG_2823.HEIC`
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0104 — 干净 Win11 前置边界不清，非标准 MVS 路径无法在网页中配置
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `packaging/windows/installer.iss`, `backend/src/yyt1771_g3/services/hardware_setup_service.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/main.tsx`
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex / investigate
+
+#### Problem
+
+Windows 安装器只复制 G3 程序和创建数据目录，没有说明 Python/Node/Git 是否需要预装，也不检查 MVS/GigE、USB 转串口驱动和相机网卡前置。设备向导只能展示 MVS SDK 路径诊断，无法在网页中修改、验证和保存 `camera.sdk_python_paths` / `camera.sdk_library_path`。
+
+#### Root cause
+
+- PyInstaller 产物已包含 Python 运行时和后端依赖，FastAPI 同源托管已编译前端，所以目标机本不应要求 Python、Node 或 Git。
+- Hikrobot MVS/GigE 与 USB 转串口驱动属于第三方组件；在未确认再分发许可、精确串口芯片和静默安装参数前，G3 不能安全、合规地自动安装。
+- 现有 `/api/hardware/setup/environment` 仅读取路径；`/api/hardware/binding` 仅保存相机和 COM 口绑定，没有 SDK 路径保存数据流。
+
+#### Fix summary
+
+1. 新增 `POST /api/hardware/setup/sdk-paths`，支持输入 `MvCameraControl_class.py` 文件或其目录、`MvCameraControl.dll` 文件或其目录；先验证文件再保存。
+2. 路径写入应用 hardware profile，保留已有相机序列号、IP、温控 COM 口和其他参数；验证失败不覆盖文件。
+3. 设备向导“环境检查”新增自动检测填入、可编辑 Python Binding/DLL 路径、“验证并保存”和保存结果。
+4. Inno Setup 新增真实硬件前置页，明确 G3 已包含的运行时、MVS 标准路径检测、串口驱动和 GigE IPv4 要求。
+5. Windows 交付文档新增干净机前置矩阵和网页配置流程，不使用浏览器上传厂商 DLL。
+
+#### Tests run
+
+```text
+Regression before fix: 2 failed (POST SDK paths endpoint returned 405)
+Targeted after fix: 2 passed
+Backend full suite: 264 passed
+Frontend full suite: 150 passed
+Frontend production build: PASS
+git diff --check: PASS
+Windows Inno Setup compile and real-hardware retest: pending Windows CI/package
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-14 (Mac precheck; Windows final pending)
+- Browser: gstack browse / Headless Chromium
+- OS: macOS 26.1; Windows 11 x64 required for final result
+- Frontend URL: `http://127.0.0.1:8026/`
+- Backend URL: `http://127.0.0.1:8026`
+- Dataset: none; production real hardware only
+- Page: Device setup / Environment check
+- Steps: start same-origin launcher in `production + real_hardware`; open wizard; verify resolved paths populate editable fields; submit detected valid local MVS paths; then replace both fields with missing paths and submit again.
+- Expected: standard MVS requires no manual path; custom paths validate before write and survive restart; invalid paths do not overwrite config.
+- Actual: environment/API returned 200; valid paths POST returned 200 and saved; missing Python binding/DLL POST returned 400 and the modal displayed `MVS Python binding not found: /missing/MvCameraControl_class.py`. The expected LU92XX 503 remained because no controller was connected to the Mac test host.
+- Result: PARTIAL PASS; webpage workflow passed in Chromium, Windows installer compile, Win64 path resolution, restart persistence and real camera/COM binding remain pending new Windows package.
+- Evidence: `output/playwright/p0104-sdk-path-editor-20260714.png`, `output/playwright/p0104-sdk-path-invalid-validation-20260714.png`; browser network log recorded `POST /api/hardware/setup/sdk-paths` 200 then 400.
 
 #### Final status
 

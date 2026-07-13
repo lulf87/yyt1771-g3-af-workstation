@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from yyt1771_g3.camera import hik_mvs_source as hik_mvs_module
 from yyt1771_g3.camera.base import CameraFrame
 from yyt1771_g3.camera.hik_mvs_source import CameraUnavailableError, HikMvsCameraSource
 
@@ -118,6 +119,85 @@ def test_hik_sdk_loader_uses_profile_library_path_override_for_official_binding(
 
     assert hasattr(sdk, "MvCamera")
     assert str(library_path) in loaded_paths
+
+
+def test_hik_sdk_loader_registers_and_preloads_windows_x64_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    sdk_dir = tmp_path / "MvImport"
+    sdk_dir.mkdir()
+    runtime_dir = tmp_path / "Runtime" / "Win64_x64"
+    runtime_dir.mkdir(parents=True)
+    library_path = runtime_dir / "MvCameraControl.dll"
+    library_path.write_bytes(b"fake dll")
+    (sdk_dir / "MvCameraControl_class.py").write_text(
+        "\n".join(
+            [
+                "import ctypes",
+                'MvCamCtrldll = ctypes.WinDLL("MvCameraControl.dll")',
+                "class MvCamera:",
+                "    pass",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delitem(sys.modules, "MvCameraControl_class", raising=False)
+    monkeypatch.setattr(sys, "path", [item for item in sys.path if str(sdk_dir) != item])
+    monkeypatch.setattr(hik_mvs_module.sys, "platform", "win32")
+    registered_directories: list[str] = []
+    preloaded_libraries: list[str] = []
+
+    def fake_add_dll_directory(path: str):  # noqa: ANN202
+        registered_directories.append(path)
+        return SimpleNamespace(close=lambda: None)
+
+    def fake_win_dll(path: str):  # noqa: ANN202
+        preloaded_libraries.append(str(path))
+        if str(path) == str(library_path):
+            return SimpleNamespace(path=str(path))
+        if str(path) == "MvCameraControl.dll" and str(runtime_dir) in registered_directories:
+            return SimpleNamespace(path=str(path))
+        raise OSError(f"runtime directory is not registered: {path}")
+
+    monkeypatch.setattr(hik_mvs_module.os, "add_dll_directory", fake_add_dll_directory, raising=False)
+    monkeypatch.setattr(hik_mvs_module.ctypes, "WinDLL", fake_win_dll, raising=False)
+
+    sdk = HikMvsCameraSource._load_sdk(
+        {
+            "sdk_python_paths": [str(sdk_dir)],
+            "sdk_library_path": str(library_path),
+        }
+    )
+
+    assert hasattr(sdk, "MvCamera")
+    assert registered_directories == [str(runtime_dir)]
+    assert str(library_path) in preloaded_libraries
+
+
+def test_hik_sdk_loader_discovers_standard_windows_mvs_install_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    program_files_x86 = tmp_path / "Program Files (x86)"
+    common_files_x86 = program_files_x86 / "Common Files"
+    sdk_dir = program_files_x86 / "MVS" / "Development" / "Samples" / "Python" / "MvImport"
+    sdk_dir.mkdir(parents=True)
+    (sdk_dir / "MvCameraControl_class.py").write_text("class MvCamera: pass\n", encoding="utf-8")
+    library_path = common_files_x86 / "MVS" / "Runtime" / "Win64_x64" / "MvCameraControl.dll"
+    library_path.parent.mkdir(parents=True)
+    library_path.write_bytes(b"fake dll")
+    monkeypatch.setattr(hik_mvs_module.sys, "platform", "win32")
+    monkeypatch.setenv("ProgramFiles(x86)", str(program_files_x86))
+    monkeypatch.setenv("CommonProgramFiles(x86)", str(common_files_x86))
+    monkeypatch.delenv(hik_mvs_module.HIK_MVS_PYTHON_PATH_ENV, raising=False)
+    monkeypatch.delenv(hik_mvs_module.HIK_MVS_LIBRARY_PATH_ENV, raising=False)
+
+    python_paths = hik_mvs_module._configured_sdk_python_paths({})
+    resolved_library = hik_mvs_module._configured_sdk_library_path({})
+
+    assert python_paths[0] == sdk_dir
+    assert resolved_library == library_path
 
 
 class _FakeDeviceList:

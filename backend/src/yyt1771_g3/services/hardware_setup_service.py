@@ -14,6 +14,8 @@ from yyt1771_g3.camera.hik_mvs_source import (
     HIK_MVS_PYTHON_MODULE,
     HIK_MVS_PYTHON_PATH_ENV,
     HikMvsCameraSource,
+    _configured_sdk_library_path,
+    _configured_sdk_python_paths,
     _decode_sdk_char_buffer,
     _ip_from_int,
     _prepend_sdk_python_paths,
@@ -97,6 +99,114 @@ def save_hardware_binding(
             "serial_port": str(serial_payload.get("port", "") or ""),
         },
     }
+
+
+def save_hardware_sdk_paths(
+    *,
+    sdk_python_paths: list[str],
+    sdk_library_path: str,
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    config_path = local_hardware_profile_path(path)
+    _assert_writable_hardware_profile_path(config_path)
+    normalized_python_paths = _normalize_sdk_python_paths(sdk_python_paths)
+    normalized_library_path = _normalize_sdk_library_path(sdk_library_path)
+
+    payload = _load_save_base_mapping(config_path)
+    camera_payload = _ensure_mapping(payload, "camera")
+    camera_payload["sdk_python_paths"] = normalized_python_paths
+    camera_payload["sdk_library_path"] = normalized_library_path
+    _write_yaml_mapping(config_path, payload)
+    return {
+        "saved": True,
+        "config_path": str(config_path),
+        "sdk_python_paths": normalized_python_paths,
+        "sdk_library_path": normalized_library_path,
+    }
+
+
+def _normalize_sdk_python_paths(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw_value in values:
+        text = str(raw_value or "").strip()
+        if not text:
+            continue
+        candidate = Path(text).expanduser()
+        directory = candidate.parent if candidate.name.lower() == "mvcameracontrol_class.py" else candidate
+        binding_file = directory / "MvCameraControl_class.py"
+        if not binding_file.is_file():
+            raise HardwareSetupError(
+                f"MVS Python binding not found: {binding_file}",
+                details={"sdk_python_path": str(candidate), "expected_file": str(binding_file)},
+            )
+        resolved = str(directory.resolve())
+        if resolved not in normalized:
+            normalized.append(resolved)
+    if not normalized:
+        raise HardwareSetupError(
+            "MVS Python binding path is required.",
+            details={"expected_file": "MvCameraControl_class.py"},
+        )
+    return normalized
+
+
+def _normalize_sdk_library_path(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise HardwareSetupError(
+            "MVS x64 runtime library path is required.",
+            details={"expected_file": "MvCameraControl.dll"},
+        )
+    candidate = Path(text).expanduser()
+    if candidate.is_dir():
+        library_names = {
+            "Windows": "MvCameraControl.dll",
+            "Darwin": "libMvCameraControl.dylib",
+        }
+        candidate = candidate / library_names.get(platform.system(), "libMvCameraControl.so")
+    if not candidate.is_file():
+        raise HardwareSetupError(
+            f"MVS runtime library not found: {candidate}",
+            details={"sdk_library_path": str(candidate)},
+        )
+    if platform.system() == "Windows" and candidate.name.lower() != "mvcameracontrol.dll":
+        raise HardwareSetupError(
+            "Windows MVS runtime must point to MvCameraControl.dll.",
+            details={"sdk_library_path": str(candidate)},
+        )
+    if platform.system() == "Windows":
+        machine = _windows_pe_machine(candidate)
+        if machine != 0x8664:
+            raise HardwareSetupError(
+                "MVS runtime DLL must be the Win64_x64 build.",
+                details={
+                    "sdk_library_path": str(candidate),
+                    "pe_machine": f"0x{machine:04x}" if machine is not None else "invalid",
+                    "expected_pe_machine": "0x8664",
+                },
+            )
+    return str(candidate.resolve())
+
+
+def _windows_pe_machine(path: Path) -> int | None:
+    try:
+        with path.open("rb") as handle:
+            if handle.read(2) != b"MZ":
+                return None
+            handle.seek(0x3C)
+            pe_offset_raw = handle.read(4)
+            if len(pe_offset_raw) != 4:
+                return None
+            pe_offset = int.from_bytes(pe_offset_raw, "little")
+            handle.seek(pe_offset)
+            if handle.read(4) != b"PE\x00\x00":
+                return None
+            machine_raw = handle.read(2)
+            if len(machine_raw) != 2:
+                return None
+            return int.from_bytes(machine_raw, "little")
+    except OSError:
+        return None
 
 
 def _load_save_base_mapping(config_path: Path) -> dict[str, Any]:
@@ -204,31 +314,22 @@ def _check_hik_mvs_sdk_import(config: HardwareConfig) -> dict[str, Any]:
 
 def _check_mvs_dynamic_library_path(config: HardwareConfig) -> dict[str, Any]:
     configured = str(config.camera.sdk_library_path or os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "") or "").strip()
-    if not configured:
+    path = _configured_sdk_library_path(config.camera.to_profile())
+    if path is None:
         return {
             "id": "mvs_dynamic_library_path",
             "label": "MVS dynamic library",
             "status": "failed",
-            "message": "MVS dynamic library path is not configured.",
+            "message": "MVS dynamic library was not found.",
             "suggestion": "Configure camera.sdk_library_path or HIK_MVS_LIBRARY_PATH.",
-            "details": {**_sdk_path_guidance_details(config), "configured_path": ""},
-        }
-    path = Path(configured).expanduser()
-    if path.is_file():
-        return {
-            "id": "mvs_dynamic_library_path",
-            "label": "MVS dynamic library",
-            "status": "passed",
-            "message": "MVS dynamic library path is configured.",
-            "suggestion": "",
-            "details": {**_sdk_path_guidance_details(config), "configured_path": str(path)},
+            "details": {**_sdk_path_guidance_details(config), "configured_path": configured},
         }
     return {
         "id": "mvs_dynamic_library_path",
         "label": "MVS dynamic library",
-        "status": "failed",
-        "message": "Configured MVS dynamic library path does not exist.",
-        "suggestion": "Install MVS or update camera.sdk_library_path.",
+        "status": "passed",
+        "message": "MVS dynamic library was found.",
+        "suggestion": "",
         "details": {**_sdk_path_guidance_details(config), "configured_path": str(path)},
     }
 
@@ -236,18 +337,28 @@ def _check_mvs_dynamic_library_path(config: HardwareConfig) -> dict[str, Any]:
 def _sdk_path_guidance_details(config: HardwareConfig) -> dict[str, Any]:
     current_python_paths = [str(path) for path in config.camera.sdk_python_paths]
     python_path_env = str(os.environ.get(HIK_MVS_PYTHON_PATH_ENV, "") or "")
-    current_library_path = str(config.camera.sdk_library_path or os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "") or "")
+    resolved_python_paths = [str(path) for path in _configured_sdk_python_paths(config.camera.to_profile())]
+    resolved_library_path = _configured_sdk_library_path(config.camera.to_profile())
+    current_library_path = str(
+        config.camera.sdk_library_path
+        or os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "")
+        or resolved_library_path
+        or ""
+    )
     return {
         "current_sdk_python_paths": current_python_paths,
         "current_sdk_python_path_env": python_path_env,
+        "resolved_sdk_python_paths": resolved_python_paths,
         "current_mvs_dynamic_library_path": current_library_path,
         "current_mvs_dynamic_library_path_env": str(os.environ.get(HIK_MVS_LIBRARY_PATH_ENV, "") or ""),
+        "resolved_mvs_dynamic_library_path": str(resolved_library_path or ""),
         "suggested_sdk_python_paths": _suggested_sdk_python_paths(),
         "suggested_mvs_dynamic_library_paths": _suggested_mvs_dynamic_library_paths(),
+        "windows_runtime_library_dir": r"C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64",
         "windows_sdk_library_dir": r"C:\Program Files (x86)\MVS\Development\Libraries\win64",
         "fix_instructions": (
-            "Install Hikrobot MVS, then set camera.sdk_python_paths and camera.sdk_library_path in "
-            "configs/local/realcamera_temp.local.yaml or set HIK_MVS_PYTHON_PATH and HIK_MVS_LIBRARY_PATH."
+            "Install Hikrobot MVS, then use Device setup > Environment check to auto-detect or validate and "
+            "save camera.sdk_python_paths and camera.sdk_library_path."
         ),
     }
 
@@ -264,6 +375,7 @@ def _suggested_mvs_dynamic_library_paths() -> list[str]:
     return [
         "/Applications/MVS.app/Contents/Frameworks/libMvCameraControl.dylib",
         "/opt/MVS/lib/64/libMvCameraControl.so",
+        r"C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll",
         r"C:\Windows\System32\MvCameraControl.dll",
     ]
 

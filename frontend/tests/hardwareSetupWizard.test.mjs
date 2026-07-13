@@ -114,7 +114,22 @@ test("device setup environment checks render SDK path details for field repair",
   assert.match(checks, /current_mvs_dynamic_library_path/);
   assert.match(checks, /suggested_sdk_python_paths/);
   assert.match(checks, /suggested_mvs_dynamic_library_paths/);
+  assert.match(checks, /windows_runtime_library_dir/);
   assert.match(checks, /fix_instructions/);
+});
+
+test("device setup environment step can auto-fill, validate, and save MVS SDK paths", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(wizard, /MVS Python binding path/);
+  assert.match(wizard, /MVS x64 runtime DLL path/);
+  assert.match(wizard, /applyDetectedSdkPaths/);
+  assert.match(wizard, /saveHardwareSdkPaths\(/);
+  assert.match(wizard, /Validate and save paths/);
+  assert.match(wizard, /setEnvironment\(result\.environment\)/);
 });
 
 test("device setup wizard does not silently select the first camera when multiple cameras are present", () => {

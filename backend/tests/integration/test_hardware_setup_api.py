@@ -49,13 +49,136 @@ def test_hardware_setup_environment_reports_sdk_and_serial_checks(monkeypatch, t
     assert checks["hik_mvs_sdk_import"]["details"]["current_mvs_dynamic_library_path"] == str(missing_library)
     assert checks["hik_mvs_sdk_import"]["details"]["suggested_sdk_python_paths"]
     assert checks["hik_mvs_sdk_import"]["details"]["suggested_mvs_dynamic_library_paths"]
-    assert "configs/local/realcamera_temp.local.yaml" in checks["hik_mvs_sdk_import"]["details"]["fix_instructions"]
+    assert "Device setup > Environment check" in checks["hik_mvs_sdk_import"]["details"]["fix_instructions"]
     assert checks["mvs_dynamic_library_path"]["status"] == "failed"
     assert str(missing_library) in checks["mvs_dynamic_library_path"]["details"]["configured_path"]
     assert checks["mvs_dynamic_library_path"]["details"]["suggested_mvs_dynamic_library_paths"]
     assert "camera.sdk_library_path" in checks["mvs_dynamic_library_path"]["details"]["fix_instructions"]
     assert checks["temperature_serial_ports"]["status"] == "passed"
     assert checks["temperature_serial_ports"]["details"]["ports"][0]["device"] == "/dev/tty.usbserial-setup"
+
+
+def test_hardware_sdk_paths_endpoint_validates_normalizes_and_saves(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    config_path = tmp_path / "ProgramData" / "YYT1771-G3" / "config" / "hardware.yaml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        """
+camera:
+  backend: hik_gige_mvs
+  serial_number: 00J67378626
+temp:
+  backend: lu92xx_modbus_rtu
+  serial:
+    port: COM3
+        """,
+        encoding="utf-8",
+    )
+    binding_dir = tmp_path / "MVS" / "Development" / "Samples" / "Python" / "MvImport"
+    binding_dir.mkdir(parents=True)
+    binding_file = binding_dir / "MvCameraControl_class.py"
+    binding_file.write_text("# test binding\n", encoding="utf-8")
+    runtime_dll = tmp_path / "Common Files" / "MVS" / "Runtime" / "Win64_x64" / "MvCameraControl.dll"
+    runtime_dll.parent.mkdir(parents=True)
+    runtime_dll.write_bytes(b"test runtime")
+
+    monkeypatch.setattr(
+        "yyt1771_g3.services.hardware_setup_service.local_hardware_profile_path",
+        lambda path=None: config_path,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        api_main,
+        "build_hardware_environment_report",
+        lambda config: {"overall_status": "passed", "checks": []},
+    )
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/hardware/setup/sdk-paths",
+        json={
+            "sdk_python_paths": [str(binding_file)],
+            "sdk_library_path": str(runtime_dll),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["saved"] is True
+    assert payload["sdk_python_paths"] == [str(binding_dir)]
+    assert payload["sdk_library_path"] == str(runtime_dll)
+    assert payload["environment"]["overall_status"] == "passed"
+
+    import yaml
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["camera"]["sdk_python_paths"] == [str(binding_dir)]
+    assert saved["camera"]["sdk_library_path"] == str(runtime_dll)
+    assert saved["camera"]["serial_number"] == "00J67378626"
+    assert saved["temp"]["serial"]["port"] == "COM3"
+
+
+def test_hardware_sdk_paths_endpoint_rejects_missing_files_without_overwriting(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    config_path = tmp_path / "hardware.yaml"
+    original = "camera:\n  serial_number: 00J67378626\n"
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        "yyt1771_g3.services.hardware_setup_service.local_hardware_profile_path",
+        lambda path=None: config_path,
+        raising=False,
+    )
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/hardware/setup/sdk-paths",
+        json={
+            "sdk_python_paths": [str(tmp_path / "missing" / "MvCameraControl_class.py")],
+            "sdk_library_path": str(tmp_path / "missing" / "MvCameraControl.dll"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert "MvCameraControl_class.py" in response.json()["detail"]["message"]
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_hardware_sdk_paths_endpoint_rejects_win32_mvs_runtime(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    config_path = tmp_path / "hardware.yaml"
+    original = "camera:\n  serial_number: 00J67378626\n"
+    config_path.write_text(original, encoding="utf-8")
+    binding_dir = tmp_path / "MvImport"
+    binding_dir.mkdir()
+    (binding_dir / "MvCameraControl_class.py").write_text("# test binding\n", encoding="utf-8")
+    runtime_dll = tmp_path / "Win32_i86" / "MvCameraControl.dll"
+    runtime_dll.parent.mkdir()
+    pe_bytes = bytearray(0x86)
+    pe_bytes[0:2] = b"MZ"
+    pe_bytes[0x3C:0x40] = (0x80).to_bytes(4, "little")
+    pe_bytes[0x80:0x84] = b"PE\x00\x00"
+    pe_bytes[0x84:0x86] = (0x014C).to_bytes(2, "little")
+    runtime_dll.write_bytes(pe_bytes)
+    monkeypatch.setattr(
+        "yyt1771_g3.services.hardware_setup_service.local_hardware_profile_path",
+        lambda path=None: config_path,
+        raising=False,
+    )
+    monkeypatch.setattr("yyt1771_g3.services.hardware_setup_service.platform.system", lambda: "Windows")
+
+    client = TestClient(api_main.app)
+    response = client.post(
+        "/api/hardware/setup/sdk-paths",
+        json={"sdk_python_paths": [str(binding_dir)], "sdk_library_path": str(runtime_dll)},
+    )
+
+    assert response.status_code == 400
+    assert "Win64_x64" in response.json()["detail"]["message"]
+    assert response.json()["detail"]["details"]["pe_machine"] == "0x014c"
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 def test_hardware_cameras_endpoint_returns_discovered_hik_devices(monkeypatch) -> None:  # noqa: ANN001

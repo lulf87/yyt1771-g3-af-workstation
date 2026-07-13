@@ -63,7 +63,7 @@ The backend rejects writes to example/template config files.
 
 ## Hik MVS SDK Paths
 
-On a new computer, install Hikrobot MVS before running real-camera setup. If the environment check reports that `MvCameraControl_class` or the MVS dynamic library is missing, configure the local profile, not an example YAML.
+On a new computer, install Hikrobot MVS before running real-camera setup. Standard Windows MVS paths are discovered automatically. If the environment check reports that `MvCameraControl_class` or the MVS dynamic library is missing, use **Device setup > Environment check > Validate and save paths**. This writes the validated paths to the application hardware profile; do not edit an example YAML.
 
 Edit or create:
 
@@ -101,9 +101,14 @@ Windows SDK Python path:
 Windows SDK library dir:
   C:\Program Files (x86)\MVS\Development\Libraries\win64
 
-Windows dynamic library:
+Windows x64 runtime library (current MVS layout):
+  C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll
+
+Windows legacy dynamic library fallback:
   C:\Windows\System32\MvCameraControl.dll
 ```
+
+The Windows packaged runtime automatically checks the standard `MvImport` and `Runtime\Win64_x64` locations, registers the runtime directory with `os.add_dll_directory()`, and preloads the x64 DLL before importing `MvCameraControl_class`. Do not select `Runtime\Win32_i86` for the 64-bit G3 package.
 
 Environment variables are also supported for advanced deployments:
 

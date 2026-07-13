@@ -435,6 +435,7 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
     testHardwareCamera,
     testHardwareTemperature,
     testHardwareBinding,
+    saveHardwareSdkPaths,
     saveHardwareBinding
   } = await loadApiClientModule();
   const calls = [];
@@ -514,6 +515,18 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
+    if (path === "/api/hardware/setup/sdk-paths") {
+      return new Response(
+        JSON.stringify({
+          saved: true,
+          config_path: "C:\\ProgramData\\YYT1771-G3\\config\\hardware.yaml",
+          sdk_python_paths: ["C:\\MVS\\MvImport"],
+          sdk_library_path: "C:\\MVS\\Runtime\\Win64_x64\\MvCameraControl.dll",
+          environment: { overall_status: "passed", checks: [] }
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
     throw new Error(`unexpected path ${path}`);
   };
   const binding = {
@@ -542,6 +555,10 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
     });
     const testResult = await testHardwareBinding(binding);
     const saveResult = await saveHardwareBinding(binding);
+    const sdkPathResult = await saveHardwareSdkPaths({
+      sdk_python_paths: ["C:\\MVS\\MvImport"],
+      sdk_library_path: "C:\\MVS\\Runtime\\Win64_x64\\MvCameraControl.dll"
+    });
 
     assert.equal(environment.overall_status, "failed");
     assert.equal(cameras[0].serial_number, "00J67378626");
@@ -550,7 +567,8 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
     assert.equal(testResult.overall_status, "passed");
     assert.equal(saveResult.saved, true);
     assert.equal(saveResult.real_hardware_available, false);
-    assert.equal(calls.length, 6);
+    assert.equal(sdkPathResult.environment.overall_status, "passed");
+    assert.equal(calls.length, 7);
     assert.match(calls[0].url, /\/api\/hardware\/setup\/environment$/);
     assert.match(calls[1].url, /\/api\/hardware\/cameras$/);
     assert.match(calls[2].url, /\/api\/hardware\/cameras\/test$/);
@@ -569,6 +587,12 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
     assert.match(calls[5].url, /\/api\/hardware\/binding$/);
     assert.equal(calls[5].init.method, "POST");
     assert.deepEqual(JSON.parse(calls[5].init.body), binding);
+    assert.match(calls[6].url, /\/api\/hardware\/setup\/sdk-paths$/);
+    assert.equal(calls[6].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[6].init.body), {
+      sdk_python_paths: ["C:\\MVS\\MvImport"],
+      sdk_library_path: "C:\\MVS\\Runtime\\Win64_x64\\MvCameraControl.dll"
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
