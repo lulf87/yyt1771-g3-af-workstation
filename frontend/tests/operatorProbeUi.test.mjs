@@ -22,11 +22,28 @@ test("operator mode has a fresh current-frame probe handler", () => {
   );
 
   assert.match(handler, /if \(!operatorRealHardwareAvailable\)/);
-  assert.match(handler, /await probeRealCameraSetupFrame\(currentMeasurement, \{\s+operatorMode: true,\s+operatorDataSource: "real_camera"\s+\}\);/s);
+  assert.match(handler, /currentMeasurement\.measurement_id === REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID/);
+  assert.match(handler, /bootstrapFrame = await previewRealCamera\(\)/);
+  assert.match(handler, /createRealCameraMeasurementFromShape\(currentMeasurement, bootstrapFrame\.shape\)/);
+  assert.match(handler, /await probeRealCameraSetupFrame\(/);
   assert.match(handler, /applyRealCameraProbeResponse\(response, "live"\);/);
   assert.match(handler, /setProbe\(response\);/);
-  assert.doesNotMatch(handler, /framePngDataUrl/);
+  assert.match(handler, /framePngDataUrl: bootstrapFrame\.image_data_url/);
   assert.doesNotMatch(handler, /requireSetupFrameDataUrl/);
+});
+
+test("production real-camera startup does not depend on an offline dataset", () => {
+  const app = sourceSlice(
+    "function App() {",
+    "function TabButton({"
+  );
+
+  assert.match(mainSource, /REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID = "real_camera-bootstrap"/);
+  assert.match(app, /runtime\.runtime_source === "real_hardware" && !measurementRef\.current/);
+  assert.match(app, /applyMeasurement\(createRealCameraBootstrapMeasurement\(\)\)/);
+  assert.match(app, /const activeDataset = selectedDataset \?\? \(realHardwareRuntime \? REAL_CAMERA_BOOTSTRAP_DATASET : null\)/);
+  assert.match(app, /const activeSummary = summary \?\? \(realHardwareRuntime \? createRealCameraBootstrapSummary\(\) : null\)/);
+  assert.match(app, /activeDataset && activeSummary && measurement/);
 });
 
 test("operator current-frame probe dispatches the startup-selected runtime source", () => {
@@ -84,7 +101,7 @@ test("operator real-camera mode requires real hardware before showing frames or 
   assert.doesNotMatch(operatorPage, /isOfflineSource/);
   assert.match(operatorPage, /!simulatedMode && !realHardwareAvailable \? \(/);
   assert.match(operatorPage, /<RealHardwareUnavailableCard/);
-  assert.match(operatorPage, /const startDisabled = operatorRunActive \|\| !sourceAvailable/);
+  assert.match(operatorPage, /measurement\.measurement_id === REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID/);
   assert.match(operatorPage, /title=\{!sourceAvailable \? t\("Real hardware unavailable"\) : undefined\}/);
   assert.doesNotMatch(operatorPage, /activeFrameUrl/);
 });

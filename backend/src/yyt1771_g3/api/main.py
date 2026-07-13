@@ -119,6 +119,11 @@ def _registry():
     return load_dataset_registry(config_path)
 
 
+def _offline_datasets_disabled_by_runtime() -> bool:
+    policy = _runtime_policy()
+    return policy.production_mode and policy.runtime_source == "real_hardware"
+
+
 def _hardware_config() -> HardwareConfig:
     return load_hardware_config()
 
@@ -267,6 +272,8 @@ def get_app_runtime() -> dict[str, object]:
 
 @app.get("/api/offline-datasets")
 def list_offline_datasets() -> dict[str, list[dict[str, Any]]]:
+    if _offline_datasets_disabled_by_runtime():
+        return {"datasets": []}
     try:
         return {"datasets": _registry().list_offline_datasets()}
     except OfflineDatasetError as exc:
@@ -458,11 +465,15 @@ def _operator_source_status_payload(
     offline_dataset_error: str = "",
 ) -> dict[str, Any]:
     if offline_datasets_available is None:
-        try:
-            offline_datasets_available = bool(_registry().list_offline_datasets())
-        except OfflineDatasetError as exc:
+        if _offline_datasets_disabled_by_runtime():
             offline_datasets_available = False
-            offline_dataset_error = str(exc)
+            offline_dataset_error = ""
+        else:
+            try:
+                offline_datasets_available = bool(_registry().list_offline_datasets())
+            except OfflineDatasetError as exc:
+                offline_datasets_available = False
+                offline_dataset_error = str(exc)
     status = operator_source_status(
         camera_profile=camera_profile or config.camera.to_profile(),
         camera_meta=camera_meta,

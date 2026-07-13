@@ -112,7 +112,8 @@
 | P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
 | P-0099 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / position result cards | 六个位置结果纵向占用过多，应在桌面端每行显示三个 | 2026-07-12 | 2026-07-12 | Codex | 桌面 3 列、中屏 2 列、手机 1 列；6 位置 Chromium 复测为两行 |
 | P-0100 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows distribution / runtime | Windows 目标机仍需 Python、Node 和 Git Bash，无法零环境安装运行 | 2026-07-12 | 2026-07-12 | Codex | Mac 自动化待完成；Windows x64 CI 打包、干净机安装和真实硬件浏览器复测待补 |
-| P-0101 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / PyInstaller / launcher | portable G3Workstation.exe 启动报 `No module named yyt1771_g3.api` | 2026-07-12 | 2026-07-12 | Codex | hidden import 与打包后 EXE health smoke 已补；待 Windows CI 和用户重新运行新包 |
+| P-0101 | RESOLVED_BROWSER_VERIFIED | P0 | Windows / PyInstaller / launcher | portable G3Workstation.exe 启动报 `No module named yyt1771_g3.api` | 2026-07-12 | 2026-07-13 | Codex | Windows 11 + Chrome 已确认重建 EXE 能启动单端口应用；新 registry 错误另见 P-0102 |
+| P-0102 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / offline dataset registry / operator startup | Windows 真实硬件包启动后因缺少开发机离线数据 registry 显示 500 | 2026-07-13 | 2026-07-13 | Codex | 生产真实硬件模式已移除离线 registry 启动依赖；Mac Chromium 预检通过，待 Windows dev.3 复测 |
 
 ---
 
@@ -5087,7 +5088,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0038 — Run 结束时缺少独立实时结果链 As/Af/AF95，与 Analysis AFAS 后处理未形成两套分析
 
-- Status: OPEN
+- Status: FIXED_PENDING_BROWSER_RETEST
 - Priority: P1
 - Module: `backend/src/yyt1771_g3/services/live_offline_run_service.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `frontend/src/main.tsx`, `frontend/src/curves.ts`
 - Found date: 2026-06-07
@@ -9841,7 +9842,7 @@ FIXED_PENDING_BROWSER_RETEST
 
 ### P-0101 — Windows portable EXE 缺失 FastAPI 动态入口模块
 
-- Status: FIXED_PENDING_BROWSER_RETEST
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `packaging/windows/g3_workstation.spec`, `packaging/windows/build_release.ps1`
 - Found date: 2026-07-12
@@ -9879,18 +9880,104 @@ PYTHONPYCACHEPREFIX=/tmp/yyt1771-g3-pycache PYTHONPATH=backend/src python3 -m py
 
 #### Browser retest log
 
-- Retest date: pending
-- Browser: Windows default browser required
-- OS: Windows 10/11 x64
+- Retest date: 2026-07-13
+- Browser: Google Chrome（用户目标机真实浏览器）
+- OS: Windows 11 x64
 - Frontend URL: `http://127.0.0.1:8022/`
 - Backend URL: `http://127.0.0.1:8022`
 - Dataset: N/A for startup smoke; real hardware flow remains under P-0100
 - Page: application startup
 - Steps: download rebuilt portable artifact, extract fully, run `G3Workstation.exe`, open health and root page
 - Expected: no PyInstaller exception; health returns `ok`; browser opens G3
-- Actual: pending rebuilt artifact
-- Result: pending
-- Evidence: user photo `/Users/lulingfeng/Downloads/IMG_2815.HEIC`; CI run pending
+- Actual: rebuilt EXE starts the bundled FastAPI/frontend successfully and Chrome renders `http://127.0.0.1:8022/`; the previous `No module named yyt1771_g3.api` exception no longer occurs. A separate missing offline dataset registry error is tracked as P-0102.
+- Result: PASS for P-0101 startup regression
+- Evidence: user photos `/Users/lulingfeng/Downloads/IMG_2815.HEIC`, `/Users/lulingfeng/Downloads/IMG_2816.HEIC`; Windows CI run `29198721484`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0102 — Windows 真实硬件包缺少开发机离线数据 registry 时启动页显示 500
+
+- Status: OPEN
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/offline_dataset.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/main.tsx`, Windows packaged runtime
+- Found date: 2026-07-13
+- Last update: 2026-07-13
+- Owner/tool: Codex / investigate
+
+#### Problem
+
+Windows portable `dev.2` 已成功启动单端口应用，但 Operator 首页加载时显示：
+
+```text
+500 Internal Server Error: {"detail":"offline dataset registry config is not accessible: C:\\Users\\Lenovo\\AppData\\Local\\Temp\\configs\\local\\offline_datasets.local.json"}
+```
+
+同时页面显示“未找到离线数据”。
+
+#### Root cause
+
+- 前端应用初始化无条件调用 `/api/offline-datasets`，即使 launcher 已锁定 `production + real_hardware`。
+- `default_registry_config_path()` 仍通过源码仓库根目录推导 `configs/local/offline_datasets.local.json`；冻结运行时会落到打包/临时路径。
+- Windows 包不携带该本地 registry；该 registry 本身登记的是 Mac 开发机 Golden Dataset 路径，也不应作为真实硬件生产版必需资源。
+- `/api/offline-datasets` 将默认 registry 缺失转换为 HTTP 500，因此一个可选的开发功能在生产启动页产生全局错误。
+
+#### Expected
+
+`production + real_hardware` 下应用应直接进入真实相机/温控设备设置流程；离线数据列表固定为空，不得显示 500 或阻断真实硬件使用。源码开发模式中显式配置了 registry 却无法读取时仍应保留可诊断错误。
+
+用户进一步确认 Windows 正式版不需要任何离线素材，只需要真实 Hik 相机与真实 LU92XX 温控。Windows 正式包不得携带离线素材、显示模拟入口或在硬件不可用时回退到模拟源。
+
+#### Reproduction
+
+- Retest date: 2026-07-13
+- Browser: Google Chrome（用户目标机真实浏览器）
+- OS: Windows 11 x64
+- Frontend URL: `http://127.0.0.1:8022/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none
+- Page: Operator startup
+- Steps: run rebuilt portable `G3Workstation.exe`; open root page
+- Expected: real-hardware startup/setup UI without offline dataset error
+- Actual: global 500 banner reports inaccessible temp-path registry
+- Result: FAIL
+- Evidence: `/Users/lulingfeng/Downloads/IMG_2816.HEIC`
+
+#### Fix summary
+
+- `production + real_hardware` 下 `/api/offline-datasets` 固定返回空列表，不再读取开发机 registry；operator source status 同样不再把缺少 registry 记为硬件警告。
+- 前端真实硬件启动不再依赖 offline dataset/summary；新增只用于页面启动的 bootstrap measurement，使设备设置入口在零离线数据时仍可使用。
+- bootstrap measurement 不允许直接开始正式测量；第一次“检测当前帧”先捕获真实相机帧，按实际图像 shape 重建 source-pixel ROI，再对同一帧执行检测。
+- Windows 打包脚本在 `/api/health` 之外强制检查 packaged EXE 的 `/api/offline-datasets` 响应，防止相同错误再次上传。
+- Windows 交付文档明确锁定真实相机 + 真实温控、不携带离线素材、不允许模拟回退。
+
+#### Tests run
+
+```text
+Backend targeted: 5 passed
+Backend full suite: 259 passed
+Frontend: 149 passed
+Frontend production build: PASS
+Mac source-runtime production + real_hardware + missing explicit registry: /api/offline-datasets = 200 {"datasets":[]}
+```
+
+#### Browser precheck
+
+- Retest date: 2026-07-13
+- Browser: gstack browse / Headless Chromium
+- OS: macOS 26.1（Windows packaged runtime final retest pending）
+- Frontend URL: `http://127.0.0.1:8024/`
+- Backend URL: `http://127.0.0.1:8024`
+- Dataset: none; `YYT1771_G3_OFFLINE_DATASETS_CONFIG` deliberately points to a missing file
+- Page: Operator startup / Live Test
+- Steps: start only launcher with `production + real_hardware`; open root; wait for network idle; inspect text, console and network.
+- Expected: no offline registry 500/no-dataset gate; render real-hardware unavailable card and device setup entry.
+- Actual: root 200; `/api/offline-datasets` 200 with 15-byte empty-list payload; page rendered real camera workflow and device setup entry. LU92XX 503 is expected because the Mac test host has no connected controller.
+- Result: PASS for source-runtime precheck; Windows dev.3 remains required.
+- Evidence: `output/playwright/p0102-windows-real-hardware-no-offline-registry-20260713.png`
 
 #### Final status
 

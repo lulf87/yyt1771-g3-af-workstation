@@ -87,3 +87,37 @@ def test_offline_dataset_api_lists_summary_and_edge_frame_png(
 
     invalid_png = client.get("/api/offline-datasets/golden_test/frames/first.png?max_width=0")
     assert invalid_png.status_code == 400
+
+
+def test_missing_default_registry_is_optional_for_production_real_hardware(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("YYT1771_G3_OFFLINE_DATASETS_CONFIG", raising=False)
+    monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
+    monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "production")
+
+    from yyt1771_g3.api.main import app
+
+    response = TestClient(app).get("/api/offline-datasets")
+
+    assert response.status_code == 200
+    assert response.json() == {"datasets": []}
+
+
+def test_explicit_missing_registry_remains_an_error_in_development(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    missing_config = tmp_path / "missing.json"
+    monkeypatch.setenv("YYT1771_G3_OFFLINE_DATASETS_CONFIG", str(missing_config))
+    monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
+    monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "development")
+
+    from yyt1771_g3.api.main import app
+
+    response = TestClient(app).get("/api/offline-datasets")
+
+    assert response.status_code == 500
+    assert str(missing_config) in response.json()["detail"]

@@ -19,3 +19,6 @@ def test_windows_build_starts_packaged_executable_before_upload() -> None:
     assert "Invoke-RestMethod" in script
     assert "/api/health" in script
     assert "failed the /api/health startup smoke test" in script
+    assert "/api/offline-datasets" in script
+    assert "@($OfflineDatasets.datasets).Count -eq 0" in script
+    assert "exposed offline datasets in production real-hardware mode" in script

@@ -45,6 +45,7 @@ $SmokeProcess = Start-Process -FilePath $Executable `
     -ArgumentList @("--source", "real", "--product-mode", "production", "--port", "$SmokePort", "--no-browser") `
     -PassThru
 $SmokeHealthy = $false
+$SmokeOfflineDatasetsDisabled = $false
 try {
     for ($Attempt = 0; $Attempt -lt 60; $Attempt++) {
         if ($SmokeProcess.HasExited) { break }
@@ -52,6 +53,8 @@ try {
             $Health = Invoke-RestMethod -Uri "http://127.0.0.1:$SmokePort/api/health" -TimeoutSec 1
             if ($Health.status -eq "ok") {
                 $SmokeHealthy = $true
+                $OfflineDatasets = Invoke-RestMethod -Uri "http://127.0.0.1:$SmokePort/api/offline-datasets" -TimeoutSec 2
+                $SmokeOfflineDatasetsDisabled = @($OfflineDatasets.datasets).Count -eq 0
                 break
             }
         } catch {
@@ -64,6 +67,9 @@ try {
 }
 if (-not $SmokeHealthy) {
     throw "Packaged G3Workstation.exe failed the /api/health startup smoke test"
+}
+if (-not $SmokeOfflineDatasetsDisabled) {
+    throw "Packaged G3Workstation.exe exposed offline datasets in production real-hardware mode"
 }
 
 $PortableZip = Join-Path $BuildRoot "YYT1771-G3-$Version-portable-x64.zip"

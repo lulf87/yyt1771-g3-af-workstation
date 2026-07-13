@@ -400,6 +400,17 @@ const DEFAULT_AFAS_ANALYSIS_FORM: AfasAnalysisFormState = {
 
 const LIVE_FRAME_DISPLAY_MAX_WIDTH = 1024;
 const REAL_CAMERA_SETUP_CHANGE_DEBOUNCE_MS = 500;
+const REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID = "real_camera-bootstrap";
+const REAL_CAMERA_BOOTSTRAP_SHAPE = [1, 1];
+const REAL_CAMERA_BOOTSTRAP_DATASET: OfflineDatasetListItem = {
+  id: "real_camera",
+  label: "Real camera",
+  object_class: "C_BUNDLE_ENVELOPE",
+  g3_type: "C",
+  default_detector: "BundleEnvelopeDetector",
+  default_width_mode: "max_width",
+  frame_count: 0
+};
 const OPERATOR_SOURCE_STATUS_RETRY_DELAYS_MS = [5000, 10000, 30000] as const;
 
 const OBJECT_CLASS_OPTIONS = [
@@ -1001,6 +1012,9 @@ function App() {
       setOperatorDataSource(source);
       setSetupSource(source);
       if (runtime.simulated_dataset_id) setSelectedId(runtime.simulated_dataset_id);
+      if (runtime.runtime_source === "real_hardware" && !measurementRef.current) {
+        applyMeasurement(createRealCameraBootstrapMeasurement());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -1067,7 +1081,7 @@ function App() {
   }
 
   async function runOperatorRealCameraSetupProbe() {
-    const currentMeasurement = measurementRef.current ? toOperatorActualUseMeasurement(measurementRef.current) : null;
+    let currentMeasurement = measurementRef.current ? toOperatorActualUseMeasurement(measurementRef.current) : null;
     if (!currentMeasurement) return;
     if (!operatorRealHardwareAvailable) {
       setOperatorStartMessage(t("Real hardware unavailable"));
@@ -1078,10 +1092,28 @@ function App() {
     setProbing(true);
     setError("");
     try {
-      const response = await probeRealCameraSetupFrame(currentMeasurement, {
-        operatorMode: true,
-        operatorDataSource: "real_camera"
-      });
+      let bootstrapFrame: CameraPreviewResponse | null = null;
+      if (currentMeasurement.measurement_id === REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID) {
+        bootstrapFrame = await previewRealCamera();
+        currentMeasurement = toOperatorActualUseMeasurement(
+          createRealCameraMeasurementFromShape(currentMeasurement, bootstrapFrame.shape)
+        );
+      }
+      const response = await probeRealCameraSetupFrame(
+        currentMeasurement,
+        bootstrapFrame?.image_data_url
+          ? {
+              framePngDataUrl: bootstrapFrame.image_data_url,
+              frameTimestampMs: bootstrapFrame.timestamp_ms,
+              cameraMeta: bootstrapFrame.camera_meta,
+              operatorMode: true,
+              operatorDataSource: "real_camera"
+            }
+          : {
+              operatorMode: true,
+              operatorDataSource: "real_camera"
+            }
+      );
       applyRealCameraProbeResponse(response, "live");
       setProbe(response);
       setCameraPreviewRefreshStatus("ok");
@@ -1640,10 +1672,14 @@ function App() {
     () => datasets.find((dataset) => dataset.id === selectedId) ?? null,
     [datasets, selectedId]
   );
+  const realHardwareRuntime = appRuntime?.runtime_source === "real_hardware";
+  const activeDataset = selectedDataset ?? (realHardwareRuntime ? REAL_CAMERA_BOOTSTRAP_DATASET : null);
+  const activeSummary = summary ?? (realHardwareRuntime ? createRealCameraBootstrapSummary() : null);
 
   const frameCount = selectedDataset?.frame_count ?? 1;
-  const frameUrl =
-    frameIndex === 1
+  const frameUrl = !selectedId
+    ? ""
+    : frameIndex === 1
       ? frameImageUrl(selectedId, "first")
       : frameIndex === frameCount
         ? frameImageUrl(selectedId, "last")
@@ -1691,12 +1727,12 @@ function App() {
 
         <section className="panelArea">
           {error ? <div className="statusBlock error">{error}</div> : null}
-          {loading && !summary ? <div className="statusBlock">{t("Loading")}</div> : null}
-          {!loading && !selectedDataset ? <div className="statusBlock">{t("No datasets")}</div> : null}
-          {selectedDataset && summary && measurement ? (
+          {loading && !activeSummary ? <div className="statusBlock">{t("Loading")}</div> : null}
+          {!loading && !activeDataset ? <div className="statusBlock">{t("No datasets")}</div> : null}
+          {activeDataset && activeSummary && measurement ? (
             <PageContent
-              dataset={selectedDataset}
-              summary={summary}
+              dataset={activeDataset}
+              summary={activeSummary}
               measurement={measurement}
               onMeasurement={applyMeasurement}
               frameIndex={frameIndex}
@@ -2373,7 +2409,10 @@ function OperatorRunPage({
   const probeCurrentFrameDisabled =
     probing || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
-  const startDisabled = operatorRunActive || !sourceAvailable;
+  const startDisabled =
+    operatorRunActive ||
+    !sourceAvailable ||
+    (!simulatedMode && measurement.measurement_id === REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID);
   const sourceBadgeLabel = simulatedMode
     ? "Simulated material debug"
     : realHardwareAvailable
@@ -7720,6 +7759,44 @@ function createDefaultMeasurement(
     measurement_coordinates: "source_pixel",
     roi: createDefaultRoiForShape(shape),
     detector_config: DEFAULT_CONFIG
+  };
+}
+
+function createRealCameraBootstrapMeasurement(): MeasurementDefinition {
+  return {
+    ...toOperatorActualUseMeasurement(
+      createRealCameraMeasurementFromShape(null, REAL_CAMERA_BOOTSTRAP_SHAPE)
+    ),
+    measurement_id: REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID
+  };
+}
+
+function createRealCameraBootstrapSummary(): OfflineDatasetSummary {
+  const frame = {
+    frame_index: 0,
+    shape: REAL_CAMERA_BOOTSTRAP_SHAPE,
+    dtype: ""
+  };
+  return {
+    dataset: REAL_CAMERA_BOOTSTRAP_DATASET,
+    manifest: {
+      frame_count: 0,
+      target_fps: null,
+      achieved_fps: null,
+      started_at_ms: null,
+      camera_profile: null,
+      temperature_csv: null,
+      first_frame: null,
+      last_frame: null
+    },
+    temperature: {
+      row_count: 0,
+      columns: [],
+      first_row: null,
+      last_row: null
+    },
+    first_frame: frame,
+    last_frame: frame
   };
 }
 

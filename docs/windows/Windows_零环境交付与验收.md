@@ -4,6 +4,8 @@
 
 目标操作系统为 Windows 10/11 x64。最终用户只需运行 `YYT1771-G3-Setup-<version>-x64.exe`，无需安装 Python、Node.js、Git 或 Git Bash。运行时由单一 `G3Workstation.exe` 启动 FastAPI，并由后端同源提供已编译前端。
 
+Windows 正式包固定使用 `production + real_hardware`，只支持真实 Hik 相机与真实 LU92XX 温控。安装包不携带本机 Golden Dataset，不要求 `offline_datasets.local.json`，不向操作员提供离线素材或模拟数据入口，也不得在硬件不可用时回退到模拟源。离线数据能力仅保留在源码开发与自动测试模式中。
+
 ## 在 Mac 上的开发边界
 
 Mac 可以完成 Python/TypeScript 测试、`frontend/dist` 构建、路径策略和打包配置审查。PyInstaller 产物和 Inno Setup 安装包必须在 Windows x64 上生成；本仓库通过 `Windows release` GitHub Actions 工作流完成。
