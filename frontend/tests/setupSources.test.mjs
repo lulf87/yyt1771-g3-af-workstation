@@ -505,6 +505,7 @@ test("real camera setup live polling uses fast default interval, slow unavailabl
     normalizeSetupPreviewFps,
     setupPreviewFpsLabel,
     setupPreviewIntervalMs,
+    setupPreviewNextDelayMs,
     setupPreviewPollingIntervalMs
   } = await loadSetupSourcesModule();
 
@@ -512,7 +513,7 @@ test("real camera setup live polling uses fast default interval, slow unavailabl
 
   assert.equal(measurement.detector_config.contrast_threshold, 55);
   assert.equal(measurement.detector_config.distance_outlier_max_jump_px, 100);
-  assert.equal(measurement.detector_config.setup_preview_fps, 0);
+  assert.equal(measurement.detector_config.setup_preview_fps, 20);
   assert.equal(normalizeSetupPreviewFps(null), 0);
   assert.equal(normalizeSetupPreviewFps(0), 0);
   assert.equal(normalizeSetupPreviewFps(2.5), 2.5);
@@ -524,8 +525,11 @@ test("real camera setup live polling uses fast default interval, slow unavailabl
   assert.equal(setupPreviewIntervalMs(30), 33);
   assert.equal(setupPreviewFpsLabel(0), "Auto (5 fps default)");
   assert.equal(setupPreviewFpsLabel(2.5), "2.5 fps live display");
-  assert.equal(setupPreviewPollingIntervalMs("ok", measurement.detector_config.setup_preview_fps), 200);
+  assert.equal(setupPreviewPollingIntervalMs("ok", measurement.detector_config.setup_preview_fps), 50);
   assert.equal(setupPreviewPollingIntervalMs("unavailable", measurement.detector_config.setup_preview_fps), 2000);
+  assert.equal(setupPreviewNextDelayMs("ok", 20, 30), 20);
+  assert.equal(setupPreviewNextDelayMs("ok", 20, 80), 0);
+  assert.equal(setupPreviewNextDelayMs("unavailable", 20, 80), 2000);
   assert.deepEqual(buildRealCameraRunCameraProfile(measurement), {
     pixel_format: "mono8",
     target_frame_rate_hz: 8

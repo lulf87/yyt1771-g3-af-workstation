@@ -22,3 +22,6 @@ def test_windows_build_starts_packaged_executable_before_upload() -> None:
     assert "/api/offline-datasets" in script
     assert "@($OfflineDatasets.datasets).Count -eq 0" in script
     assert "exposed offline datasets in production real-hardware mode" in script
+    assert "/api/hardware/profile" in script
+    assert "target_frame_rate_hz" in script
+    assert "did not expose the 20 FPS camera target" in script

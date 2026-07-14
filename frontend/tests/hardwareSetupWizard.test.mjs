@@ -155,3 +155,19 @@ test("device setup save refreshes hardware profile and source status and warns w
   assert.match(wizard, /Configuration saved but hardware unavailable/);
   assert.match(wizard, /saveResult\.real_hardware_available === false/);
 });
+
+test("device setup Finish saves before closing and stays open when save fails", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(wizard, /async function saveBinding\(\): Promise<boolean>/);
+  assert.match(wizard, /const freshTestResult = await testHardwareBinding\(binding\);/);
+  assert.match(wizard, /if \(freshTestResult\.overall_status !== "passed"\)/);
+  assert.match(wizard, /async function finishWizard\(\)/);
+  assert.match(wizard, /const saved = saveResult\?\.saved === true \|\| await saveBinding\(\);/);
+  assert.match(wizard, /if \(saved\) onClose\(\);/);
+  assert.match(wizard, /onClick=\{\(\) => void finishWizard\(\)\}/);
+  assert.match(wizard, /disabled=\{!binding \|\| testResult\?\.overall_status !== "passed" \|\| savingBinding\}/);
+});

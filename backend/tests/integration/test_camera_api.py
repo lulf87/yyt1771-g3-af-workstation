@@ -278,6 +278,7 @@ def test_camera_preview_endpoint_returns_setup_metadata(monkeypatch) -> None:  #
 
 def test_camera_preview_reuses_source_for_same_profile(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig
     api_main._reset_preview_camera_source()
 
     sources: list[FakeApiCameraSource] = []
@@ -293,6 +294,11 @@ def test_camera_preview_reuses_source_for_same_profile(monkeypatch) -> None:  # 
             return super().preview_frame()
 
     monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingCameraSource)
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(camera=CameraConfig(target_frame_rate_hz=10.0)),
+    )
 
     client = TestClient(api_main.app)
     first = client.get("/api/camera/preview")
@@ -301,6 +307,7 @@ def test_camera_preview_reuses_source_for_same_profile(monkeypatch) -> None:  # 
     assert first.status_code == 200
     assert second.status_code == 200
     assert len(sources) == 1
+    assert sources[0].profile["target_frame_rate_hz"] == 20.0
     assert sources[0].preview_count == 2
     assert sources[0].closed is False
 

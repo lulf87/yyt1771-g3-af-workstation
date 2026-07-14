@@ -10,6 +10,8 @@ from yyt1771_g3.core.app_paths import hardware_config_path as application_hardwa
 
 HARDWARE_CONFIG_ENV = "YYT1771_G3_HARDWARE_CONFIG"
 DEFAULT_TEMP_SYNC_TARGET_MS = 1000.0
+DEFAULT_CAMERA_TARGET_FRAME_RATE_HZ = 20.0
+SETUP_PREVIEW_TARGET_FRAME_RATE_HZ = 20.0
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,7 @@ class CameraConfig:
     exposure_us: int = 10000
     gain_db: float = 0.0
     timeout_ms: int = 1000
-    target_frame_rate_hz: float | None = 10.0
+    target_frame_rate_hz: float | None = DEFAULT_CAMERA_TARGET_FRAME_RATE_HZ
     device_roi: DeviceRoiConfig = field(default_factory=DeviceRoiConfig)
     sdk_python_paths: list[str] = field(default_factory=list)
     sdk_library_path: str = ""
@@ -184,7 +186,10 @@ def _camera_config(payload: dict[str, Any]) -> CameraConfig:
         exposure_us=int(payload.get("exposure_us", 10000) or 10000),
         gain_db=float(payload.get("gain_db", 0.0) or 0.0),
         timeout_ms=int(payload.get("timeout_ms", 1000) or 1000),
-        target_frame_rate_hz=_optional_float(payload.get("target_frame_rate_hz"), 10.0),
+        target_frame_rate_hz=_optional_float(
+            payload.get("target_frame_rate_hz"),
+            DEFAULT_CAMERA_TARGET_FRAME_RATE_HZ,
+        ),
         device_roi=DeviceRoiConfig(
             x=int(roi.get("x", 0) or 0),
             y=int(roi.get("y", 0) or 0),

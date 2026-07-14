@@ -104,19 +104,30 @@ test("operator camera area only exposes current-frame probe and hides engineerin
   }
 });
 
-test("operator mode does not auto-open real camera preview on source selection or source-status success", () => {
+test("operator camera area treats connected hardware without a probed frame as an idle empty state", () => {
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(
+    operatorPage,
+    /cameraPreviewRefreshStatus === "unavailable" && realHardwareAvailable && !cameraPreviewError\s+\? "idle"\s+: cameraPreviewRefreshStatus/
+  );
+});
+
+test("operator mode auto-opens a 20 fps real camera preview after hardware setup succeeds", () => {
   const app = sourceSlice(
     "function App() {",
     "function TabButton({"
   );
-  const chooseSetupSource = sourceSlice(
-    "function chooseSetupSource(",
-    "function chooseOperatorDataSource("
-  );
 
-  assert.doesNotMatch(app, /operatorSourceStatus\.real_hardware_available\) \{[\s\S]{0,420}previewRealCameraFrame/);
-  assert.match(chooseSetupSource, /source === "real_camera" &&\s+uiMode !== "operator"/);
-  assert.doesNotMatch(chooseSetupSource, /operatorSourceStatus\?\.real_hardware_available === true/);
+  assert.match(mainSource, /const OPERATOR_CAMERA_PREVIEW_FPS = 20;/);
+  assert.match(app, /const operatorPreviewAllowed =/);
+  assert.match(app, /operatorSourceStatus\?\.real_hardware_available === true/);
+  assert.match(app, /if \(uiMode === "operator" && !operatorPreviewAllowed\) return;/);
+  assert.match(mainSource, /setup_preview_fps: OPERATOR_CAMERA_PREVIEW_FPS/);
+  assert.doesNotMatch(app, /if \(uiMode === "operator"\) return;\s+if \(!shouldPollRealCameraPreview/);
 });
 
 test("operator temperature panel auto-read path removes manual read temperature button", () => {

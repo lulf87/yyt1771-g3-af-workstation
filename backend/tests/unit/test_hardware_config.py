@@ -11,6 +11,7 @@ def test_load_hardware_config_defaults_real_hardware_sync_tolerance_to_serial_wi
 
     config = load_hardware_config(config_path)
 
+    assert config.camera.target_frame_rate_hz == 20.0
     assert config.run.temp_sync_target_ms == 1000.0
     assert config.run.save_raw_frames is False
     assert config.run.save_preview_frames is True

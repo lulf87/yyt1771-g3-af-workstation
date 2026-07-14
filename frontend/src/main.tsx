@@ -143,6 +143,7 @@ import {
 } from "./geometry/roiInteraction";
 import {
   SETUP_SOURCE_OPTIONS,
+  DEFAULT_REAL_CAMERA_PREVIEW_FPS,
   buildRealCameraRunCameraProfile,
   buildRunSetupSummary,
   buildSetupTemperatureSummary,
@@ -162,7 +163,7 @@ import {
   shouldRefreshRealCameraFrameAfterSetupChange,
   shouldRefreshRealCameraFrameAfterRoiCommit,
   setupPreviewFpsLabel,
-  setupPreviewPollingIntervalMs,
+  setupPreviewNextDelayMs,
   updateRealCameraPreviewState,
   type PreviewRefreshStatus,
   type RealCameraPreviewMode,
@@ -280,6 +281,7 @@ type OperatorDataSource = "offline_dataset" | "real_camera";
 
 const OPERATOR_SOURCE_STORAGE_KEY = "yyt1771-g3-operator-source";
 const LAST_SAVED_RUN_STORAGE_KEY = "yyt1771-g3-last-saved-run";
+const OPERATOR_CAMERA_PREVIEW_FPS = 20;
 
 type DetectionResultSource = "stabilized" | "raw";
 
@@ -375,6 +377,7 @@ const DEFAULT_CONFIG = {
   suspicious_outlier_reject_count: 1,
   max_frames_per_run: 160,
   live_offline_fps: 8,
+  setup_preview_fps: DEFAULT_REAL_CAMERA_PREVIEW_FPS,
   target_temperature_celsius: null,
   temperature_power_percent: 100
 };
@@ -701,6 +704,12 @@ function App() {
     temperatureStatus?.temperature_status === "unavailable" ||
     Boolean(temperatureStatus?.reading.error);
   const operatorRealHardwareAvailable = operatorSourceRealHardwareAvailable && !operatorTemperatureHardwareUnavailable;
+  const operatorPreviewAllowed =
+    uiMode === "operator" &&
+    page === "operatorRun" &&
+    operatorDataSource === "real_camera" &&
+    operatorSourceStatus?.real_hardware_available === true &&
+    !deviceSetupOpen;
 
   useEffect(() => {
     void refreshAppRuntime();
@@ -860,7 +869,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (uiMode === "operator") return;
+    if (uiMode === "operator" && !operatorPreviewAllowed) return;
     if (!shouldPollRealCameraPreview(pageForSetupEffects, setupSource, cameraPreviewState)) return;
     if (runningCamera || probing) return;
     let cancelled = false;
@@ -868,11 +877,13 @@ function App() {
     const generation = cameraPreviewPollGenerationRef.current + 1;
     cameraPreviewPollGenerationRef.current = generation;
     const pollLiveFrame = async () => {
-      await previewRealCameraFrame("live", { clearProbe: false });
+      const requestStartedAt = performance.now();
+      const refreshed = await previewRealCameraFrame("live", { clearProbe: false });
       if (cancelled || cameraPreviewPollGenerationRef.current !== generation) return;
-      const previewIntervalMs = setupPreviewPollingIntervalMs(
-        cameraPreviewState?.cameraStatus,
-        measurementRef.current?.detector_config.setup_preview_fps
+      const previewIntervalMs = setupPreviewNextDelayMs(
+        refreshed ? "ok" : "unavailable",
+        measurementRef.current?.detector_config.setup_preview_fps,
+        performance.now() - requestStartedAt
       );
       timer = window.setTimeout(() => {
         void pollLiveFrame();
@@ -894,7 +905,8 @@ function App() {
     measurement?.detector_config.setup_preview_fps,
     runningCamera,
     probing,
-    uiMode
+    uiMode,
+    operatorPreviewAllowed
   ]);
 
   useEffect(() => {
@@ -2389,6 +2401,10 @@ function OperatorRunPage({
     runResult?.run_manifest.frame_records[runResult.run_manifest.frame_records.length - 1]?.shape ??
     activeSourceShape;
   const runtimeFrameLabel = simulatedMode ? t("Simulated material debug") : t("Real camera");
+  const operatorPreviewRefreshStatus =
+    cameraPreviewRefreshStatus === "unavailable" && realHardwareAvailable && !cameraPreviewError
+      ? "idle"
+      : cameraPreviewRefreshStatus;
   const latestFrameTitle = liveRun?.detectionResult
     ? `${runtimeFrameLabel} · ${t("frame")} ${liveRun.detectionResult.frame_index}`
     : setupProbeDetection
@@ -2563,9 +2579,9 @@ function OperatorRunPage({
             readOnly={operatorRunActive}
           />
         ) : (
-              <PreviewPlaceholder
-                title={runtimeFrameLabel}
-            refreshStatus={cameraPreviewRefreshStatus}
+          <PreviewPlaceholder
+            title={runtimeFrameLabel}
+            refreshStatus={operatorPreviewRefreshStatus}
             previewError={cameraPreviewError}
           />
         )}
@@ -3144,27 +3160,45 @@ function DeviceSetupWizard({
     }
   }
 
-  async function saveBinding() {
+  async function saveBinding(): Promise<boolean> {
     if (!binding) {
       setError(t("Select camera and serial port before saving"));
-      return;
+      return false;
     }
     if (testResult?.overall_status !== "passed") {
       setError(t("Run binding test before saving"));
-      return;
+      return false;
     }
     setSavingBinding(true);
     setError("");
     try {
+      const freshTestResult = await testHardwareBinding(binding);
+      setTestResult(freshTestResult);
+      if (freshTestResult.overall_status !== "passed") {
+        setSaveResult(null);
+        setError(
+          [freshTestResult.camera.message, freshTestResult.temperature.message]
+            .filter(Boolean)
+            .join(" · ") || t("Binding test failed")
+        );
+        return false;
+      }
       const result = await saveHardwareBinding(binding);
       setSaveResult(result);
       await onSaved();
+      return true;
     } catch (err) {
       setSaveResult(null);
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setSavingBinding(false);
     }
+  }
+
+  async function finishWizard() {
+    const saved = saveResult?.saved === true || await saveBinding();
+    if (saved) onClose();
   }
 
   return (
@@ -3328,9 +3362,14 @@ function DeviceSetupWizard({
                   <Settings size={16} aria-hidden="true" />
                   {savingBinding ? t("Saving") : t("Save configuration")}
                 </button>
-                <button className="secondaryButton" onClick={onClose} type="button">
-                  {t("Finish")}
-                </button>
+                    <button
+                      className="secondaryButton"
+                      disabled={!binding || testResult?.overall_status !== "passed" || savingBinding}
+                      onClick={() => void finishWizard()}
+                      type="button"
+                    >
+                      {savingBinding ? t("Saving") : t("Finish")}
+                    </button>
               </div>
             </section>
           ) : null}
@@ -7915,6 +7954,7 @@ function toOperatorActualUseMeasurement(measurement: MeasurementDefinition): Mea
     detector_config: {
       ...DEFAULT_CONFIG,
       ...measurement.detector_config,
+      setup_preview_fps: OPERATOR_CAMERA_PREVIEW_FPS,
       distance_outlier_filter_enabled: true
     }
   });

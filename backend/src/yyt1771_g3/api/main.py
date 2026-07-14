@@ -23,7 +23,12 @@ from pydantic import BaseModel
 from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableError
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
-from yyt1771_g3.core.hardware_config import HARDWARE_CONFIG_ENV, HardwareConfig, load_hardware_config
+from yyt1771_g3.core.hardware_config import (
+    HARDWARE_CONFIG_ENV,
+    SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
+    HardwareConfig,
+    load_hardware_config,
+)
 from yyt1771_g3.core.runtime_policy import RUNTIME_SOURCE_ENV, RuntimePolicy, load_runtime_policy, runtime_policy_payload
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.enums import MeasurementSource
@@ -857,7 +862,9 @@ def preview_real_camera() -> dict[str, Any]:
     try:
         with _camera_operation("setup_preview", blocking=False):
             with _camera_preview_lock:
-                source = _get_preview_camera_source()
+                source = _get_preview_camera_source(
+                    {"target_frame_rate_hz": SETUP_PREVIEW_TARGET_FRAME_RATE_HZ}
+                )
                 frame = source.preview_frame()
     except CameraUnavailableError as exc:
         with _camera_preview_lock:
@@ -894,7 +901,9 @@ def preview_real_camera_png() -> Response:
     try:
         with _camera_operation("setup_preview_png", blocking=False):
             with _camera_preview_lock:
-                source = _get_preview_camera_source()
+                source = _get_preview_camera_source(
+                    {"target_frame_rate_hz": SETUP_PREVIEW_TARGET_FRAME_RATE_HZ}
+                )
                 frame = source.preview_frame()
     except CameraUnavailableError as exc:
         with _camera_preview_lock:
@@ -927,7 +936,11 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
             config,
             request.measurement_definition.detector_config.temperature_serial_port,
         )
-        camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
+        camera_profile = {
+            **config.camera.to_profile(),
+            **(request.camera_profile or {}),
+            "target_frame_rate_hz": SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
+        }
         _assert_operator_real_camera_available(
             request,
             run_config,

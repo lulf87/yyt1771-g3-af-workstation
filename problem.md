@@ -100,7 +100,7 @@
 | P-0082 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / real run curves | 真实实时趋势主曲线误用 AFAS 平滑预览且停止缺少阶段反馈 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run→Stop 浏览器复测通过，stream 阶段事件和 temporal mask 默认关闭已验证 |
 | P-0083 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / live run trend | 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖 | 2026-07-08 | 2026-07-08 | Codex | 真实 Hik 相机 + LU92XX Run 中正式点从 24 增至 53，停止后保存 78 点；浏览器复测通过 |
 | P-0084 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / export / live trend | 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑 | 2026-07-08 | 2026-07-08 | Codex | Operator 简化、温控不可用守卫和工程模式保留已浏览器复测；导出弹窗完整 run 流程待真机/可完成 run 环境复测 |
-| P-0085 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-09 | Codex | 待真实浏览器复测设备设置入口、环境检查、相机扫描、温控串口选择、测试与保存流程 |
+| P-0085 | RESOLVED_BROWSER_VERIFIED | P0 | backend / frontend / hardware setup | 生产部署需要首次安装与设备绑定向导，避免新电脑手动改 YAML | 2026-07-09 | 2026-07-14 | Codex | 真实 Hik 相机 + LU92XX 完整测试、完成即保存、Operator 再次取帧均通过浏览器复测 |
 | P-0086 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / operator mode / hardware unavailable | 无真实相机和温控时实际使用界面反复检查/轮询导致闪烁 | 2026-07-09 | 2026-07-09 | Codex | 无真实温控串口 Operator 页面稳定不可用卡片、无 preview 循环、无 500ms 温控轮询、设备向导手动刷新浏览器复测通过 |
 | P-0087 | FIXED_PENDING_BROWSER_RETEST | P0 | frontend / operator mode / temperature polling | 真实温控可用且空闲时需要恢复 gated 500ms 自动读温 | 2026-07-09 | 2026-07-09 | Codex | 待浏览器复测真实温控可用时 500ms 自动读温、向导打开和实时测试运行时停止额外轮询 |
 | P-0088 | FIXED_PENDING_BROWSER_RETEST | P0 | backend / export csv | 导出 CSV 新诊断字段插入旧核心字段中间导致兼容测试失败 | 2026-07-09 | 2026-07-09 | Codex | 后端导出 API、backend integration/unit、frontend test/build 已通过；导出下载浏览器复测待补 |
@@ -111,11 +111,15 @@
 | P-0097 | RESOLVED_BROWSER_VERIFIED | P0 | frontend + backend / multi-region AFAS review | 多 ROI 结果页和历史导入只保留组合趋势图，详细 AFAS 构造图与逐位置参数作用域未迁移 | 2026-07-12 | 2026-07-12 | Codex | 组合总览 + 按位置 AFAS 详情、当前位置/全部位置重分析已实现；3/6 位置 Chromium 流程通过 |
 | P-0098 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / results layout; frontend + backend / detector defaults | 结果页主栏宽度不一致且实时测试默认阈值需要调整 | 2026-07-12 | 2026-07-12 | Codex | 四个结果主栏已按指定顺序全宽堆叠；默认对比度 55、最大跳变 100，Chromium 复测通过 |
 | P-0099 | RESOLVED_BROWSER_VERIFIED | P2 | frontend / position result cards | 六个位置结果纵向占用过多，应在桌面端每行显示三个 | 2026-07-12 | 2026-07-12 | Codex | 桌面 3 列、中屏 2 列、手机 1 列；6 位置 Chromium 复测为两行 |
-| P-0100 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows distribution / runtime | Windows 目标机仍需 Python、Node 和 Git Bash，无法零环境安装运行 | 2026-07-12 | 2026-07-12 | Codex | Mac 自动化待完成；Windows x64 CI 打包、干净机安装和真实硬件浏览器复测待补 |
+| P-0100 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows distribution / runtime | Windows 目标机仍需 Python、Node 和 Git Bash，无法零环境安装运行 | 2026-07-12 | 2026-07-14 | Codex | Windows 打包 smoke 已扩展到 20 FPS 默认 profile；Windows x64 CI 打包、干净机安装/升级和真实硬件浏览器复测待补 |
 | P-0101 | RESOLVED_BROWSER_VERIFIED | P0 | Windows / PyInstaller / launcher | portable G3Workstation.exe 启动报 `No module named yyt1771_g3.api` | 2026-07-12 | 2026-07-13 | Codex | Windows 11 + Chrome 已确认重建 EXE 能启动单端口应用；新 registry 错误另见 P-0102 |
 | P-0102 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / offline dataset registry / operator startup | Windows 真实硬件包启动后因缺少开发机离线数据 registry 显示 500 | 2026-07-13 | 2026-07-13 | Codex | 生产真实硬件模式已移除离线 registry 启动依赖；Mac Chromium 预检通过，待 Windows dev.3 复测 |
 | P-0103 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / Hik MVS SDK discovery / GigE network | Windows dev.3 已安装 MVS 且 MVS 客户端可枚举相机，但 G3 无法导入 `MvCameraControl_class` | 2026-07-13 | 2026-07-14 | Codex | Windows loader 已自动发现 MvImport/Win64_x64、注册 DLL 目录并预加载 x64 runtime；待新 Windows 包真机复测 |
 | P-0104 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows installer / hardware setup / MVS path configuration | 干净 Win11 前置边界不清，非标准 MVS 路径只能手工改 YAML/环境变量 | 2026-07-14 | 2026-07-14 | Codex | 标准 MVS 自动检测；设备向导新增 SDK 路径验证与保存；安装器新增真实硬件前置检查页；待 Windows 新包复测 |
+| P-0105 | OPEN | P1 | backend / frontend / LU92XX serial polling | 多个浏览器页面同时 500ms 轮询同一 LU92XX 串口时可能竞争并产生异常读数或无数据错误 | 2026-07-14 | 2026-07-14 | Codex | 本轮复测关闭额外页面后恢复；需设计后端串口读共享/互斥策略并单独复测 |
+| P-0106 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / backend / real camera preview | 真实硬件绑定通过后 Operator 应默认实时浏览相机，目标预览帧率设为 20 FPS | 2026-07-14 | 2026-07-14 | Codex | 20 FPS profile/调度已生效，Operator 自动显示真机画面且当前帧检测继续可用 |
+| P-0107 | OPEN | P1 | backend / frontend / multi-client camera preview | 多个浏览器页面同时实时预览时会争用 camera operation 并产生间歇性 409 | 2026-07-14 | 2026-07-14 | Codex | 单页面流程可用；需实现多客户端共享预览或串行调度后复测 |
+| P-0108 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows upgrade / hardware setup / camera preview | Windows 新装和保留旧 hardware.yaml 的升级都必须获得完成即保存、自动实时预览和 20 FPS 设备预览行为 | 2026-07-14 | 2026-07-14 | Codex | 源码、回归测试、打包 smoke 和验收文档已更新；待 Windows x64 CI 产物及真机安装/升级复测 |
 
 ---
 
@@ -174,7 +178,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0090 — 单 ROI 链路需要扩展为可配置 1–6 个检测位置
 
-- Status: FIXED_PENDING_BROWSER_RETEST
+- Status: RESOLVED_BROWSER_VERIFIED
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/services/region_detection_service.py`, live run / analysis / export / import services, `frontend/src/measurementRegions.ts`, `frontend/src/multiRegionAnalysis.ts`, `frontend/src/main.tsx`
 - Found date: 2026-07-11
@@ -272,7 +276,7 @@ FIXED_PENDING_BROWSER_RETEST
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/services/export_service.py`, export CSV
 - Found date: 2026-07-09
-- Last update: 2026-07-09
+- Last update: 2026-07-14
 
 #### Problem
 
@@ -518,6 +522,10 @@ Result: PASS.
 - 2026-07-09: 二次收尾确认远端 PR diff 中 forbidden hidden Unicode 和额外 control/format 隐形字符计数均为 0；强化文本安全测试，扫描 Git tracked 相关文本文件并拒绝 UTF-8 BOM、bidi/control/format 隐形字符。
 - 2026-07-09: example/template 配置保存错误改为中文提示“不能把设备绑定保存到 example 配置，请使用 configs/local/realcamera_temp.local.yaml。”；后端环境检查在 SDK 缺失时返回当前 SDK Python path、当前 MVS 动态库路径、建议路径、Windows library dir 和修复说明，前端以折叠详情显示。
 - 2026-07-09: 增加回归测试覆盖无 profile 时多相机发现不预选第一台、温控 Modbus 超时失败、SDK 缺失 details 和前端环境检查 details 渲染。
+- 2026-07-14: 修复向导“完成”原先只关闭弹窗、不保存绑定的问题；“完成”现在先执行一次最新综合绑定测试并保存，只有保存成功才关闭，失败时保留弹窗和错误信息。
+- 2026-07-14: 现场确认 macOS 已将原 `/dev/cu.usbserial-11210` 重新枚举为 `/dev/cu.usbserial-11110`；通过向导保存后，本地硬件 profile、`/api/hardware/profile` 和温控读取均切换到当前有效端口。
+- 2026-07-14: 确认 `_test_bound_camera()` 在 `finally` 中调用 `source.close()`；向导完成后 Operator `/api/camera/setup-probe` 再次成功取帧，排除“向导测试后未释放相机”的怀疑。
+- 2026-07-14: 修复 Operator 已确认硬件可用但尚未主动取帧时误显示“相机不可用”；此时显示“尚未取得实时画面”，仅实际相机错误继续显示不可用/错误信息。
 
 #### Tests run
 
@@ -564,6 +572,23 @@ Result: PASS.
 
 Local and remote PR diff hidden/control Unicode scans
 Result: PASS, 0 forbidden / 0 other hidden-control findings.
+
+2026-07-14 follow-up:
+
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs tests/hardwareSetupWizard.test.mjs
+Result: PASS, 21 passed.
+
+cd frontend
+npm test
+Result: PASS, 152 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite production build.
+
+git diff --check
+Result: PASS.
 ```
 
 #### Browser retest log
@@ -600,23 +625,42 @@ Result: PASS, 0 forbidden / 0 other hidden-control findings.
 - PR follow-up retest 2026-07-09: reopened the same operator URL in Playwright headed Chromium, confirmed the hardware-unavailable card still says “未完成设备绑定，请打开设备设置选择相机和温控串口。”, the camera step shows “未发现 Hik 相机”, `测试相机` and `下一步` are disabled, and the temperature step independently lists serial ports including `/dev/cu.usbserial-11210 · configured`. Evidence: `output/playwright/p0085_device_setup_no_camera_followup_20260709.png`. Did not run save in this no-camera session; full real camera binding save remains pending on-site verification.
 - SDK guidance follow-up retest 2026-07-09: reran `scripts/g3_fast_start.sh real-real --restart --no-open`, opened `http://127.0.0.1:5176/?mode=operator` in Playwright headed Chromium, opened `设备设置`, expanded `SDK 路径详情`, and confirmed current SDK Python path, current MVS dynamic library path, suggested SDK Python paths, suggested MVS library paths, Windows SDK library dir, and fix instructions are displayed. Then entered camera scan and confirmed `未发现 Hik 相机`, disabled `测试相机`, and disabled `下一步`. Evidence: `output/playwright/p0085_device_setup_sdk_details_followup_20260709.png`. Full real camera binding test/save remains pending on-site verification.
 
+- Retest date: 2026-07-14
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; real-real hardware (`MV-CA060-11GM`, serial `00J67378626`, IP `192.168.3.211`; LU92XX `/dev/cu.usbserial-11110`)
+- Page: `设备设置` wizard → Operator `实时测试`
+- Steps:
+  1. 打开设备设置，确认环境检查通过并扫描到指定真实相机。
+  2. 测试相机，确认预览成功；选择 `/dev/cu.usbserial-11110` 并测试温控，读取约 25.6–25.7 °C。
+  3. 执行综合绑定测试，到保存页不单独点击“保存配置”，直接点击“完成”。
+  4. 确认浏览器请求依次包含 `POST /api/hardware/binding/test`、`POST /api/hardware/binding`、`GET /api/hardware/profile`、`GET /api/operator/source-status`，弹窗仅在保存成功后关闭。
+  5. 重新进入 Operator 页面，确认左侧显示“真实硬件已连接”，尚未主动取帧时右侧显示“尚未取得实时画面”，不再误报“相机不可用”。
+  6. 点击“检测当前帧”，确认 `POST /api/camera/setup-probe` 返回 200，页面显示真实相机图像和“当前帧检测有效”。
+- Expected: 完成按钮保存当前相机/温控绑定；向导释放相机；Operator 无帧状态准确；随后可再次打开真实相机取帧。
+- Actual: 绑定保存为 `/dev/cu.usbserial-11110`；后端 profile 和 source-status 更新；无帧文案准确；当前帧检测返回 200 并显示真实图像及 896.00 px 有效距离。
+- Result: PASS
+- Evidence: `output/playwright/p0085_finish_saves_binding_20260714.png`; `output/playwright/p0085_finish_save_operator_probe_20260714.png`; `output/playwright/p0085_operator_idle_camera_20260714.png`; `output/playwright/p0085_operator_probe_camera_20260714.png`; backend request log.
+
 #### Production setup smoke checklist
 
 ```text
 [x] No-camera flow: environment check shows SDK/backend/serial state.
 [x] No-camera flow: camera scan is empty and next is disabled.
-[ ] Real-camera flow: camera list shows model / serial number / IP.
-[ ] Real-camera flow: operator selects camera and camera test shows preview image.
-[ ] Temperature flow: serial ports list, selected port reads temperature successfully.
-[ ] Save flow: writes configs/local/realcamera_temp.local.yaml and reloads source-status.
-[ ] Operator flow: after full real hardware binding, actual-use mode can start real camera test.
+[x] Real-camera flow: camera list shows model / serial number / IP.
+[x] Real-camera flow: operator selects camera and camera test shows preview image.
+[x] Temperature flow: serial ports list, selected port reads temperature successfully.
+[x] Save flow: writes configs/local/realcamera_temp.local.yaml and reloads source-status.
+[x] Operator flow: after full real hardware binding, actual-use mode can probe the real camera again.
 ```
 
-真实相机完整绑定保存仍待现场验证。
+真实相机完整绑定、保存和 Operator 再取帧已完成现场验证。
 
 #### Final status
 
-FIXED_PENDING_BROWSER_RETEST
+RESOLVED_BROWSER_VERIFIED
 
 ### P-0084 — 实际使用界面需简化为真机操作界面，并增加导出保存位置选择与实时显示平滑
 
@@ -10120,6 +10164,265 @@ Windows Inno Setup compile and real-hardware retest: pending Windows CI/package
 - Actual: environment/API returned 200; valid paths POST returned 200 and saved; missing Python binding/DLL POST returned 400 and the modal displayed `MVS Python binding not found: /missing/MvCameraControl_class.py`. The expected LU92XX 503 remained because no controller was connected to the Mac test host.
 - Result: PARTIAL PASS; webpage workflow passed in Chromium, Windows installer compile, Win64 path resolution, restart persistence and real camera/COM binding remain pending new Windows package.
 - Evidence: `output/playwright/p0104-sdk-path-editor-20260714.png`, `output/playwright/p0104-sdk-path-invalid-validation-20260714.png`; browser network log recorded `POST /api/hardware/setup/sdk-paths` 200 then 400.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0105 — 多页面轮询同一 LU92XX 串口时可能竞争并产生异常读数
+
+- Status: OPEN
+- Priority: P1
+- Module: `backend temperature adapter / API serialization`, `frontend/src/main.tsx` Operator temperature polling
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex
+
+#### Problem
+
+P-0085 真机浏览器复测期间，同时存在不止一个可能读取温控状态的客户端。Operator 页面每 500 ms 调用 `/api/temperature/status` 时，页面一度从约 25.6–25.7 °C 显示为 11.10 °C，随后单独调用同一 API 返回串口无数据错误。
+
+#### Expected
+
+同一后端即使被多个浏览器页面同时访问，也应串行化或共享 LU92XX 读取结果；不得因客户端数量增加而并发打开/读取同一 Modbus 串口，更不能把异常读数作为正常温度显示。
+
+#### Actual
+
+复测日志记录到一次 11.10 °C 页面读数；随后 API 返回：
+
+```text
+device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+```
+
+关闭额外 Playwright 页面后，额外 500 ms 轮询停止。该问题与本轮相机句柄释放无关，也未在本轮扩大范围修复。
+
+#### Suspected cause
+
+多个页面各自触发温控状态请求，后端 LU92XX 访问缺少进程级共享/互斥或短时缓存。该判断仍需通过受控的单页面/双页面复现实验和串口日志确认。
+
+#### Fix summary
+
+尚未修复。建议后续在后端统一管理 LU92XX 串口访问并对无效/突变读数增加明确校验，再用单页面与双页面浏览器流程复测。
+
+#### Tests run
+
+```text
+Not run; issue registered from real-hardware browser observation.
+```
+
+#### Browser retest log
+
+- Retest date: pending
+- Browser: pending controlled single-tab / two-tab Chromium test
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; LU92XX `/dev/cu.usbserial-11110`
+- Page: Operator `实时测试`
+- Steps: pending
+- Expected: pending
+- Actual: pending
+- Result: pending
+- Evidence: P-0085 Playwright snapshot/network log from 2026-07-14; controlled reproduction still required.
+
+#### Final status
+
+OPEN
+
+---
+
+### P-0106 — 真实硬件绑定后默认 20 FPS 实时浏览相机
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/setupSources.ts`, `backend/src/yyt1771_g3/core/models.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, real-camera hardware profiles
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex
+
+#### Problem
+
+Operator 正式界面原先刻意不自动打开相机，只在用户点击“检测当前帧”后显示单帧；默认 setup preview 调度为 5 FPS、当前真实相机 profile 目标为 10 FPS，不符合现场要求的“预配置通过后默认实时浏览相机，设置为 20 帧”。
+
+#### Expected
+
+真实相机和真实温控绑定通过、进入 Operator 实时测试页后，页面自动显示并持续刷新真实相机画面；预览目标为 20 FPS。打开设备设置、开始正式测量或执行单帧检测时，不产生同一页面内的预览重入；正式测量继续先释放 setup preview source。
+
+#### Actual
+
+修复前 Operator 明确跳过实时相机轮询并显示空画布；默认 `setup_preview_fps=0` 映射为 5 FPS，当前 real-real profile 的 `target_frame_rate_hz=10`。
+
+#### Fix summary
+
+1. 将 DetectorConfig、前端真实相机 measurement 默认和 Operator 强制预览值设为 20 FPS。
+2. 将真实 Hik 相机默认/example/当前 real-real 与 real-simtemp profile 的 `target_frame_rate_hz` 设为 20。
+3. Operator 仅在真实硬件绑定状态通过、位于实时测试页且设备向导关闭时自动轮询相机；Run 或当前帧检测期间暂停自动轮询。
+4. 新增按请求耗时扣减下一次延迟的调度，20 FPS 对应 50 ms 周期，避免取帧完成后再额外等待 50 ms 导致目标帧率减半。
+5. 保留正式 Run 启动前 `releaseRealCameraSetupPreview()` 的既有交接，Run 结束后因状态恢复自动重新进入预览。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs tests/setupSources.test.mjs
+Result: PASS, 22 passed.
+
+cd frontend
+npm test
+Result: PASS, 152 passed.
+
+cd frontend
+npm run build
+Result: PASS, TypeScript + Vite production build.
+
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest backend/tests/unit -q
+Result: PASS, 150 passed.
+
+git diff --check
+Result: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-14
+- Browser: Playwright Chromium headed
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; real-real hardware (`MV-CA060-11GM`, serial `00J67378626`, LU92XX `/dev/cu.usbserial-11110`)
+- Page: Operator `实时测试`
+- Steps:
+  1. 通过 `/api/hardware/profile` 确认 `camera.target_frame_rate_hz=20.0`。
+  2. 重新加载 Operator 正式界面，不点击“检测当前帧”。
+  3. 等待 source-status 和第一帧返回，检查右侧相机画布及持续 `/api/camera/preview` 请求。
+  4. 点击“检测当前帧”，确认自动预览暂停后 setup-probe 成功，并在结束后恢复预览。
+- Expected: 配置通过后默认自动显示真实相机；目标帧率配置/调度为 20 FPS；当前帧检测仍可用。
+- Actual: 页面自动显示真实相机画面并持续刷新；硬件 profile 为 20.0 FPS；当前帧检测有效，返回 357.00 px。多页面并发时观察到的间歇性 409 已独立登记为 P-0107，不据此声称多客户端场景实际渲染恒定达到 20 FPS。
+- Result: PASS for requested single-operator automatic preview and 20 FPS target configuration/scheduling.
+- Evidence: `output/playwright/p0106_operator_auto_live_20fps_20260714.png`; `output/playwright/p0106_operator_auto_live_probe_20260714.png`; Playwright network log; `/api/hardware/profile` output.
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0107 — 多个浏览器页面同时预览相机会产生间歇性 409
+
+- Status: OPEN
+- Priority: P1
+- Module: `backend/src/yyt1771_g3/api/main.py` camera operation / preview ownership, Operator auto preview
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex
+
+#### Problem
+
+自动实时预览启用后，如果已有一个 Operator 页面持续取帧，再打开第二个浏览器页面，两个页面会同时请求 `/api/camera/preview`。后端 `_camera_operation(..., blocking=False)` 只允许一个请求占用相机，另一请求间歇返回 409 Conflict。
+
+#### Expected
+
+多个只读预览客户端应共享同一最新帧或由后端串行调度，不应把正常的多页面浏览转换成浏览器控制台错误；正式 Run 仍必须能取得独占权并阻止预览重开。
+
+#### Actual
+
+P-0106 Playwright 复测中，真实画面持续可见且绝大多数 preview 请求为 200，但在另一个已打开页面存在时记录到间歇性 409。当前单页面预览和 setup-probe 流程均通过。
+
+#### Suspected cause
+
+各浏览器页面独立执行 20 FPS 轮询，而后端没有广播/shared-latest-frame 层；非阻塞 camera operation 锁把重叠请求直接转换为 409。
+
+#### Fix summary
+
+尚未修复。后续应在后端提供单一采集者和共享最新帧，或提供可取消的串行预览队列，并明确 Run 独占切换协议。
+
+#### Tests run
+
+```text
+Not fixed; registered from controlled second-browser real-camera retest.
+```
+
+#### Browser retest log
+
+- Retest date: pending
+- Browser: pending controlled one-tab / two-tab Chromium test
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; real-real hardware
+- Page: Operator `实时测试`
+- Steps: pending after shared preview implementation
+- Expected: two tabs receive frames without 409; Run can still acquire exclusive camera ownership
+- Actual: pending
+- Result: pending
+- Evidence: P-0106 Playwright console/network logs from 2026-07-14.
+
+#### Final status
+
+OPEN
+
+---
+
+### P-0108 — Windows 新装与升级需同步设备向导和 20 FPS 自动预览
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, `frontend/src/main.tsx`, `packaging/windows/build_release.ps1`, Windows delivery documentation
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex
+
+#### Problem
+
+本轮设备向导“完成即 fresh test + 保存”、Operator 配置通过后自动实时预览和 20 FPS 目标需要进入下一版 Windows portable/installer。仅把 `CameraConfig` 默认值改为 20 不足以覆盖升级场景，因为安装器会保留 `C:\ProgramData\YYT1771-G3\config\hardware.yaml`，旧文件可能显式保存 `target_frame_rate_hz: 10`。
+
+#### Expected
+
+Windows 新装默认配置为 20 FPS；从旧版本覆盖安装时不删除相机、LU92XX 串口绑定和历史 run，即使保留的配置仍写 10 FPS，设备设置实时预览与“检测当前帧”也使用 20 FPS。设备向导点击“完成”必须重新测试并成功保存后才关闭，进入 Operator 后自动出画面；正式 Run 继续使用其自身采集配置。
+
+#### Actual
+
+源码层面已满足上述行为。Windows x64 EXE/Setup 不能在当前 Mac 构建，尚无新版 Windows 产物和 Windows 真机浏览器证据，因此不能标记为 `RESOLVED_BROWSER_VERIFIED`。
+
+#### Fix summary
+
+1. 统一定义相机默认 20 FPS 和设备设置预览 20 FPS 常量，并将缺省 YAML 解析 fallback 从 10 改为 20。
+2. `/api/camera/preview`、`/api/camera/preview.png` 和无冻结帧的 setup-probe 强制使用 20 FPS 设备预览 profile；这样不需要破坏性迁移旧 `hardware.yaml`。
+3. 正式 real-camera Run 入口未应用该覆盖，继续沿用保存的相机/测量 profile。
+4. Windows packaged-EXE smoke 新增 `/api/hardware/profile` 检查，新装默认相机目标不是 20 FPS 时构建失败。
+5. Windows 验收文档新增新装、保留 10 FPS 旧配置的升级、完成即保存、自动预览、Probe、Preview→Run→Preview 交接步骤，并记录 P-0107 单页面验收限制。
+
+#### Tests run
+
+```text
+Targeted backend hardware/camera/Windows packaging tests: PASS, 30 passed.
+Backend full suite: PASS, 264 passed.
+Frontend full suite: PASS, 152 passed.
+Frontend production build: PASS.
+git diff --check: PASS.
+```
+
+#### Browser retest log
+
+- Retest date: pending Windows x64 artifact
+- Browser: Edge or Chrome on target Windows 10/11 x64
+- OS: pending Windows 10/11 x64
+- Frontend URL: `http://127.0.0.1:8022/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; real Hik camera + real LU92XX
+- Page: device setup and Operator `实时测试`
+- Steps:
+  1. Build/download the next Windows x64 Setup and install on a clean machine; repeat as an upgrade over a machine whose preserved `hardware.yaml` contains `target_frame_rate_hz: 10`.
+  2. Verify saved camera/COM binding and historical runs remain after upgrade.
+  3. Complete fresh camera and temperature tests, click “完成”, then reopen the wizard to verify persistence.
+  4. Return to Operator without clicking Probe and verify continuous live camera frames.
+  5. Verify setup preview target is 20 FPS, Probe succeeds, Run acquires the camera, and preview resumes after Stop.
+- Expected: all new-install and upgrade behaviors above pass in one Operator browser page.
+- Actual: pending.
+- Result: pending; Mac source tests do not count as Windows packaged real-hardware browser verification.
+- Evidence: pending Windows screenshots, logs, artifact name and SHA256.
 
 #### Final status
 

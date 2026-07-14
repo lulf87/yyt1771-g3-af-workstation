@@ -305,7 +305,7 @@ def test_detector_config_processing_scale_defaults_and_clamp() -> None:
     assert default_config.run_enhanced_detector_policy == "rerun_worthy_only"
     assert default_config.endpoint_jump_warmup_frames == 3
     assert default_config.endpoint_jump_confirm_frames == 2
-    assert default_config.setup_preview_fps == 0
+    assert default_config.setup_preview_fps == 20
 
     assert DetectorConfig(processing_scale=0.1).processing_scale == pytest.approx(0.25)
     assert DetectorConfig(processing_scale=2.0).processing_scale == pytest.approx(1.0)

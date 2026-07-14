@@ -2,7 +2,7 @@ backend: hik_gige_mvs
 transport: gige_vision
 pixel_format: mono8
 trigger_mode: free_run
-target_frame_rate_hz: 10.0
+target_frame_rate_hz: 20.0
 lazy_import_sdk: true
 # Only enable for full original-frame review; it can consume a large amount of disk space.
 save_raw_frames: false

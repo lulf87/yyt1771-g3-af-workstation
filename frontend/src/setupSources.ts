@@ -129,6 +129,7 @@ export type SetupTemperatureSummary = {
 
 export const REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS = 200;
 export const REAL_CAMERA_SETUP_RETRY_INTERVAL_MS = 2000;
+export const DEFAULT_REAL_CAMERA_PREVIEW_FPS = 20;
 
 const DEFAULT_REAL_CAMERA_CONFIG = {
   tie_width_epsilon_px: 2,
@@ -150,7 +151,7 @@ const DEFAULT_REAL_CAMERA_CONFIG = {
   mask_dilate_kernel_px: 1,
   max_frames_per_run: 160,
   live_offline_fps: 8,
-  setup_preview_fps: 0,
+  setup_preview_fps: DEFAULT_REAL_CAMERA_PREVIEW_FPS,
   target_temperature_celsius: null,
   temperature_power_percent: 100,
   temperature_serial_port: ""
@@ -310,6 +311,16 @@ export function setupPreviewPollingIntervalMs(
 ): number {
   if (cameraStatus === "unavailable") return REAL_CAMERA_SETUP_RETRY_INTERVAL_MS;
   return setupPreviewIntervalMs(fps) || REAL_CAMERA_SETUP_PREVIEW_INTERVAL_MS;
+}
+
+export function setupPreviewNextDelayMs(
+  cameraStatus: string | null | undefined,
+  fps: number | null | undefined,
+  requestElapsedMs: number
+): number {
+  const intervalMs = setupPreviewPollingIntervalMs(cameraStatus, fps);
+  if (cameraStatus === "unavailable") return intervalMs;
+  return Math.max(0, intervalMs - Math.max(0, requestElapsedMs));
 }
 
 export function setupPreviewFpsLabel(fps: number | null | undefined, language: UiLanguage = "en"): string {
