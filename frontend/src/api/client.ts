@@ -14,6 +14,7 @@ export type OfflineDatasetListItem = {
   g3_type: string;
   default_detector: string;
   default_width_mode: string;
+  legacy_profile?: Record<string, string>;
   frame_count: number;
   validation_issues?: Array<{ field: string; path: string; message: string }>;
 };
@@ -579,6 +580,14 @@ export type AfasAnalysisParameters = {
   low_range_celsius: [number, number] | null;
   high_range_celsius: [number, number] | null;
   tangent_offset: number;
+  tangent_slope_override: number | null;
+  tangent_intercept_override: number | null;
+};
+
+export type AfasAnalysisPreview = {
+  region_id: string;
+  afas_analysis: Record<string, unknown>;
+  summary: Record<string, unknown>;
 };
 
 export type RunResponse = {
@@ -1743,6 +1752,28 @@ export async function recomputeRunAnalysis(
   }
   const payload = await response.json() as { analysis_result: AnalysisResult };
   return normalizeAnalysisRegions(payload.analysis_result);
+}
+
+export async function previewRunAfasAdjustment(
+  runId: string,
+  parameters: {
+    region_id: string;
+    afas_analysis_parameters: AfasAnalysisParameters;
+  },
+  signal?: AbortSignal
+): Promise<AfasAnalysisPreview> {
+  const response = await fetch(`${API_BASE}/api/runs/${runId}/analysis/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parameters),
+    signal
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+  }
+  const payload = await response.json() as { analysis_preview: AfasAnalysisPreview };
+  return payload.analysis_preview;
 }
 
 export async function createRunExports(runId: string): Promise<ExportArtifact[]> {

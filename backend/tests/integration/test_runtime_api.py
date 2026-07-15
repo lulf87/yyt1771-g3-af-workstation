@@ -2,21 +2,39 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 import pytest
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+def _write_hardware_profile(tmp_path: Path, *, simulated: bool, name: str) -> Path:
+    profile_path = tmp_path / f"{name}.yaml"
+    if simulated:
+        camera_backend = "simulated"
+        temperature_backend = "simulated"
+        simulated_dataset = "  simulated_dataset_id: golden_c_20260529_dev_lab\n"
+    else:
+        camera_backend = "hik_gige_mvs"
+        temperature_backend = "lu92xx_modbus_rtu"
+        simulated_dataset = ""
+    profile_path.write_text(
+        (
+            "camera:\n"
+            f"  backend: {camera_backend}\n"
+            f"{simulated_dataset}"
+            "temp:\n"
+            f"  backend: {temperature_backend}\n"
+        ),
+        encoding="utf-8",
+    )
+    return profile_path
 
 
-def test_app_runtime_api_reports_production_real_hardware(monkeypatch) -> None:  # noqa: ANN001
+def test_app_runtime_api_reports_production_real_hardware(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    hardware_profile = _write_hardware_profile(tmp_path, simulated=False, name="real-hardware")
     monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
     monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "production")
-    monkeypatch.setenv(
-        "YYT1771_G3_HARDWARE_CONFIG",
-        str(PROJECT_ROOT / "configs" / "local" / "realcamera_temp.local.yaml"),
-    )
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(hardware_profile))
 
     from yyt1771_g3.api.main import app
 
@@ -35,14 +53,12 @@ def test_app_runtime_api_reports_production_real_hardware(monkeypatch) -> None: 
     }
 
 
-def test_app_runtime_api_reports_simulated_material(monkeypatch) -> None:  # noqa: ANN001
+def test_app_runtime_api_reports_simulated_material(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    hardware_profile = _write_hardware_profile(tmp_path, simulated=True, name="simulated-material")
     monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "simulated_material")
     monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "development")
     monkeypatch.setenv("YYT1771_G3_SIMULATED_DATASET_ID", "golden_c_20260529_dev_lab")
-    monkeypatch.setenv(
-        "YYT1771_G3_HARDWARE_CONFIG",
-        str(PROJECT_ROOT / "configs" / "local" / "simcamera_simtemp.local.yaml"),
-    )
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(hardware_profile))
 
     from yyt1771_g3.api.main import app
 
@@ -56,13 +72,11 @@ def test_app_runtime_api_reports_simulated_material(monkeypatch) -> None:  # noq
     assert payload["simulated_dataset_id"] == "golden_c_20260529_dev_lab"
 
 
-def test_operator_source_status_includes_runtime_policy(monkeypatch) -> None:  # noqa: ANN001
+def test_operator_source_status_includes_runtime_policy(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    hardware_profile = _write_hardware_profile(tmp_path, simulated=True, name="operator-simulated")
     monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "simulated_material")
     monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "development")
-    monkeypatch.setenv(
-        "YYT1771_G3_HARDWARE_CONFIG",
-        str(PROJECT_ROOT / "configs" / "local" / "simcamera_simtemp.local.yaml"),
-    )
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(hardware_profile))
 
     from yyt1771_g3.api.main import app
 
@@ -77,23 +91,19 @@ def test_operator_source_status_includes_runtime_policy(monkeypatch) -> None:  #
     assert payload["configuration_valid"] is True
 
 
-def test_runtime_source_guard_rejects_cross_source_acquisition(monkeypatch) -> None:  # noqa: ANN001
+def test_runtime_source_guard_rejects_cross_source_acquisition(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
 
+    real_profile = _write_hardware_profile(tmp_path, simulated=False, name="guard-real")
+    simulated_profile = _write_hardware_profile(tmp_path, simulated=True, name="guard-simulated")
     monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
-    monkeypatch.setenv(
-        "YYT1771_G3_HARDWARE_CONFIG",
-        str(PROJECT_ROOT / "configs" / "local" / "realcamera_temp.local.yaml"),
-    )
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(real_profile))
     with pytest.raises(HTTPException, match="runtime source") as real_error:
         api_main._assert_runtime_source("simulated_material")
     assert real_error.value.status_code == 409
 
     monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "simulated_material")
-    monkeypatch.setenv(
-        "YYT1771_G3_HARDWARE_CONFIG",
-        str(PROJECT_ROOT / "configs" / "local" / "simcamera_simtemp.local.yaml"),
-    )
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(simulated_profile))
     with pytest.raises(HTTPException, match="runtime source") as simulated_error:
         api_main._assert_runtime_source("real_hardware")
     assert simulated_error.value.status_code == 409

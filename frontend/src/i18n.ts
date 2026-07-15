@@ -64,6 +64,9 @@ const ZH_TEXT: Record<string, string> = {
   Last: "末帧",
   Frame: "帧序号",
   "Measurement ROI": "测量区域",
+  "Narrow measurement band": "窄测量带",
+  "Band length": "测量带长度",
+  "Band width": "测量带宽度",
   "Measurement positions": "检测位置",
   "Add position": "添加位置",
   "Delete position": "删除位置",
@@ -92,8 +95,9 @@ const ZH_TEXT: Record<string, string> = {
   Height: "高度",
   Angle: "角度",
   "New / reset ROI": "重设测量区域",
+  "New / reset measurement band": "重设窄测量带",
   "Detector Setup": "检测方案",
-  "Object class": "待测物类型",
+  "Measurement principle": "测量原则",
   Advanced: "高级参数",
   Detector: "检测器",
   "Width mode": "测宽方式",
@@ -211,6 +215,30 @@ const ZH_TEXT: Record<string, string> = {
   "High start °C": "高温段起点",
   "High end °C": "高温段终点",
   "Tangent offset": "切线偏移帧数",
+  "Interactive baselines and tangent": "交互式基线与切线",
+  "Drag the low/high shaded ranges and the tangent directly in the chart. Drag a tangent end handle to change its slope.": "请直接在图中拖动低温/高温阴影区间和切线；拖动切线端点可改变斜率。",
+  "Tangent mode": "切线模式",
+  "Calculation mode": "计算模式",
+  Manual: "手动",
+  Automatic: "自动",
+  "Restore automatic calculation": "恢复自动计算",
+  "Restoring automatic calculation": "正在恢复自动计算",
+  "Automatic calculation restored": "已恢复自动计算",
+  "Already using automatic calculation": "当前已采用自动计算",
+  "Drag ranges or tangent to adjust": "可拖动温区或切线进行调整",
+  "Updating intersections": "正在实时更新交点",
+  "Saving adjustment": "正在保存调整",
+  "Adjustment saved": "调整已保存",
+  "Adjustment failed": "调整失败",
+  "Drag low-temperature range": "拖动低温拟合区间",
+  "Drag high-temperature range": "拖动高温拟合区间",
+  "Drag low-temperature start boundary": "拖动低温区起始边界",
+  "Drag low-temperature end boundary": "拖动低温区结束边界",
+  "Drag high-temperature start boundary": "拖动高温区起始边界",
+  "Drag high-temperature end boundary": "拖动高温区结束边界",
+  "Drag tangent position": "拖动切线位置",
+  "Drag tangent slope": "拖动切线斜率",
+  "Drag either edge of a shaded range to resize it, drag the shaded area to move it, drag the tangent to reposition it, or drag an end handle to change slope. AS and AF update from backend calculations while dragging.": "拖动阴影区间任一边界可改变范围，拖动阴影区域可整体平移；拖动切线可改变位置，拖动端点可改变斜率。拖动过程中 AS 与 AF 由后端计算并实时更新。",
   "Effective Savgol window": "实际平滑窗口",
   "Smoothed points": "平滑点数",
   "Outlier count": "离群点数",
@@ -470,17 +498,16 @@ const ZH_TEXT: Record<string, string> = {
   "Start real camera run": "开始真实相机测量",
   "Start full offline run": "开始完整离线测量",
   Running: "测量中",
-  "A balloon envelope": "A 类球囊/网状结构整体外包络",
-  "C bundle envelope": "C 类多细支/多线束整体外包络",
-  "D reserved object": "D 类预留对象",
+  "Whole envelope": "整体外包络",
+  "Legacy whole-envelope profile": "历史整体外包络配置",
   "Detection method": "检测方式",
   "Original envelope detection": "原始外包络检测",
   "Contrast widest-span detection": "对比度最宽跨度检测",
-  BalloonEnvelopeDetector: "球囊/网状结构外包络检测器",
-  BundleEnvelopeDetector: "多细支/线束整体外包络检测器",
+  BalloonEnvelopeDetector: "历史整体外包络检测器",
+  BundleEnvelopeDetector: "历史整体外包络检测器",
   ContrastWidestSpanDetector: "对比度最宽跨度检测器",
-  LegacyBundleEnvelopeDetector: "旧版多细支/线束外包络检测器",
-  ReservedObjectDetector: "预留对象检测器",
+  LegacyBundleEnvelopeDetector: "历史整体外包络检测器",
+  ReservedObjectDetector: "历史预留检测器",
   "Contrast threshold": "对比度阈值",
   "Distance outlier filter": "距离异常点过滤",
   "Maximum allowed jump (px)": "最大允许跳变（像素）",
@@ -629,9 +656,10 @@ export function uiNumberSuffix(language: UiLanguage, suffix: string): string {
 }
 
 export function uiObjectClass(language: UiLanguage, value: string): string {
-  if (value === "A_BALLOON_ENVELOPE") return uiText(language, "A balloon envelope");
-  if (value === "C_BUNDLE_ENVELOPE") return uiText(language, "C bundle envelope");
-  if (value === "D_RESERVED_OBJECT") return uiText(language, "D reserved object");
+  if (value === "WHOLE_ENVELOPE") return uiText(language, "Whole envelope");
+  if (value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
+    return uiText(language, "Legacy whole-envelope profile");
+  }
   return uiValue(language, value);
 }
 

@@ -117,6 +117,17 @@ def test_measurement_definition_defaults_missing_detector_mode_for_legacy_payloa
     assert measurement.detector == DetectorType.BUNDLE_ENVELOPE
 
 
+def test_measurement_definition_defaults_to_current_whole_envelope_model() -> None:
+    measurement = MeasurementDefinition(
+        measurement_id="current-default",
+        roi=RotatedROI(center_x=20.0, center_y=20.0, width=30.0, height=8.0),
+    )
+
+    assert measurement.object_class == ObjectClass.WHOLE_ENVELOPE
+    assert measurement.detector == DetectorType.CONTRAST_WIDEST_SPAN
+    assert measurement.width_mode == WidthMode.MAX_WIDTH
+
+
 def test_measurement_definition_normalizes_legacy_roi_to_region_one() -> None:
     measurement = MeasurementDefinition.model_validate(_legacy_measurement_payload())
 
@@ -221,14 +232,31 @@ def test_rotated_roi_rejects_non_positive_size() -> None:
         RotatedROI(center_x=10.0, center_y=10.0, width=5.0, height=-1.0, angle_deg=0.0)
 
 
-def test_ac_object_classes_only_accept_max_width() -> None:
-    with pytest.raises(ValueError, match="A/C object classes only support max_width"):
+def test_legacy_ac_object_classes_only_accept_max_width() -> None:
+    with pytest.raises(ValueError, match="legacy A/C object classes only support max_width"):
         MeasurementDefinition(
             measurement_id="bad-c-min",
             object_class=ObjectClass.C_BUNDLE_ENVELOPE,
             detector=DetectorType.BUNDLE_ENVELOPE,
             width_mode=WidthMode.MIN_WIDTH,
             roi=RotatedROI(center_x=5.0, center_y=5.0, width=6.0, height=4.0, angle_deg=0.0),
+        )
+
+
+def test_whole_envelope_requires_current_detector_and_max_width() -> None:
+    roi = RotatedROI(center_x=5.0, center_y=5.0, width=8.0, height=8.0)
+    with pytest.raises(ValueError, match="requires ContrastWidestSpanDetector"):
+        MeasurementDefinition(
+            object_class=ObjectClass.WHOLE_ENVELOPE,
+            detector=DetectorType.BALLOON_ENVELOPE,
+            roi=roi,
+        )
+    with pytest.raises(ValueError, match="only supports max_width"):
+        MeasurementDefinition(
+            object_class=ObjectClass.WHOLE_ENVELOPE,
+            detector=DetectorType.CONTRAST_WIDEST_SPAN,
+            width_mode=WidthMode.MIN_WIDTH,
+            roi=roi,
         )
 
 

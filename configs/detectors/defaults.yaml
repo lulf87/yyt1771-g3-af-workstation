@@ -1,6 +1,21 @@
 measurement_coordinates: source_pixel
+current_object_class: WHOLE_ENVELOPE
+current_detector: ContrastWidestSpanDetector
+current_width_mode: max_width
+default_measurement_band_height_px: 8
 
 detectors:
+  ContrastWidestSpanDetector:
+    width_mode: max_width
+    contrast_threshold: 55
+    min_window_pixels: 8
+    tie_width_epsilon_px: 2.0
+    switch_after_n_frames: 3
+    jump_limit_px: 25.0
+    min_confidence: 0.15
+    debug_overlay: true
+
+  # Legacy compatibility profiles below are not current product choices.
   BalloonEnvelopeDetector:
     width_mode: max_width
     dark_enhance_bg_kernel_px: 61

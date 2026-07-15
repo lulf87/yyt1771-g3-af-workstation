@@ -272,6 +272,8 @@ export type AnalysisAfasDataPoint = {
 export type AnalysisAfasFitLine = {
   kind: CurveOverlayLineSpec["kind"];
   label: string;
+  slope: number;
+  intercept: number;
   dataRange: [number, number] | null;
   x1: number;
   y1: number;
@@ -1292,6 +1294,8 @@ function buildAnalysisAfasFitLine(
   return [{
     kind: raw.kind,
     label: raw.label,
+    slope: line.slope,
+    intercept: line.intercept,
     dataRange: raw.range ?? null,
     x1,
     y1,

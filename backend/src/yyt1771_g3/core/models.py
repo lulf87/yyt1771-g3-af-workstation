@@ -280,8 +280,8 @@ class DetectorConfig(G3Model):
 class MeasurementDefinition(G3Model):
     measurement_id: str = "default"
     source: MeasurementSource = MeasurementSource.OFFLINE_DATASET
-    object_class: ObjectClass
-    detector: DetectorType
+    object_class: ObjectClass = ObjectClass.WHOLE_ENVELOPE
+    detector: DetectorType = DetectorType.CONTRAST_WIDEST_SPAN
     detector_mode: DetectorMode = DetectorMode.DEFAULT
     width_mode: WidthMode = WidthMode.MAX_WIDTH
     measurement_coordinates: MeasurementCoordinateKind = MeasurementCoordinateKind.SOURCE_PIXEL
@@ -314,11 +314,16 @@ class MeasurementDefinition(G3Model):
 
     @model_validator(mode="after")
     def _validate_width_mode(self) -> "MeasurementDefinition":
+        if self.object_class == ObjectClass.WHOLE_ENVELOPE:
+            if self.detector != DetectorType.CONTRAST_WIDEST_SPAN:
+                raise ValueError("WHOLE_ENVELOPE requires ContrastWidestSpanDetector")
+            if self.width_mode != WidthMode.MAX_WIDTH:
+                raise ValueError("WHOLE_ENVELOPE only supports max_width")
         if self.object_class in {
             ObjectClass.A_BALLOON_ENVELOPE,
             ObjectClass.C_BUNDLE_ENVELOPE,
         } and self.width_mode != WidthMode.MAX_WIDTH:
-            raise ValueError("A/C object classes only support max_width in G3 phase 1")
+            raise ValueError("legacy A/C object classes only support max_width")
 
         region_count = len(self.regions)
         if not MIN_MEASUREMENT_REGIONS <= region_count <= MAX_MEASUREMENT_REGIONS:

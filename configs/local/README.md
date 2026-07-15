@@ -14,9 +14,11 @@ configs/local/simcamera_simtemp.local.yaml
 该文件记录 G3 的本地 golden/offline datasets：
 
 ```text
-golden_a_20260522_dev_lab -> A 类球囊 / 网状结构
-golden_c_20260529_dev_lab -> C 类多细支 / 多线束整体结构
+golden_a_20260522_dev_lab -> 整体外包络回归素材（a 为历史 ID）
+golden_c_20260529_dev_lab -> 整体外包络回归素材（c 为历史 ID）
 ```
+
+两组素材的新建测量默认值均为 `WHOLE_ENVELOPE + ContrastWidestSpanDetector + max_width`，ROI 为默认 8 px 的非零窄测量带。旧 A/C object class 与 Balloon/Bundle detector 只保存在 `legacy_profile` 中用于历史兼容。
 
 注意：
 

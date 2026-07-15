@@ -1258,6 +1258,14 @@ input {
   cursor: grab;
 }
 
+.contourProjectionOverlay {
+  pointer-events: none;
+}
+
+.abOverlay {
+  pointer-events: none;
+}
+
 .contourProjectionOverlay polygon {
   fill: none;
   stroke: #ef4444;
@@ -2524,6 +2532,27 @@ input {
   gap: 12px;
 }
 
+.analysisAfasEditStatus {
+  margin-left: auto;
+  color: #526170;
+  font-size: 12px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.analysisAfasEditStatus--previewing,
+.analysisAfasEditStatus--saving {
+  color: #9a4f12;
+}
+
+.analysisAfasEditStatus--saved {
+  color: #0f766e;
+}
+
+.analysisAfasEditStatus--error {
+  color: #b42318;
+}
+
 .analysisAfasLayerGroup {
   display: inline-flex;
   align-items: center;
@@ -2552,9 +2581,19 @@ input {
   accent-color: #0f766e;
 }
 
-.analysisAfasResetButton {
+.analysisAfasToolbarActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysisAfasToolbarButton {
   width: auto;
   min-width: 122px;
+}
+
+.analysisAfasToolbarButton--automatic {
+  min-width: 154px;
 }
 
 .analysisAfasFigure {
@@ -2604,6 +2643,54 @@ input {
 
 .analysisAfasFitBand--high_baseline {
   fill: rgba(154, 126, 78, 0.14);
+}
+
+.analysisAfasRangeMoveTarget {
+  fill: transparent;
+  pointer-events: all;
+  cursor: grab;
+}
+
+.analysisAfasRangeMoveTarget:active {
+  cursor: grabbing;
+}
+
+.analysisAfasRangeHandle {
+  cursor: ew-resize;
+  pointer-events: all;
+}
+
+.analysisAfasRangeEditor .analysisAfasRangeHandle > .analysisAfasRangeHandleHitTarget {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+}
+
+.analysisAfasRangeHandle > line:first-of-type {
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasRangeHandle rect {
+  fill: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasRangeHandle > line:not(:first-of-type) {
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.analysisAfasRangeEditor--low_baseline .analysisAfasRangeHandle line,
+.analysisAfasRangeEditor--low_baseline .analysisAfasRangeHandle rect {
+  stroke: #1d4ed8;
+}
+
+.analysisAfasRangeEditor--high_baseline .analysisAfasRangeHandle line,
+.analysisAfasRangeEditor--high_baseline .analysisAfasRangeHandle rect {
+  stroke: #b91c1c;
 }
 
 .analysisAfasGridLine {
@@ -2657,6 +2744,17 @@ input {
   vector-effect: non-scaling-stroke;
 }
 
+.analysisAfasRawPoint,
+.analysisAfasOutlierPoint,
+.analysisAfasFitLineGroup:not(.analysisAfasFitLineGroup--tangent),
+.analysisAfasConstructionGuide,
+.analysisAfasSmoothedLine,
+.analysisAfasSmoothedLabel,
+.analysisAfasReferenceMarker,
+.analysisAfasMaxSlopeMarker {
+  pointer-events: none;
+}
+
 .analysisAfasSmoothedLine {
   fill: none;
   stroke: #0f766e;
@@ -2687,6 +2785,27 @@ input {
 .analysisAfasFitLine--tangent {
   stroke: #c2410c;
   stroke-width: 3;
+  pointer-events: none;
+}
+
+.analysisAfasTangentMoveTarget {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;
+  pointer-events: stroke;
+  cursor: move;
+}
+
+.analysisAfasTangentSlopeHandle {
+  fill: #fff7ed;
+  stroke: #c2410c;
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+  cursor: crosshair;
+}
+
+.analysisAfasInlineLabel--tangent {
+  pointer-events: none;
 }
 
 .analysisAfasConstructionGuide {
@@ -2696,7 +2815,7 @@ input {
   stroke-linejoin: round;
   stroke-dasharray: 6 5;
   vector-effect: non-scaling-stroke;
-  pointer-events: stroke;
+  pointer-events: none;
 }
 
 .analysisAfasConstructionGuide--as_vertical {
@@ -2913,6 +3032,20 @@ input {
   line-height: 1.5;
 }
 
+.analysisAfasInteractionHint {
+  margin: 8px 0 0;
+  color: #435466;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.analysisInteractiveControls p {
+  margin: 0 0 10px;
+  color: #526170;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .analysisParameterDisclosure {
   min-width: 0;
   border-top: 1px solid #e2e7ec;
@@ -3109,8 +3242,13 @@ input {
   }
 
   .analysisAfasLayerGroup,
-  .analysisAfasResetButton {
+  .analysisAfasToolbarActions {
     width: 100%;
+  }
+
+  .analysisAfasToolbarButton {
+    flex: 1;
+    width: auto;
   }
 
   .analysisAfasLayerToggle {

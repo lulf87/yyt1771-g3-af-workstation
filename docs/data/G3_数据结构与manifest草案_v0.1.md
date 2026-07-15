@@ -14,8 +14,9 @@
 ```json
 {
   "measurement_id": "example",
-  "object_class": "A_BALLOON_ENVELOPE",
-  "detector": "BalloonEnvelopeDetector",
+  "object_class": "WHOLE_ENVELOPE",
+  "detector": "ContrastWidestSpanDetector",
+  "detector_mode": "contrast_widest_span",
   "width_mode": "max_width",
   "measurement_coordinates": "source_pixel",
   "roi": {
@@ -23,7 +24,7 @@
     "center_x": 1000.0,
     "center_y": 650.0,
     "width": 800.0,
-    "height": 300.0,
+    "height": 8.0,
     "angle_deg": -5.0
   },
   "regions": [
@@ -38,12 +39,13 @@
         "center_x": 1000.0,
         "center_y": 650.0,
         "width": 800.0,
-        "height": 300.0,
+        "height": 8.0,
         "angle_deg": -5.0
       }
     }
   ],
   "detector_config": {
+    "contrast_threshold": 55.0,
     "tie_width_epsilon_px": 2.0,
     "switch_after_n_frames": 3,
     "jump_limit_px": 25.0
@@ -51,7 +53,9 @@
 }
 ```
 
-兼容规则：`regions` 是新数据的权威结构，数量为 1–6 且至少一个位置启用；`region_id` 不得重复。旧数据只有 `roi` 时读取层自动生成 `region_1`。顶层 `roi` 继续保存，并镜像第一个启用位置的 ROI。
+当前规则：`object_class` 固定为 `WHOLE_ENVELOPE`，`detector` 固定为 `ContrastWidestSpanDetector`，`width_mode` 固定为 `max_width`。ROI 数据类型仍为 `rotated_rect`，产品语义为非零窄测量带；新建默认高度为 8 px。
+
+兼容规则：`regions` 是新数据的权威结构，数量为 1–6 且至少一个位置启用；`region_id` 不得重复。旧数据只有 `roi` 时读取层自动生成 `region_1`。顶层 `roi` 继续保存，并镜像第一个启用位置的 ROI。旧数据中的 `A_BALLOON_ENVELOPE`、`C_BUNDLE_ENVELOPE`、`D_RESERVED_OBJECT` 和 Balloon/Bundle detector 值按历史配置原样解析，不改写已有结果；它们不再用于新建测量。
 
 ---
 
@@ -103,8 +107,8 @@
   "frame_index": 1,
   "detection_status": "VALID",
   "ab_points": {
-    "a": {"x": 900.0, "y": 610.0},
-    "b": {"x": 900.0, "y": 910.0}
+    "a": {"x": 700.0, "y": 650.0},
+    "b": {"x": 1000.0, "y": 650.0}
   },
   "distance_px": 300.0,
   "raw_best_candidate": {},
@@ -117,9 +121,11 @@
   "rejected_candidates": [],
   "rejected_reason": "",
   "debug_artifacts": {
-    "strut_mask_path": "artifacts/frame_000001_strut_mask.png",
-    "mesh_region_path": "artifacts/frame_000001_mesh_region.png",
-    "outer_contour_debug_path": "artifacts/frame_000001_outer_contour_debug.png",
+    "detection_mode": "contrast_widest_span",
+    "contrast_threshold": 55.0,
+    "selected_scan_v": 4.0,
+    "selected_left_u": 100.0,
+    "selected_right_u": 400.0,
     "overlay_debug_image_path": "artifacts/frame_000001_overlay.png"
   },
   "temperature_sync_status": "TEMP_SYNC_OK"

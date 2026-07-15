@@ -9,6 +9,7 @@ import {
   Image as ImageIcon,
   Play,
   RefreshCcw,
+  RotateCcw,
   RotateCw,
   SlidersHorizontal,
   Square,
@@ -46,6 +47,7 @@ import {
   readDiagnosticImages,
   realCameraPreviewImageUrl,
   releaseRealCameraPreview,
+  previewRunAfasAdjustment,
   recomputeRunAnalysis,
   runFrameImageUrl,
   saveHardwareBinding,
@@ -59,6 +61,7 @@ import {
   testHardwareTemperature,
   type ABPoint,
   type ApiErrorDetail,
+  type AfasAnalysisPreview,
   type AfasAnalysisParameters,
   type AfasPreprocessingParameters,
   type AnalysisResult,
@@ -136,13 +139,26 @@ import {
   type FrameDisplayTransform
 } from "./geometry/coordinates";
 import {
+  MIN_MEASUREMENT_BAND_HEIGHT_PX,
   moveRoiFromDrag,
   resizeRoiFromHandle,
   rotateRoiToPointer,
   type RoiResizeHandle
 } from "./geometry/roiInteraction";
 import {
+  moveAfasRange,
+  resizeAfasRange,
+  rotateAfasTangent,
+  translateAfasTangent,
+  type AfasDataPoint,
+  type AfasRange
+} from "./afasInteraction";
+import {
   SETUP_SOURCE_OPTIONS,
+  CURRENT_DETECTOR,
+  CURRENT_DETECTOR_MODE,
+  CURRENT_OBJECT_CLASS,
+  CURRENT_WIDTH_MODE,
   DEFAULT_REAL_CAMERA_PREVIEW_FPS,
   buildRealCameraRunCameraProfile,
   buildRunSetupSummary,
@@ -198,7 +214,6 @@ import {
   readInitialUiLanguage,
   uiDatasetLabel,
   uiDetector,
-  uiDetectorMode,
   uiNone,
   uiNumberSuffix,
   uiObjectClass,
@@ -387,7 +402,7 @@ const DEFAULT_AFAS_PREPROCESSING_PARAMETERS: AfasPreprocessingParameters = {
   outlier_window: 11,
   outlier_threshold: 5,
   outlier_max_iterations: 3,
-  savgol_window_length: 51,
+  savgol_window_length: 21,
   savgol_polyorder: 3
 };
 
@@ -395,12 +410,16 @@ type AfasAnalysisFormState = {
   low_range_celsius: [number | null, number | null];
   high_range_celsius: [number | null, number | null];
   tangent_offset: number;
+  tangent_slope_override: number | null;
+  tangent_intercept_override: number | null;
 };
 
 const DEFAULT_AFAS_ANALYSIS_FORM: AfasAnalysisFormState = {
   low_range_celsius: [null, null],
   high_range_celsius: [null, null],
-  tangent_offset: 0
+  tangent_offset: 0,
+  tangent_slope_override: null,
+  tangent_intercept_override: null
 };
 
 const LIVE_FRAME_DISPLAY_MAX_WIDTH = 1024;
@@ -410,33 +429,13 @@ const REAL_CAMERA_BOOTSTRAP_SHAPE = [1, 1];
 const REAL_CAMERA_BOOTSTRAP_DATASET: OfflineDatasetListItem = {
   id: "real_camera",
   label: "Real camera",
-  object_class: "C_BUNDLE_ENVELOPE",
-  g3_type: "C",
-  default_detector: "BundleEnvelopeDetector",
+  object_class: CURRENT_OBJECT_CLASS,
+  g3_type: "WHOLE_ENVELOPE",
+  default_detector: CURRENT_DETECTOR,
   default_width_mode: "max_width",
   frame_count: 0
 };
 const OPERATOR_SOURCE_STATUS_RETRY_DELAYS_MS = [5000, 10000, 30000] as const;
-
-const OBJECT_CLASS_OPTIONS = [
-  { value: "A_BALLOON_ENVELOPE", label: "A balloon envelope", detector: "BalloonEnvelopeDetector", widthMode: "max_width" as const },
-  { value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "BundleEnvelopeDetector", widthMode: "max_width" as const },
-  { value: "D_RESERVED_OBJECT", label: "D reserved object", detector: "ReservedObjectDetector", widthMode: "max_width" as const }
-];
-
-const C_DETECTOR_MODE_OPTIONS = [
-  { value: "default", label: "Original envelope detection" },
-  { value: "c_envelope_legacy", label: "Original envelope detection" },
-  { value: "contrast_widest_span", label: "Contrast widest-span detection" }
-] as const;
-
-const DETECTOR_OPTIONS = [
-  { value: "BalloonEnvelopeDetector", label: "BalloonEnvelopeDetector" },
-  { value: "ContrastWidestSpanDetector", label: "ContrastWidestSpanDetector" },
-  { value: "BundleEnvelopeDetector", label: "BundleEnvelopeDetector" },
-  { value: "LegacyBundleEnvelopeDetector", label: "LegacyBundleEnvelopeDetector" },
-  { value: "ReservedObjectDetector", label: "ReservedObjectDetector" }
-];
 
 const DETECTOR_PRESETS = [
   {
@@ -3876,6 +3875,8 @@ function OperatorResultsPage({
             analysis={analysis}
             selectedRegionId={selectedRegionId}
             onSelectedRegionId={setSelectedRegionId}
+            runId={currentRunId}
+            onAnalysisUpdated={setAnalysisOverride}
           />
         </section>
       ) : null}
@@ -4049,8 +4050,8 @@ function ImportedRunSummary({ view }: { view: ImportedRunView }) {
       <dl className="metricGrid compact operatorSummaryMetrics">
         <Metric label="File" value={view.filename} />
         <Metric label="Run" value={view.run_manifest?.run_id ?? analysis?.run_id ?? "None"} />
-        <Metric label="Object class" value={measurement?.object_class ?? "None"} />
-        <Metric label="Width mode" value={measurement?.width_mode ?? "None"} />
+        <Metric label="Measurement principle" value={measurement ? uiObjectClass(language, measurement.object_class) : "None"} />
+        <Metric label="Detection method" value={measurement ? uiDetector(language, measurement.detector) : "None"} />
         <Metric label="target_temperature_celsius" value={formatOptionalNumber(readRecord(measurement?.detector_config).target_temperature_celsius, " °C", language)} />
         <Metric label="temperature_power_percent" value={formatOptionalNumber(readRecord(measurement?.detector_config).temperature_power_percent, " %", language)} />
         <Metric label="Frames" value={view.frame_summary.total_frames.toLocaleString()} />
@@ -4105,11 +4106,15 @@ function ImportedRunCurveReview({ view }: { view: ImportedRunView }) {
 function MultiRegionAfasReview({
   analysis,
   selectedRegionId,
-  onSelectedRegionId
+  onSelectedRegionId,
+  runId = null,
+  onAnalysisUpdated
 }: {
   analysis: AnalysisResult;
   selectedRegionId: string;
   onSelectedRegionId: (regionId: string) => void;
+  runId?: string | null;
+  onAnalysisUpdated?: (analysis: AnalysisResult) => void;
 }) {
   const language = useUiLanguage();
   const t = useUiText();
@@ -4151,7 +4156,14 @@ function MultiRegionAfasReview({
         ))}
       </div>
       {failureReason ? <div className="inlineWarning">{localizeDisplayString(failureReason, language)}</div> : null}
-      <AnalysisAfasChart analysis={selectedAnalysis} />
+      <AnalysisAfasChart
+        analysis={selectedAnalysis}
+        runId={runId}
+        regionId={selectedRegion.region_id}
+        onAnalysisUpdated={onAnalysisUpdated ? (nextAnalysis) => {
+          onAnalysisUpdated(mergeRegionAnalysisUpdate(analysis, nextAnalysis, selectedRegion.region_id));
+        } : undefined}
+      />
     </div>
   );
 }
@@ -4453,12 +4465,12 @@ function MeasurementControls({
 
   return (
     <div className="controlStack">
-      <h3>{t("Measurement ROI")}</h3>
+      <h3>{t("Narrow measurement band")}</h3>
       <div className="twoColumnControls">
         <NumberField disabled={disabled} label="Center X" value={measurement.roi.center_x} onChange={(v) => patchRoi({ center_x: v })} onCommit={commitRoiField} />
         <NumberField disabled={disabled} label="Center Y" value={measurement.roi.center_y} onChange={(v) => patchRoi({ center_y: v })} onCommit={commitRoiField} />
-        <NumberField disabled={disabled} label="Width" value={measurement.roi.width} onChange={(v) => patchRoi({ width: Math.max(1, v) })} onCommit={commitRoiField} />
-        <NumberField disabled={disabled} label="Height" value={measurement.roi.height} onChange={(v) => patchRoi({ height: Math.max(1, v) })} onCommit={commitRoiField} />
+        <NumberField disabled={disabled} label="Band length" min={MIN_MEASUREMENT_BAND_HEIGHT_PX} value={measurement.roi.width} onChange={(v) => patchRoi({ width: Math.max(MIN_MEASUREMENT_BAND_HEIGHT_PX, v) })} onCommit={commitRoiField} />
+        <NumberField disabled={disabled} label="Band width" min={MIN_MEASUREMENT_BAND_HEIGHT_PX} value={measurement.roi.height} onChange={(v) => patchRoi({ height: Math.max(MIN_MEASUREMENT_BAND_HEIGHT_PX, v) })} onCommit={commitRoiField} />
       </div>
       <label className="field">
         <span>
@@ -4480,7 +4492,7 @@ function MeasurementControls({
       {onResetRoi ? (
         <button className="secondaryButton" disabled={disabled} onClick={onResetRoi} type="button">
           <SquareDashedMousePointer size={16} aria-hidden="true" />
-          {t("New / reset ROI")}
+          {t("New / reset measurement band")}
         </button>
       ) : null}
     </div>
@@ -4496,13 +4508,7 @@ function DetectorSetupControls({
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
 }) {
-  const language = useUiLanguage();
   const t = useUiText();
-  function patchMeasurement(patch: Partial<MeasurementDefinition>, change: RealCameraSetupChange) {
-    onMeasurement({ ...measurement, ...patch });
-    onPreviewAffectingChange?.(change);
-  }
-
   function patchDetectorConfig(key: keyof DetectorConfig, value: DetectorConfig[keyof DetectorConfig]) {
     onMeasurement({
       ...measurement,
@@ -4528,39 +4534,9 @@ function DetectorSetupControls({
     onPreviewAffectingChange?.({ kind: "detector_config", key });
   }
 
-  function changeObjectClass(value: string) {
-    const option = OBJECT_CLASS_OPTIONS.find((item) => item.value === value);
-    patchMeasurement(
-      {
-        object_class: value,
-        detector: option?.detector ?? measurement.detector,
-        detector_mode: "default",
-        width_mode: option?.widthMode ?? "max_width"
-      },
-      { kind: "object_class" }
-    );
-  }
-
   return (
     <div className="controlStack">
       <h3>{t("Detector Setup")}</h3>
-      <label className="field">
-        <span>{t("Object class")}</span>
-        <select onChange={(event) => changeObjectClass(event.target.value)} value={measurement.object_class}>
-          {OBJECT_CLASS_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {uiObjectClass(language, option.value)}
-            </option>
-          ))}
-        </select>
-      </label>
-      {measurement.object_class === "C_BUNDLE_ENVELOPE" ? (
-        <CDetectorModeControl
-          measurement={measurement}
-          onMeasurement={onMeasurement}
-          onPreviewAffectingChange={onPreviewAffectingChange}
-        />
-      ) : null}
       <div className="detectorPresetGroup">
         {DETECTOR_PRESETS.map((preset) => (
           <button className="secondaryButton compactButton" key={preset.id} onClick={() => applyDetectorPreset(preset.patch)} type="button">
@@ -4576,33 +4552,6 @@ function DetectorSetupControls({
       />
       <details className="advancedDetectorParameters">
         <summary>{t("Advanced")}</summary>
-        <label className="field">
-          <span>{t("Detector")}</span>
-          <select
-            onChange={(event) => patchMeasurement({ detector: event.target.value }, { kind: "detector" })}
-            value={measurement.detector}
-          >
-            {DETECTOR_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {uiDetector(language, option.value)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>{t("Width mode")}</span>
-          <select
-            onChange={(event) =>
-              patchMeasurement({ width_mode: event.target.value as MeasurementDefinition["width_mode"] }, { kind: "width_mode" })
-            }
-            value={measurement.width_mode}
-        >
-            <option value="max_width">{uiWidthMode(language, "max_width")}</option>
-            <option disabled={measurement.object_class !== "D_RESERVED_OBJECT"} value="min_width">
-              {uiWidthMode(language, "min_width")}
-            </option>
-          </select>
-        </label>
         <DetectorParameterGroups
           definitions={DETECTOR_PARAMETER_DEFS.filter((definition) => !BASIC_DETECTOR_PARAMETER_KEYS.has(definition.key))}
           detectorConfig={measurement.detector_config}
@@ -4611,88 +4560,6 @@ function DetectorSetupControls({
         />
       </details>
     </div>
-  );
-}
-
-function CDetectorModeControl({
-  measurement,
-  onMeasurement,
-  onPreviewAffectingChange,
-  disabled = false
-}: {
-  measurement: MeasurementDefinition;
-  onMeasurement: (measurement: MeasurementDefinition) => void;
-  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
-  disabled?: boolean;
-}) {
-  const language = useUiLanguage();
-  const t = useUiText();
-
-  function changeDetectorMode(value: MeasurementDefinition["detector_mode"]) {
-    const normalized = value ?? "default";
-    onMeasurement({
-      ...measurement,
-      detector: normalized === "contrast_widest_span" ? "ContrastWidestSpanDetector" : "BundleEnvelopeDetector",
-      detector_mode: normalized
-    });
-    onPreviewAffectingChange?.({ kind: "detector" });
-  }
-
-  return (
-    <label className="field">
-      <span>{t("Detection method")}</span>
-      <select
-        disabled={disabled}
-        onChange={(event) => changeDetectorMode(event.target.value as MeasurementDefinition["detector_mode"])}
-        value={measurement.detector_mode ?? "default"}
-      >
-        {C_DETECTOR_MODE_OPTIONS.filter((option) => option.value !== "c_envelope_legacy" || measurement.detector_mode === "c_envelope_legacy").map((option) => (
-          <option key={option.value} value={option.value}>
-            {uiDetectorMode(language, option.value)}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function isContrastWidestSpanMode(measurement: MeasurementDefinition): boolean {
-  return measurement.object_class === "C_BUNDLE_ENVELOPE" && measurement.detector_mode === "contrast_widest_span";
-}
-
-function ContrastThresholdControl({
-  measurement,
-  onMeasurement,
-  onPreviewAffectingChange
-}: {
-  measurement: MeasurementDefinition;
-  onMeasurement: (measurement: MeasurementDefinition) => void;
-  onPreviewAffectingChange?: (change: RealCameraSetupChange) => void;
-}) {
-  function patchContrastThreshold(value: number) {
-    const nextValue = Math.max(0, Math.min(255, Number.isFinite(value) ? value : DEFAULT_CONFIG.contrast_threshold));
-    onMeasurement({
-      ...measurement,
-      detector_config: {
-        ...measurement.detector_config,
-        contrast_threshold: nextValue
-      }
-    });
-  }
-
-  return (
-    <NumberField
-      label="Contrast threshold"
-      min={0}
-      max={255}
-      step={1}
-      value={measurement.detector_config.contrast_threshold ?? DEFAULT_CONFIG.contrast_threshold}
-      onChange={patchContrastThreshold}
-      onCommit={(value) => {
-        patchContrastThreshold(value);
-        onPreviewAffectingChange?.({ kind: "detector_config", key: "contrast_threshold" });
-      }}
-    />
   );
 }
 
@@ -5063,7 +4930,8 @@ function DetectorStatus({
       <h3>{t("Result")}</h3>
       <dl className="metricGrid compact">
         <Metric label="Dataset" value={uiDatasetLabel(language, dataset)} />
-        <Metric label="Detector" value={uiDetector(language, dataset.default_detector)} />
+        <Metric label="Measurement principle" value={t("Whole envelope")} />
+        <Metric label="Detection method" value={t("Contrast widest-span detection")} />
         <Metric label="Frames" value={dataset.frame_count.toLocaleString()} />
         <Metric label="Temperature rows" value={summary.temperature.row_count.toLocaleString()} />
         <Metric label="Status" value={result?.detection_status ?? "Not probed"} />
@@ -5458,15 +5326,6 @@ function FrameCanvas({
           })}
           {editable ? (
             <>
-              <circle
-                className="roiHandle roiMoveHandle"
-                cx={displayRoi.center_x}
-                cy={displayRoi.center_y}
-                data-testid="roi-move-handle"
-                onPointerDown={(event) => beginInteraction(event, { kind: "move" })}
-                r={6}
-                style={{ fill: activeRegion.color, stroke: activeRegion.color }}
-              />
               {handles.map((handle) => (
                 <rect
                   className="roiHandle roiResizeHandle"
@@ -5480,6 +5339,15 @@ function FrameCanvas({
                   y={handle.point.y - 5}
                 />
               ))}
+              <circle
+                className="roiHandle roiMoveHandle"
+                cx={displayRoi.center_x}
+                cy={displayRoi.center_y}
+                data-testid="roi-move-handle"
+                onPointerDown={(event) => beginInteraction(event, { kind: "move" })}
+                r={6}
+                style={{ fill: activeRegion.color, stroke: activeRegion.color }}
+              />
               <circle
                 className="roiHandle roiRotateHandle"
                 cx={rotateHandle.x}
@@ -5865,9 +5733,8 @@ function RunPage({
             <Metric label="ROI center" value={setupSummary.roiCenter} />
             <Metric label="ROI size" value={setupSummary.roiSize} />
             <Metric label="ROI angle" value={setupSummary.roiAngle} />
-            <Metric label="Object class" value={setupSummary.objectClass} />
-            <Metric label="Detector" value={setupSummary.detector} />
-            <Metric label="Width mode" value={setupSummary.widthMode} />
+            <Metric label="Measurement principle" value={setupSummary.measurementPrinciple} />
+            <Metric label="Detection method" value={setupSummary.detectionMethod} />
             <Metric label="max_frames_per_run" value={setupSummary.maxFramesPerRun} />
             <Metric label="target_fps" value={setupSummary.targetFps} />
             <Metric label="target_temperature_celsius" value={setupSummary.targetTemperatureCelsius} />
@@ -6039,7 +5906,12 @@ function AnalysisPage({
         <section className="toolPanel analysisMainPanel">
           <h2>{selectedRunId ? `${t("Analysis")} · ${selectedRunId}` : t("Analysis")}</h2>
           <ResultSourceToggle source={resultSource} onSource={setResultSource} />
-          <AnalysisAfasChart analysis={displayedAnalysis ?? analysis} />
+          <AnalysisAfasChart
+            analysis={displayedAnalysis ?? analysis}
+            runId={selectedRunId}
+            regionId={analysis.regions?.[0]?.region_id}
+            onAnalysisUpdated={setAnalysisOverride}
+          />
           <details className="analysisParameterDisclosure">
             <summary>
               <Settings size={15} aria-hidden="true" />
@@ -6124,9 +5996,9 @@ function AfasParameterPanel({
   const [preprocessing, setPreprocessing] = useState<AfasPreprocessingParameters>(() =>
     readAfasPreprocessingParameters(analysis)
   );
-  const [tangent, setTangent] = useState<AfasAnalysisFormState>(() => readAfasAnalysisForm(analysis));
   const [recalculating, setRecalculating] = useState(false);
   const [error, setError] = useState("");
+  const tangent = readAfasAnalysisForm(analysis);
   const preprocessingPayload = readRecord(analysis.afas_preprocessing);
   const smoothed = readRecord(preprocessingPayload.smoothed);
   const outlierRepair = readRecord(preprocessingPayload.outlier_repair);
@@ -6134,24 +6006,11 @@ function AfasParameterPanel({
 
   useEffect(() => {
     setPreprocessing(readAfasPreprocessingParameters(analysis));
-    setTangent(readAfasAnalysisForm(analysis));
     setError("");
   }, [analysis]);
 
   function patchPreprocessing(patch: Partial<AfasPreprocessingParameters>) {
     setPreprocessing((current) => ({ ...current, ...patch }));
-  }
-
-  function patchRange(
-    key: "low_range_celsius" | "high_range_celsius",
-    index: 0 | 1,
-    value: number | null
-  ) {
-    setTangent((current) => {
-      const nextRange: [number | null, number | null] = [current[key][0], current[key][1]];
-      nextRange[index] = value;
-      return { ...current, [key]: nextRange };
-    });
   }
 
   async function recalculateAnalysis(applyToAll = false) {
@@ -6246,39 +6105,17 @@ function AfasParameterPanel({
             />
           </div>
         </fieldset>
-        <fieldset>
-          <legend>{t("Tangent")}</legend>
-          <div className="twoColumnControls">
-            <NullableNumberField
-              label="Low start °C"
-              step={0.1}
-              value={tangent.low_range_celsius[0]}
-              onChange={(value) => patchRange("low_range_celsius", 0, value)}
+        <fieldset className="analysisInteractiveControls">
+          <legend>{t("Interactive baselines and tangent")}</legend>
+          <p>{t("Drag the low/high shaded ranges and the tangent directly in the chart. Drag a tangent end handle to change its slope.")}</p>
+          <dl className="metricGrid compact">
+            <Metric label="Low range" value={formatRange(tangent.low_range_celsius)} />
+            <Metric label="High range" value={formatRange(tangent.high_range_celsius)} />
+            <Metric
+              label="Calculation mode"
+              value={hasManualAfasOverrides(analysis) ? t("Manual") : t("Automatic")}
             />
-            <NullableNumberField
-              label="Low end °C"
-              step={0.1}
-              value={tangent.low_range_celsius[1]}
-              onChange={(value) => patchRange("low_range_celsius", 1, value)}
-            />
-            <NullableNumberField
-              label="High start °C"
-              step={0.1}
-              value={tangent.high_range_celsius[0]}
-              onChange={(value) => patchRange("high_range_celsius", 0, value)}
-            />
-            <NullableNumberField
-              label="High end °C"
-              step={0.1}
-              value={tangent.high_range_celsius[1]}
-              onChange={(value) => patchRange("high_range_celsius", 1, value)}
-            />
-            <NumberField
-              label="Tangent offset"
-              value={tangent.tangent_offset}
-              onChange={(value) => setTangent((current) => ({ ...current, tangent_offset: Math.round(value) }))}
-            />
-          </div>
+          </dl>
         </fieldset>
       </div>
       <dl className="metricGrid compact analysisParameterMetrics">
@@ -6311,6 +6148,39 @@ type AnalysisAfasHoverTarget = {
   y: number;
 };
 
+type AfasEditableRangeKey = "low_range_celsius" | "high_range_celsius";
+
+type AnalysisAfasEditInteraction =
+  | {
+      kind: "range_edge";
+      rangeKey: AfasEditableRangeKey;
+      edge: "start" | "end";
+      baseRange: AfasRange;
+      temperatures: number[];
+      baseParameters: AfasAnalysisFormState;
+    }
+  | {
+      kind: "range_move";
+      rangeKey: AfasEditableRangeKey;
+      baseRange: AfasRange;
+      startTemperature: number;
+      temperatures: number[];
+      baseParameters: AfasAnalysisFormState;
+    }
+  | {
+      kind: "tangent_move";
+      startPoint: AfasDataPoint;
+      slope: number;
+      intercept: number;
+      baseParameters: AfasAnalysisFormState;
+    }
+  | {
+      kind: "tangent_slope";
+      anchor: AfasDataPoint;
+      slope: number;
+      baseParameters: AfasAnalysisFormState;
+    };
+
 type IndustrialCurveFrameSource = {
   width: number;
   height: number;
@@ -6330,6 +6200,10 @@ function IndustrialCurveView({
   onMouseLeave,
   onMouseMove,
   onMouseUp,
+  onPointerDown,
+  onPointerLeave,
+  onPointerMove,
+  onPointerUp,
   underlay,
   variant
 }: {
@@ -6341,6 +6215,10 @@ function IndustrialCurveView({
   onMouseLeave?: React.MouseEventHandler<SVGSVGElement>;
   onMouseMove?: React.MouseEventHandler<SVGSVGElement>;
   onMouseUp?: React.MouseEventHandler<SVGSVGElement>;
+  onPointerDown?: React.PointerEventHandler<SVGSVGElement>;
+  onPointerLeave?: React.PointerEventHandler<SVGSVGElement>;
+  onPointerMove?: React.PointerEventHandler<SVGSVGElement>;
+  onPointerUp?: React.PointerEventHandler<SVGSVGElement>;
   underlay?: React.ReactNode;
   variant: IndustrialCurveViewVariant;
 }) {
@@ -6365,6 +6243,10 @@ function IndustrialCurveView({
       onMouseLeave={onMouseLeave}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
+      onPointerDown={onPointerDown}
+      onPointerLeave={onPointerLeave}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
     >
       <rect
         className={frame.classNames.frame}
@@ -6457,14 +6339,34 @@ function IndustrialCurveView({
   );
 }
 
-function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
+function AnalysisAfasChart({
+  analysis,
+  runId = null,
+  regionId,
+  onAnalysisUpdated
+}: {
+  analysis: AnalysisResult;
+  runId?: string | null;
+  regionId?: string;
+  onAnalysisUpdated?: (analysis: AnalysisResult) => void;
+}) {
   const language = useUiLanguage();
   const t = useUiText();
   const [layers, setLayers] = useState<AnalysisAfasLayerState>({ raw: false, fit: true, markers: true });
   const [xDomain, setXDomain] = useState<[number, number] | null>(null);
   const [hoverTarget, setHoverTarget] = useState<AnalysisAfasHoverTarget | null>(null);
   const [brush, setBrush] = useState<{ start: number; current: number } | null>(null);
+  const [editStatus, setEditStatus] = useState<
+    "idle" | "previewing" | "saving" | "saved" | "restoring" | "restored" | "error"
+  >("idle");
+  const [editError, setEditError] = useState("");
   const brushRef = useRef<{ start: number; current: number } | null>(null);
+  const editRef = useRef<AnalysisAfasEditInteraction | null>(null);
+  const draftParametersRef = useRef<AfasAnalysisFormState | null>(null);
+  const previewAbortRef = useRef<AbortController | null>(null);
+  const previewRequestIdRef = useRef(0);
+  const lastPreviewRequestAtRef = useRef(0);
+  const editable = Boolean(runId && regionId && onAnalysisUpdated);
   const model = useMemo(
     () => buildAnalysisAfasModel(analysis, {
       width: ANALYSIS_AFAS_CHART_WIDTH,
@@ -6475,30 +6377,212 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
     [analysis, layers, xDomain]
   );
   const brushRect = brush ? brushToRect(brush, model.plot) : null;
+  const analysisParameters = readAfasAnalysisForm(analysis);
+  const manualOverridesActive = hasManualAfasOverrides(analysis);
+  const editBusy = editStatus === "previewing" || editStatus === "saving" || editStatus === "restoring";
+  const rangeBands = ([
+    ["low_range_celsius", "low_baseline", completeRange(analysisParameters.low_range_celsius)],
+    ["high_range_celsius", "high_baseline", completeRange(analysisParameters.high_range_celsius)]
+  ] as const).flatMap(([rangeKey, kind, range]) => range ? [{ rangeKey, kind, range }] : []);
+  const analysisIdentity = `${analysis.run_id}:${regionId ?? analysis.regions?.[0]?.region_id ?? "region_1"}`;
 
   useEffect(() => {
     setXDomain(null);
     setHoverTarget(null);
     setBrush(null);
+    setEditStatus("idle");
+    setEditError("");
     brushRef.current = null;
-  }, [analysis]);
+    editRef.current = null;
+    draftParametersRef.current = null;
+    previewAbortRef.current?.abort();
+  }, [analysisIdentity]);
+
+  useEffect(() => () => {
+    previewAbortRef.current?.abort();
+  }, []);
 
   function patchLayer(key: keyof AnalysisAfasLayerState, checked: boolean) {
     setLayers((current) => ({ ...current, [key]: checked }));
   }
 
-  function handleMouseDown(event: React.MouseEvent<SVGSVGElement>) {
+  function requestInteractivePreview(parameters: AfasAnalysisFormState) {
+    if (!runId || !regionId || !onAnalysisUpdated) return;
+    const now = performance.now();
+    if (now - lastPreviewRequestAtRef.current < 60) return;
+    lastPreviewRequestAtRef.current = now;
+    previewAbortRef.current?.abort();
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    const requestId = ++previewRequestIdRef.current;
+    setEditStatus("previewing");
+    setEditError("");
+    void previewRunAfasAdjustment(
+      runId,
+      {
+        region_id: regionId,
+        afas_analysis_parameters: normalizeAfasAnalysisParameters(parameters)
+      },
+      controller.signal
+    ).then((preview) => {
+      if (requestId !== previewRequestIdRef.current) return;
+      onAnalysisUpdated(applyAfasPreviewToAnalysis(analysis, preview));
+      setEditStatus("idle");
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (requestId !== previewRequestIdRef.current) return;
+      setEditStatus("error");
+      setEditError(error instanceof Error ? error.message : String(error));
+    });
+  }
+
+  async function persistInteractiveAdjustment(
+    parameters: AfasAnalysisFormState,
+    mode: "adjustment" | "automatic" = "adjustment"
+  ) {
+    if (!runId || !regionId || !onAnalysisUpdated) return;
+    previewAbortRef.current?.abort();
+    previewRequestIdRef.current += 1;
+    setEditStatus(mode === "automatic" ? "restoring" : "saving");
+    setEditError("");
+    try {
+      const nextAnalysis = await recomputeRunAnalysis(runId, {
+        region_id: regionId,
+        afas_preprocessing_parameters: readAfasPreprocessingParameters(analysis),
+        afas_analysis_parameters: normalizeAfasAnalysisParameters(parameters)
+      });
+      onAnalysisUpdated(nextAnalysis);
+      setEditStatus(mode === "automatic" ? "restored" : "saved");
+    } catch (error) {
+      setEditStatus("error");
+      setEditError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function beginRangeEdit(
+    event: React.PointerEvent<SVGElement>,
+    rangeKey: AfasEditableRangeKey,
+    mode: "move" | "start" | "end"
+  ) {
+    if (!editable) return;
+    const parameters = readAfasAnalysisForm(analysis);
+    const range = completeRange(parameters[rangeKey]);
+    const temperatures = model.smoothedPoints.map((point) => point.temperature);
+    if (!range || temperatures.length < 2) return;
+    const point = svgEventPoint(event, model);
+    const dataPoint = analysisAfasChartDataPoint(point, model);
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+    editRef.current = mode === "move"
+      ? {
+          kind: "range_move",
+          rangeKey,
+          baseRange: range,
+          startTemperature: dataPoint.temperature,
+          temperatures,
+          baseParameters: parameters
+        }
+      : {
+          kind: "range_edge",
+          rangeKey,
+          edge: mode,
+          baseRange: range,
+          temperatures,
+          baseParameters: parameters
+        };
+    draftParametersRef.current = null;
+    brushRef.current = null;
+    setBrush(null);
+    setHoverTarget(null);
+  }
+
+  function beginTangentEdit(
+    event: React.PointerEvent<SVGElement>,
+    line: AnalysisAfasModel["fitLines"][number],
+    mode: "move" | "slope_start" | "slope_end"
+  ) {
+    if (!editable || line.kind !== "tangent") return;
+    const parameters = readAfasAnalysisForm(analysis);
+    const point = svgEventPoint(event, model);
+    const dataPoint = analysisAfasChartDataPoint(point, model);
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+    editRef.current = mode === "move"
+      ? {
+          kind: "tangent_move",
+          startPoint: dataPoint,
+          slope: line.slope,
+          intercept: line.intercept,
+          baseParameters: parameters
+        }
+      : {
+          kind: "tangent_slope",
+          anchor: analysisAfasChartDataPoint(
+            mode === "slope_start" ? { x: line.x2, y: line.y2 } : { x: line.x1, y: line.y1 },
+            model
+          ),
+          slope: line.slope,
+          baseParameters: parameters
+        };
+    draftParametersRef.current = null;
+    brushRef.current = null;
+    setBrush(null);
+    setHoverTarget(null);
+  }
+
+  function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
     const point = svgEventPoint(event, model);
     if (!pointInPlot(point.x, point.y, model.plot)) return;
     event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
     const nextBrush = { start: point.x, current: point.x };
     brushRef.current = nextBrush;
     setBrush(nextBrush);
     setHoverTarget(null);
   }
 
-  function handleMouseMove(event: React.MouseEvent<SVGSVGElement>) {
+  function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
     const point = svgEventPoint(event, model);
+    const activeEdit = editRef.current;
+    if (activeEdit) {
+      const dataPoint = analysisAfasChartDataPoint(point, model);
+      let nextParameters: AfasAnalysisFormState;
+      if (activeEdit.kind === "range_edge") {
+        const nextRange = resizeAfasRange(
+          activeEdit.baseRange,
+          activeEdit.edge,
+          dataPoint.temperature,
+          activeEdit.temperatures
+        );
+        nextParameters = { ...activeEdit.baseParameters, [activeEdit.rangeKey]: nextRange };
+      } else if (activeEdit.kind === "range_move") {
+        const nextRange = moveAfasRange(
+          activeEdit.baseRange,
+          dataPoint.temperature - activeEdit.startTemperature,
+          activeEdit.temperatures
+        );
+        nextParameters = { ...activeEdit.baseParameters, [activeEdit.rangeKey]: nextRange };
+      } else {
+        const tangent = activeEdit.kind === "tangent_move"
+          ? translateAfasTangent(activeEdit.slope, activeEdit.intercept, activeEdit.startPoint, dataPoint)
+          : rotateAfasTangent(
+              activeEdit.anchor,
+              dataPoint,
+              activeEdit.slope,
+              Math.max(1e-6, (model.xRange.max - model.xRange.min) * 0.002)
+            );
+        nextParameters = {
+          ...activeEdit.baseParameters,
+          tangent_slope_override: tangent.slope,
+          tangent_intercept_override: tangent.intercept
+        };
+      }
+      draftParametersRef.current = nextParameters;
+      requestInteractivePreview(nextParameters);
+      return;
+    }
     const activeBrush = brushRef.current;
     if (activeBrush) {
       const nextBrush = { ...activeBrush, current: clamp(point.x, model.plot.left, model.plot.right) };
@@ -6510,7 +6594,17 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
     setHoverTarget(nearest);
   }
 
-  function handleMouseUp() {
+  function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
+    if (editRef.current) {
+      editRef.current = null;
+      const parameters = draftParametersRef.current;
+      draftParametersRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (parameters) void persistInteractiveAdjustment(parameters);
+      return;
+    }
     const activeBrush = brushRef.current;
     if (!activeBrush) return;
     const start = clamp(activeBrush.start, model.plot.left, model.plot.right);
@@ -6522,6 +6616,9 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
     }
     brushRef.current = null;
     setBrush(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   return (
@@ -6545,15 +6642,42 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
             onChange={(checked) => patchLayer("markers", checked)}
           />
         </div>
-        <button
-          className="secondaryButton analysisAfasResetButton"
-          disabled={!xDomain}
-          onClick={() => setXDomain(null)}
-          type="button"
-        >
-          <RefreshCcw size={15} aria-hidden="true" />
-          {t("Reset zoom")}
-        </button>
+        {editable ? (
+          <div className={`analysisAfasEditStatus analysisAfasEditStatus--${editStatus}`} role="status">
+            {t(
+              editStatus === "previewing" ? "Updating intersections" :
+                editStatus === "saving" ? "Saving adjustment" :
+                  editStatus === "restoring" ? "Restoring automatic calculation" :
+                    editStatus === "restored" ? "Automatic calculation restored" :
+                      editStatus === "saved" ? "Adjustment saved" :
+                        editStatus === "error" ? "Adjustment failed" :
+                          "Drag ranges or tangent to adjust"
+            )}
+          </div>
+        ) : null}
+        <div className="analysisAfasToolbarActions">
+          {editable ? (
+            <button
+              className="secondaryButton analysisAfasToolbarButton analysisAfasToolbarButton--automatic"
+              disabled={!manualOverridesActive || editBusy}
+              onClick={() => void persistInteractiveAdjustment(DEFAULT_AFAS_ANALYSIS_FORM, "automatic")}
+              title={manualOverridesActive ? t("Restore automatic calculation") : t("Already using automatic calculation")}
+              type="button"
+            >
+              <RotateCcw size={15} aria-hidden="true" />
+              {editStatus === "restoring" ? t("Restoring automatic calculation") : t("Restore automatic calculation")}
+            </button>
+          ) : null}
+          <button
+            className="secondaryButton analysisAfasToolbarButton"
+            disabled={!xDomain}
+            onClick={() => setXDomain(null)}
+            type="button"
+          >
+            <RefreshCcw size={15} aria-hidden="true" />
+            {t("Reset zoom")}
+          </button>
+        </div>
       </div>
       <figure className="analysisAfasFigure">
         <figcaption>
@@ -6564,24 +6688,26 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
           className="analysisAfasSvg"
           ariaLabel={t("AFAS temperature-distance review chart")}
           model={model}
-          onMouseDown={handleMouseDown}
-          onMouseLeave={() => {
+          onPointerDown={handlePointerDown}
+          onPointerLeave={() => {
+            if (editRef.current) return;
             setHoverTarget(null);
             brushRef.current = null;
             setBrush(null);
           }}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          underlay={model.fitLines
-            .filter((line) => line.kind === "low_baseline" || line.kind === "high_baseline")
-            .map((line) => {
-              const x = Math.min(line.x1, line.x2);
-              const width = Math.abs(line.x2 - line.x1);
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          underlay={rangeBands
+            .map(({ kind, range }) => {
+              const x1 = analysisAfasChartX(range[0], model);
+              const x2 = analysisAfasChartX(range[1], model);
+              const x = Math.min(x1, x2);
+              const width = Math.abs(x2 - x1);
               return (
                 <rect
-                  className={`analysisAfasFitBand analysisAfasFitBand--${line.kind}`}
+                  className={`analysisAfasFitBand analysisAfasFitBand--${kind}`}
                   height={model.plot.bottom - model.plot.top}
-                  key={`band-${line.kind}`}
+                  key={`band-${kind}`}
                   width={width}
                   x={x}
                   y={model.plot.top}
@@ -6590,6 +6716,25 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
             })}
           variant="analysis_review"
         >
+          {editable ? rangeBands.map(({ rangeKey, kind, range }) => {
+            const x1 = analysisAfasChartX(range[0], model);
+            const x2 = analysisAfasChartX(range[1], model);
+            const x = Math.min(x1, x2);
+            const width = Math.abs(x2 - x1);
+            return (
+              <g className={`analysisAfasRangeEditor analysisAfasRangeEditor--${kind}`} key={`range-editor-${rangeKey}`}>
+                <rect
+                  aria-label={t(kind === "low_baseline" ? "Drag low-temperature range" : "Drag high-temperature range")}
+                  className="analysisAfasRangeMoveTarget"
+                  height={model.plot.bottom - model.plot.top}
+                  onPointerDown={(event) => beginRangeEdit(event, rangeKey, "move")}
+                  width={Math.max(8, width)}
+                  x={x}
+                  y={model.plot.top}
+                />
+              </g>
+            );
+          }) : null}
           {model.rawPoints.map((point, index) => (
             <circle
               className="analysisAfasRawPoint"
@@ -6620,7 +6765,38 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
             .filter((line) => line.kind === "tangent")
             .map((line) => (
               <g className="analysisAfasFitLineGroup analysisAfasFitLineGroup--tangent" key="fit-tangent">
+                {editable ? (
+                  <line
+                    aria-label={t("Drag tangent position")}
+                    className="analysisAfasTangentMoveTarget"
+                    onPointerDown={(event) => beginTangentEdit(event, line, "move")}
+                    x1={line.x1}
+                    x2={line.x2}
+                    y1={line.y1}
+                    y2={line.y2}
+                  />
+                ) : null}
                 <line className="analysisAfasFitLine analysisAfasFitLine--tangent" x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
+                {editable ? (
+                  <>
+                    <circle
+                      aria-label={t("Drag tangent slope")}
+                      className="analysisAfasTangentSlopeHandle"
+                      cx={line.x1}
+                      cy={line.y1}
+                      onPointerDown={(event) => beginTangentEdit(event, line, "slope_start")}
+                      r={7}
+                    />
+                    <circle
+                      aria-label={t("Drag tangent slope")}
+                      className="analysisAfasTangentSlopeHandle"
+                      cx={line.x2}
+                      cy={line.y2}
+                      onPointerDown={(event) => beginTangentEdit(event, line, "slope_end")}
+                      r={7}
+                    />
+                  </>
+                ) : null}
                 <text className="analysisAfasInlineLabel analysisAfasInlineLabel--tangent" x={line.labelX} y={line.labelY - 10} textAnchor="middle">
                   {t(line.label)}
                 </text>
@@ -6652,6 +6828,41 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
               <AfasReferenceMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
             )
           ))}
+          {editable ? rangeBands.map(({ rangeKey, kind, range }) => {
+            const handleXs = range.map((temperature) => analysisAfasChartX(temperature, model)) as AfasRange;
+            return (
+              <g className={`analysisAfasRangeEditor analysisAfasRangeEditor--${kind}`} key={`range-handles-${rangeKey}`}>
+                {handleXs.map((handleX, index) => (
+                  <g
+                    aria-label={t(
+                      kind === "low_baseline"
+                        ? index === 0
+                          ? "Drag low-temperature start boundary"
+                          : "Drag low-temperature end boundary"
+                        : index === 0
+                          ? "Drag high-temperature start boundary"
+                          : "Drag high-temperature end boundary"
+                    )}
+                    className="analysisAfasRangeHandle"
+                    key={`${rangeKey}-${index}`}
+                    onPointerDown={(event) => beginRangeEdit(event, rangeKey, index === 0 ? "start" : "end")}
+                  >
+                    <rect
+                      className="analysisAfasRangeHandleHitTarget"
+                      height={model.plot.bottom - model.plot.top}
+                      width={14}
+                      x={handleX - 7}
+                      y={model.plot.top}
+                    />
+                    <line x1={handleX} x2={handleX} y1={model.plot.top} y2={model.plot.bottom} />
+                    <rect x={handleX - 7} y={model.plot.top + 8} width={14} height={34} rx={6} />
+                    <line x1={handleX - 2} x2={handleX - 2} y1={model.plot.top + 18} y2={model.plot.top + 32} />
+                    <line x1={handleX + 2} x2={handleX + 2} y1={model.plot.top + 18} y2={model.plot.top + 32} />
+                  </g>
+                ))}
+              </g>
+            );
+          }) : null}
           {brushRect ? (
             <rect
               className="analysisAfasBrush"
@@ -6685,6 +6896,10 @@ function AnalysisAfasChart({ analysis }: { analysis: AnalysisResult }) {
         {model.constructionNote ? (
           <p className="analysisAfasConstructionNote">{t(model.constructionNote)}</p>
         ) : null}
+        {editable ? (
+          <p className="analysisAfasInteractionHint">{t("Drag either edge of a shaded range to resize it, drag the shaded area to move it, drag the tangent to reposition it, or drag an end handle to change slope. AS and AF update from backend calculations while dragging.")}</p>
+        ) : null}
+        {editError ? <p className="inlineError">{editError}</p> : null}
         {!model.constructionNote && !model.hasPoints && model.emptyState ? (
           <p className="analysisAfasConstructionNote">{localizeDisplayString(model.emptyState.detail, language)}</p>
         ) : null}
@@ -6827,11 +7042,48 @@ function AnalysisAfasTooltip({
   );
 }
 
-function svgEventPoint(event: React.MouseEvent<SVGSVGElement>, model: AnalysisAfasModel): { x: number; y: number } {
-  const bounds = event.currentTarget.getBoundingClientRect();
+function svgEventPoint(
+  event: React.MouseEvent<SVGElement> | React.PointerEvent<SVGElement>,
+  model: AnalysisAfasModel
+): { x: number; y: number } {
+  const currentTarget = event.currentTarget;
+  const svg = currentTarget instanceof SVGSVGElement ? currentTarget : currentTarget.ownerSVGElement;
+  const bounds = (svg ?? currentTarget).getBoundingClientRect();
   return {
     x: ((event.clientX - bounds.left) / bounds.width) * model.width,
     y: ((event.clientY - bounds.top) / bounds.height) * model.height
+  };
+}
+
+function analysisAfasChartX(temperature: number, model: AnalysisAfasModel): number {
+  return inverseScaleValue(
+    temperature,
+    model.xRange.min,
+    model.xRange.max,
+    model.plot.left,
+    model.plot.right
+  );
+}
+
+function analysisAfasChartDataPoint(
+  point: { x: number; y: number },
+  model: AnalysisAfasModel
+): AfasDataPoint {
+  return {
+    temperature: inverseScaleValue(
+      point.x,
+      model.plot.left,
+      model.plot.right,
+      model.xRange.min,
+      model.xRange.max
+    ),
+    distance: inverseScaleValue(
+      point.y,
+      model.plot.bottom,
+      model.plot.top,
+      model.yRange.min,
+      model.yRange.max
+    )
   };
 }
 
@@ -7807,7 +8059,7 @@ function localizeDisplayString(value: string, language: UiLanguage): string {
   if (/^-?\d+(\.\d+)? px$/.test(value)) return value.replace(/ px$/, " 像素");
   if (/^-?\d+(\.\d+)? px\/°C$/.test(value)) return value.replace(/ px\/°C$/, " 像素/°C");
   if (/^\d+ frames$/.test(value)) return value.replace(" frames", " 帧");
-  if (value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
+  if (value === "WHOLE_ENVELOPE" || value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
     return uiObjectClass(language, value);
   }
   if (
@@ -7895,10 +8147,10 @@ function createDefaultMeasurement(
   return {
     measurement_id: `${dataset.id}-default`,
     source: "offline_dataset",
-    object_class: dataset.object_class,
-    detector: dataset.default_detector,
-    detector_mode: "default",
-    width_mode: "max_width",
+    object_class: CURRENT_OBJECT_CLASS,
+    detector: CURRENT_DETECTOR,
+    detector_mode: CURRENT_DETECTOR_MODE,
+    width_mode: CURRENT_WIDTH_MODE,
     measurement_coordinates: "source_pixel",
     roi: createDefaultRoiForShape(shape),
     detector_config: DEFAULT_CONFIG
@@ -7947,10 +8199,10 @@ function toOperatorActualUseMeasurement(measurement: MeasurementDefinition): Mea
   return normalizeMeasurementRegions({
     ...measurement,
     source: "real_camera",
-    object_class: "C_BUNDLE_ENVELOPE",
-    detector: "BundleEnvelopeDetector",
-    detector_mode: "contrast_widest_span",
-    width_mode: "max_width",
+    object_class: CURRENT_OBJECT_CLASS,
+    detector: CURRENT_DETECTOR,
+    detector_mode: CURRENT_DETECTOR_MODE,
+    width_mode: CURRENT_WIDTH_MODE,
     detector_config: {
       ...DEFAULT_CONFIG,
       ...measurement.detector_config,
@@ -8036,11 +8288,9 @@ function operatorDatasetOptionLabel(dataset: OfflineDatasetListItem, language: U
     ? dataset.label.split("：").pop() || dataset.id
     : dataset.id.replace(/^golden_[ac]_/, "");
   if (language === "zh") {
-    const prefix = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "C 类多细支/多线束" : "A 类球囊/网状结构";
-    return `${prefix}：${captureId}`;
+    return `整体外包络回归素材：${captureId}`;
   }
-  const prefix = dataset.object_class === "C_BUNDLE_ENVELOPE" ? "C bundle" : "A balloon/mesh";
-  return `${prefix}: ${captureId}`;
+  return `Whole-envelope regression dataset: ${captureId}`;
 }
 
 function offlineFallbackProvenance(dataset: OfflineDatasetListItem): SourceProvenance {
@@ -8384,6 +8634,46 @@ function analysisForRegion(analysis: AnalysisResult, regionId: string): Analysis
   };
 }
 
+function applyAfasPreviewToAnalysis(
+  analysis: AnalysisResult,
+  preview: AfasAnalysisPreview
+): AnalysisResult {
+  const regions = (analysis.regions ?? []).map((region) => region.region_id === preview.region_id
+    ? { ...region, afas_analysis: preview.afas_analysis, summary: preview.summary }
+    : region);
+  return {
+    ...analysis,
+    afas_analysis: preview.afas_analysis,
+    regions
+  };
+}
+
+function mergeRegionAnalysisUpdate(
+  current: AnalysisResult,
+  update: AnalysisResult,
+  regionId: string
+): AnalysisResult {
+  const replacement = update.regions?.find((region) => region.region_id === regionId) ?? update.regions?.[0];
+  if (!replacement) return current;
+  const regions = (current.regions ?? []).map((region) => region.region_id === regionId ? replacement : region);
+  const primary = [...regions].sort((left, right) => left.region_index - right.region_index)[0];
+  if (!primary) return { ...current, regions };
+  return {
+    ...current,
+    all_frames: primary.all_frames,
+    distance_time: primary.distance_time,
+    raw_distance_time: primary.raw_distance_time,
+    stabilized_distance_time: primary.stabilized_distance_time,
+    temperature_time: primary.temperature_time,
+    temperature_distance: primary.temperature_distance,
+    raw_temperature_distance: primary.raw_temperature_distance,
+    stabilized_temperature_distance: primary.stabilized_temperature_distance,
+    afas_preprocessing: primary.afas_preprocessing,
+    afas_analysis: primary.afas_analysis,
+    regions
+  };
+}
+
 function analysisRegionTrendSources(analysis: AnalysisResult | null): RegionTrendSource[] {
   return analysis?.regions?.map((region) => ({
     region_id: region.region_id,
@@ -8532,10 +8822,21 @@ function readAfasAnalysisForm(analysis: AnalysisResult): AfasAnalysisFormState {
   const afas = readRecord(analysis.afas_analysis);
   const parameters = readRecord(afas.parameters);
   return {
-    low_range_celsius: readNullableRange(parameters.low_range_celsius),
-    high_range_celsius: readNullableRange(parameters.high_range_celsius),
-    tangent_offset: readNumber(parameters.tangent_offset, DEFAULT_AFAS_ANALYSIS_FORM.tangent_offset)
+    low_range_celsius: readNullableRange(parameters.low_range_celsius, parameters.resolved_low_range_celsius),
+    high_range_celsius: readNullableRange(parameters.high_range_celsius, parameters.resolved_high_range_celsius),
+    tangent_offset: readNumber(parameters.tangent_offset, DEFAULT_AFAS_ANALYSIS_FORM.tangent_offset),
+    tangent_slope_override: readNullableNumber(parameters.tangent_slope_override),
+    tangent_intercept_override: readNullableNumber(parameters.tangent_intercept_override)
   };
+}
+
+function hasManualAfasOverrides(analysis: AnalysisResult): boolean {
+  const parameters = readRecord(readRecord(analysis.afas_analysis).parameters);
+  return completeRange(readNullableRange(parameters.low_range_celsius)) !== null ||
+    completeRange(readNullableRange(parameters.high_range_celsius)) !== null ||
+    readNumber(parameters.tangent_offset, 0) !== 0 ||
+    readNullableNumber(parameters.tangent_slope_override) !== null ||
+    readNullableNumber(parameters.tangent_intercept_override) !== null;
 }
 
 function normalizeAfasPreprocessingParameters(parameters: AfasPreprocessingParameters): AfasPreprocessingParameters {
@@ -8553,7 +8854,9 @@ function normalizeAfasAnalysisParameters(parameters: AfasAnalysisFormState): Afa
   return {
     low_range_celsius: completeRange(parameters.low_range_celsius),
     high_range_celsius: completeRange(parameters.high_range_celsius),
-    tangent_offset: Math.round(parameters.tangent_offset)
+    tangent_offset: Math.round(parameters.tangent_offset),
+    tangent_slope_override: finiteOrNull(parameters.tangent_slope_override),
+    tangent_intercept_override: finiteOrNull(parameters.tangent_intercept_override)
   };
 }
 
@@ -8563,11 +8866,20 @@ function completeRange(range: [number | null, number | null]): [number, number] 
   return start <= end ? [start, end] : [end, start];
 }
 
-function readNullableRange(value: unknown): [number | null, number | null] {
-  if (!Array.isArray(value) || value.length !== 2) return [null, null];
-  const start = typeof value[0] === "number" && Number.isFinite(value[0]) ? value[0] : null;
-  const end = typeof value[1] === "number" && Number.isFinite(value[1]) ? value[1] : null;
+function readNullableRange(value: unknown, fallback?: unknown): [number | null, number | null] {
+  const source = Array.isArray(value) && value.length === 2 ? value : fallback;
+  if (!Array.isArray(source) || source.length !== 2) return [null, null];
+  const start = typeof source[0] === "number" && Number.isFinite(source[0]) ? source[0] : null;
+  const end = typeof source[1] === "number" && Number.isFinite(source[1]) ? source[1] : null;
   return [start, end];
+}
+
+function readNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function finiteOrNull(value: number | null): number | null {
+  return value !== null && Number.isFinite(value) ? value : null;
 }
 
 function readAfasWarnings(analysis: AnalysisResult): string[] {

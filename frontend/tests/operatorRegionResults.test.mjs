@@ -97,12 +97,64 @@ test("multi-position AFAS review switches one region into the existing detail ch
 
   assert.match(review, /selectedRegionId/);
   assert.match(review, /analysis\.regions/);
-  assert.match(review, /<AnalysisAfasChart analysis=\{selectedAnalysis\}/);
+  assert.match(review, /<AnalysisAfasChart/);
+  assert.match(review, /analysis=\{selectedAnalysis\}/);
+  assert.match(review, /runId=\{runId\}/);
+  assert.match(review, /regionId=\{selectedRegion\.region_id\}/);
+  assert.match(review, /mergeRegionAnalysisUpdate\(analysis, nextAnalysis, selectedRegion\.region_id\)/);
   assert.match(review, /regionColorSwatch/);
   assert.match(adapter, /region\.afas_preprocessing/);
   assert.match(adapter, /region\.afas_analysis/);
   assert.doesNotMatch(adapter, /analysis\.afas_preprocessing/);
   assert.doesNotMatch(adapter, /analysis\.afas_analysis/);
+});
+
+test("AFAS chart exposes range, tangent-position, and tangent-slope drag handles with backend preview and save", () => {
+  const chart = sourceSlice(
+    "function AnalysisAfasChart({",
+    "function AnalysisAfasSummaryStrip("
+  );
+
+  assert.match(chart, /analysisAfasRangeMoveTarget/);
+  assert.match(chart, /analysisAfasRangeHandle/);
+  assert.match(chart, /analysisAfasRangeHandleHitTarget/);
+  assert.match(chart, /Drag low-temperature start boundary/);
+  assert.match(chart, /Drag high-temperature end boundary/);
+  assert.match(chart, /analysisAfasTangentMoveTarget/);
+  assert.match(chart, /analysisAfasTangentSlopeHandle/);
+  assert.match(chart, /previewRunAfasAdjustment\(/);
+  assert.match(chart, /applyAfasPreviewToAnalysis\(analysis, preview\)/);
+  assert.match(chart, /previewAbortRef\.current\?\.abort\(\)/);
+  assert.match(chart, /requestId !== previewRequestIdRef\.current/);
+  assert.match(chart, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(chart, /if \(parameters\) void persistInteractiveAdjustment\(parameters\)/);
+  assert.match(chart, /recomputeRunAnalysis\(runId/);
+  assert.match(chart, /Restore automatic calculation/);
+  assert.match(chart, /persistInteractiveAdjustment\(DEFAULT_AFAS_ANALYSIS_FORM, "automatic"\)/);
+  assert.match(chart, /disabled=\{!manualOverridesActive \|\| editBusy\}/);
+  assert.match(chart, /mode === "automatic" \? "restoring" : "saving"/);
+  assert.match(
+    stylesSource,
+    /\.analysisAfasReferenceMarker,[\s\S]*?\.analysisAfasMaxSlopeMarker\s*\{[^}]*pointer-events:\s*none/
+  );
+  assert.match(
+    stylesSource,
+    /\.analysisAfasRangeHandleHitTarget\s*\{[^}]*fill:\s*transparent[^}]*pointer-events:\s*all/
+  );
+});
+
+test("AFAS automatic restore detects every persisted manual override without treating resolved ranges as manual", () => {
+  const helper = sourceSlice(
+    "function hasManualAfasOverrides(",
+    "function normalizeAfasPreprocessingParameters("
+  );
+
+  assert.match(helper, /parameters\.low_range_celsius/);
+  assert.match(helper, /parameters\.high_range_celsius/);
+  assert.match(helper, /parameters\.tangent_offset/);
+  assert.match(helper, /parameters\.tangent_slope_override/);
+  assert.match(helper, /parameters\.tangent_intercept_override/);
+  assert.doesNotMatch(helper, /resolved_low_range_celsius|resolved_high_range_celsius/);
 });
 
 test("result chart exposes formal, display trend, and AFAS smoothing layers", () => {

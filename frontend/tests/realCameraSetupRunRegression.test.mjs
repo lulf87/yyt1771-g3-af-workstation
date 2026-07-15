@@ -68,8 +68,9 @@ function setupMeasurement(overrides = {}) {
   return {
     measurement_id: "real_camera-preview",
     source: "real_camera",
-    object_class: "A_BALLOON_ENVELOPE",
-    detector: "BalloonEnvelopeDetector",
+    object_class: "WHOLE_ENVELOPE",
+    detector: "ContrastWidestSpanDetector",
+    detector_mode: "contrast_widest_span",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: {
@@ -117,7 +118,7 @@ test("real camera setup derives source-pixel ROI from real frame shape and keeps
     center_x: 1024,
     center_y: 682,
     width: 1269.76,
-    height: 381.92,
+    height: 8,
     angle_deg: 0
   });
   assert.deepEqual(roiAfter, roiBefore);

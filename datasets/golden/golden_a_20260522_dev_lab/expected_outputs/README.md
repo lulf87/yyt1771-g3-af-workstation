@@ -3,7 +3,7 @@
 Smoke baseline generated from the local dataset registry on 2026-06-04 using dataset id
 `golden_a_20260522_dev_lab` and `BalloonEnvelopeDetector`.
 
-This is a regression smoke baseline, not a final scientific acceptance baseline.
+This is a legacy detector compatibility baseline, not the current product default and not a final scientific acceptance baseline. The dataset id suffix and detector name record the 2026-06 historical configuration; current measurements use `WHOLE_ENVELOPE + ContrastWidestSpanDetector` with a narrow measurement band.
 
 | Frame | Expected status | Smoke distance_px |
 |---:|---|---:|

@@ -48,7 +48,11 @@ from yyt1771_g3.services.live_offline_run_service import (
     read_run,
     run_live_offline_dataset,
 )
-from yyt1771_g3.services.analysis_service import build_analysis_result, recompute_region_analysis_result
+from yyt1771_g3.services.analysis_service import (
+    build_analysis_result,
+    preview_region_afas_patch,
+    recompute_region_analysis_result,
+)
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.export_service import export_run, export_run_bundle, load_v2_export_models
 from yyt1771_g3.services.hardware_setup_service import (
@@ -854,6 +858,41 @@ def recompute_run_analysis(run_id: str, request: AnalysisRecomputeRequest) -> di
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     run_store.write_analysis_result(analysis)
     return {"analysis_result": analysis.model_dump(mode="json")}
+
+
+@app.post("/api/runs/{run_id}/analysis/preview")
+def preview_run_analysis_adjustment(run_id: str, request: AnalysisRecomputeRequest) -> dict[str, Any]:
+    if not request.region_id:
+        raise HTTPException(status_code=422, detail="region_id is required for interactive AFAS preview")
+    run_store = _run_store()
+    try:
+        if run_store.schema_version(run_id) == 2:
+            summary = run_store.read_analysis_summary(run_id)
+            region = next(
+                (candidate for candidate in summary.regions if candidate.get("region_id") == request.region_id),
+                None,
+            )
+        else:
+            try:
+                current_analysis = run_store.read_analysis_result(run_id)
+            except FileNotFoundError:
+                manifest = run_store.read_run_manifest(run_id)
+                current_analysis = build_analysis_result(manifest)
+            region = next(
+                (candidate for candidate in current_analysis.regions if candidate.region_id == request.region_id),
+                None,
+            )
+        if region is None:
+            raise ValueError(f"Unknown analysis region: {request.region_id}")
+        preview = preview_region_afas_patch(
+            region,
+            parameter_overrides=request.afas_analysis_parameters,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"analysis_preview": preview}
 
 
 @app.get("/api/camera/preview")

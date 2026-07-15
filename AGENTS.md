@@ -43,7 +43,7 @@ docs/data/G3_离线素材注册表_v0.1.md
 docs/testing/G3_验收与真实浏览器复测清单_v0.1.md
 ```
 
-如果任务涉及 Offline playback、Live offline run、A/C detector、temperature-distance 曲线或真实浏览器复测，还必须读取：
+如果任务涉及 Offline playback、Live offline run、整体外包络 detector、temperature-distance 曲线或真实浏览器复测，还必须读取：
 
 ```text
 configs/local/offline_datasets.local.json
@@ -55,23 +55,24 @@ configs/local/offline_datasets.local.json
 
 Codex 不得违背以下需求，除非用户明确修改需求。
 
-### 2.1 检测对象
+### 2.1 当前测量模型
 
 ```text
-A 类：球囊 / 网状支架类，仅 max-width，第一阶段必须实现。
-C 类：多细支 / 多线束整体类，仅 max-width，第一阶段必须实现。
-D 类：待定义对象，未来可能 max-width 或 min-width，第一阶段只预留接口。
+当前产品不再按 A 类、C 类或 D 类划分待测物。
+当前唯一正式业务模型为 WHOLE_ENVELOPE（整体外包络测量），仅使用 max_width。
+当前默认 detector 为 ContrastWidestSpanDetector：依据窄测量带内各像素的亮暗对比阈值形成目标支持，再提取整体外包络最外侧跨度。
+A_BALLOON_ENVELOPE、C_BUNDLE_ENVELOPE、D_RESERVED_OBJECT、BalloonEnvelopeDetector、BundleEnvelopeDetector 等值仅用于读取历史 run、旧导出和 Golden 回归，不得继续作为当前产品选项或新建测量默认值。
 ```
 
 ### 2.2 A/B 点定义
 
-对 A/C 类对象：
-
 ```text
-ROI 主方向 = 待测物体长度方向 / 展开方向
-A/B 测量轴 = 垂直于 ROI 主方向
-distance_px = 目标整体外包络在该测量轴上的宽度
-正式 A/B = ROI 内目标整体外包络最大宽度位置的两个外侧接触点
+rotated ROI 的局部宽度轴（u 轴）= 正式 A/B 测量轴。
+rotated ROI 的高度 = 测量带采样宽度；当前新建 ROI 默认 8 px，可由操作者拖动、旋转、缩放和移动。
+系统在窄测量带内按对比度阈值提取目标支持，并在有效扫描行中选择整体外包络最宽跨度。
+正式 A/B = 同一有效扫描行上整体外包络的两个最外侧接触点。
+distance_px = A/B 两点在 measurement coordinates 中的欧氏距离。
+ROI 不得保存为零高度几何线；接近一条线的视觉效果由最小非零带宽实现，以降低带外噪声并避免单像素抖动。
 ```
 
 ### 2.3 外包络规则
@@ -82,9 +83,9 @@ A/B 必须在整体外包络上。
 多细支 / 多线束必须视为一个整体目标。
 外部 speck / 小黑点不能被识别为待测物体。
 外包络可以跨过内部缝隙，但不能用纯凸包无脑包住大量外部空白。
-A 类 BalloonEnvelopeDetector 不识别内部网格作为正式边界；应先增强白底暗色网状结构，形成 strut_mask / mesh_region，再用稳定行窗口或测量轴窗口提取左右整体外包络 max-width。
-A 类可输出 outer_contour_debug / filled_contour_debug 作为诊断，但正式 distance_px 不强制依赖完整闭合实心轮廓。
-A 类夹子、连接丝、支撑丝、窄尾即使进入 ROI，也不得决定正式 max-width A/B。
+当前正式检测必须以窄测量带内的像素亮暗对比为依据，内部结构可以作为目标支持，但不得成为正式 A/B。
+夹子、连接丝、支撑丝、窄尾即使进入 ROI，也不得决定正式 max_width A/B；操作者应优先用窄测量带避开这些非测量结构。
+窄测量带只能减少带外噪声，不能替代连通域、最小支持量、外部 speck 排除和 INVALID 规则。
 ```
 
 ### 2.4 ROI 坐标规则
@@ -103,6 +104,7 @@ A 类夹子、连接丝、支撑丝、窄尾即使进入 ROI，也不得决定�
 浏览器显示坐标不得直接作为正式测量坐标。
 前端拖拽出的 ROI 必须映射到 measurement coordinates。
 同一数据、同一 ROI、同一参数，在不同浏览器缩放比例下必须得到相同 distance_px。
+新建 ROI 默认高度为 measurement coordinates 下的 8 px；前端缩放不得改变该正式带宽。
 ```
 
 ### 2.5 温度同步规则
@@ -124,7 +126,7 @@ TEMP_SYNC_STALE / TEMP_SYNC_MISSING 点不得进入正式 Af 曲线。
 
 ## 3. 本地离线素材 / Golden Dataset 调用规则
 
-G3 第一阶段已经确认两组本地真实离线素材，Codex 在开发 Offline playback、Live offline run、A/C detector、温度同步、曲线和导出时必须优先使用。
+G3 已确认两组本地真实离线素材，Codex 在开发 Offline playback、Live offline run、整体外包络 detector、温度同步、曲线和导出时必须优先使用。
 
 离线素材配置文件：
 
@@ -138,12 +140,14 @@ configs/local/offline_datasets.local.json
 docs/data/G3_离线素材注册表_v0.1.md
 ```
 
-已确认 dataset id：
+已确认 dataset id（ID 中的 `a` / `c` 是历史命名，不再表示当前产品分类）：
 
 ```text
-golden_a_20260522_dev_lab  -> A_BALLOON_ENVELOPE -> BalloonEnvelopeDetector -> max_width
-golden_c_20260529_dev_lab  -> C_BUNDLE_ENVELOPE  -> BundleEnvelopeDetector  -> max_width
+golden_a_20260522_dev_lab  -> WHOLE_ENVELOPE -> ContrastWidestSpanDetector -> max_width
+golden_c_20260529_dev_lab  -> WHOLE_ENVELOPE -> ContrastWidestSpanDetector -> max_width
 ```
+
+旧 registry、旧 manifest 或旧导出中如仍存在 A/C `object_class` 和 Balloon/Bundle detector，应按历史配置原样解析，不得篡改历史结果；新建测量一律使用统一模型。
 
 本机素材目录：
 
@@ -168,9 +172,9 @@ Codex 必须遵守：
 2. 必须通过 configs/local/offline_datasets.local.json 读取本地 dataset registry。
 3. API、UI、测试和真实浏览器复测应使用 dataset id，而不是直接传绝对路径。
 4. 如果配置文件不存在、路径不存在、manifest.json/temperature.csv/frames 缺失，必须登记到 problem.md。
-5. 修复 A/C detector、ROI 坐标、Playback、Live offline run、Analysis 或 Export 问题后，必须使用对应真实 dataset 做真实浏览器复测。
-6. A 类相关修复至少复测 golden_a_20260522_dev_lab。
-7. C 类相关修复至少复测 golden_c_20260529_dev_lab。
+5. 修复整体外包络 detector、ROI 坐标、Playback、Live offline run、Analysis 或 Export 问题后，必须使用相关真实 dataset 做真实浏览器复测。
+6. 整体外包络或窄测量带相关修复必须同时复测 golden_a_20260522_dev_lab 和 golden_c_20260529_dev_lab。
+7. 复测记录中以 dataset id 标识素材，不再把两组素材称为当前 A/C 类对象。
 ```
 
 ---
@@ -433,17 +437,18 @@ open http://127.0.0.1:5176/
 每次提交前必须检查：
 
 ```text
-[ ] 是否违反 A/C = max-width 的规则？
+[ ] 新建测量是否统一为 WHOLE_ENVELOPE + ContrastWidestSpanDetector + max_width？
 [ ] A/B 是否只来自整体外包络？
-[ ] A 类是否只用网状整体左右外包络测宽，而不是内部网格或 debug 轮廓？
 [ ] 内部缝隙 / 暗线 / 纹理 / 单根线是否被排除？
-[ ] 夹子 / 连接丝 / 支撑丝 / 窄尾是否不会决定 A 类 max-width？
+[ ] 夹子 / 连接丝 / 支撑丝 / 窄尾是否不会决定正式 max_width？
 [ ] 外部 speck 是否不会被识别成目标？
+[ ] 新建 ROI 是否为默认 8 px 的非零窄测量带，并仍可拖动、旋转、缩放？
 [ ] ROI 坐标是否使用 measurement coordinates？
 [ ] 前端缩放是否不影响正式 distance？
 [ ] 异常帧是否 INVALID，而不是错误 A/B？
 [ ] 温度曲线是否只使用 OK / INTERPOLATED 点？
 [ ] 是否通过 dataset id 调用 golden_a_20260522_dev_lab / golden_c_20260529_dev_lab？
+[ ] 是否只把旧 A/C/D 和旧 detector 当作历史兼容值，而未在当前 UI 或默认配置中重新暴露？
 [ ] 是否避免在源码中硬编码本机绝对路径？
 [ ] 是否更新 problem.md？
 [ ] 如果修了问题，是否进行了真实浏览器复测？

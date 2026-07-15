@@ -535,9 +535,9 @@ def _iter_real_camera_run_events_multi(
                 shape=list(frame.array.shape),
                 dtype=str(frame.array.dtype),
                 source=str(frame.camera_meta.get("backend", "real_camera")),
-                frame_path=str(raw_frame_path.relative_to(run_dir)) if raw_frame_path is not None else "",
+                frame_path=raw_frame_path.relative_to(run_dir).as_posix() if raw_frame_path is not None else "",
                 raw_frame_saved=raw_frame_path is not None,
-                preview_path=str(preview_path.relative_to(run_dir)) if preview_path is not None else "",
+                preview_path=preview_path.relative_to(run_dir).as_posix() if preview_path is not None else "",
                 timestamp_ms=frame.timestamp_ms,
                 camera_meta=frame.camera_meta,
             )
@@ -1029,9 +1029,9 @@ def _process_real_camera_frame(
         shape=list(frame.array.shape),
         dtype=str(frame.array.dtype),
         source=str(frame.camera_meta.get("backend", "real_camera")),
-        frame_path=str(raw_frame_path.relative_to(run_dir)) if raw_frame_path is not None else "",
+        frame_path=raw_frame_path.relative_to(run_dir).as_posix() if raw_frame_path is not None else "",
         raw_frame_saved=raw_frame_path is not None,
-        preview_path=str(preview_path.relative_to(run_dir)) if preview_path is not None else "",
+        preview_path=preview_path.relative_to(run_dir).as_posix() if preview_path is not None else "",
         timestamp_ms=frame.timestamp_ms,
         camera_meta=frame.camera_meta,
     )

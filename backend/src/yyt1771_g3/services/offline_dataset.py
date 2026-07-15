@@ -50,6 +50,7 @@ class ResolvedOfflineDataset:
     object_class: str
     default_detector: str
     default_width_mode: str
+    legacy_profile: dict[str, Any] | None
     frame_paths: tuple[Path, ...]
 
     @property
@@ -100,6 +101,8 @@ class OfflineDatasetRegistry:
                 "default_detector": entry.get("default_detector", ""),
                 "default_width_mode": entry.get("default_width_mode", ""),
             }
+            if isinstance(entry.get("legacy_profile"), dict):
+                item["legacy_profile"] = dict(entry["legacy_profile"])
             try:
                 item["frame_count"] = self.resolve_dataset(dataset_id).frame_count
             except DatasetAccessError as exc:
@@ -147,6 +150,7 @@ class OfflineDatasetRegistry:
             object_class=str(entry.get("object_class", "")),
             default_detector=str(entry.get("default_detector", "")),
             default_width_mode=str(entry.get("default_width_mode", "")),
+            legacy_profile=dict(entry["legacy_profile"]) if isinstance(entry.get("legacy_profile"), dict) else None,
             frame_paths=frame_paths,
         )
 

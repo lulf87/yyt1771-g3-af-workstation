@@ -83,6 +83,8 @@ def test_hik_sdk_loader_uses_profile_library_path_override_for_official_binding(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
+    if sys.platform == "win32":
+        pytest.skip("POSIX dylib source-rewrite behavior is covered on macOS/Linux")
     sdk_dir = tmp_path / "MvImport"
     sdk_dir.mkdir()
     library_path = tmp_path / "libMvCameraControl.dylib"

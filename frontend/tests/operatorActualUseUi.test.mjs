@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
+const stylesSource = readFileSync(resolve(rootDir, "src/styles.css"), "utf8");
 const outDir = resolve(rootDir, ".tmp-operator-actual-use-test-build");
 
 after(() => {
@@ -102,6 +103,20 @@ test("operator camera area only exposes current-frame probe and hides engineerin
   ]) {
     assert.doesNotMatch(operatorPage, new RegExp(hiddenField));
   }
+});
+
+test("diagnostic overlays and narrow-band handle order preserve ROI dragging after probing", () => {
+  const frameCanvas = sourceSlice("function FrameCanvas({", "function useStableImageUrl(");
+  assert.match(
+    stylesSource,
+    /\.contourProjectionOverlay\s*\{[^}]*pointer-events:\s*none;/s
+  );
+  assert.match(stylesSource, /\.abOverlay\s*\{[^}]*pointer-events:\s*none;/s);
+  assert.ok(
+    frameCanvas.indexOf("data-testid={`roi-resize-${handle.handle}`}") <
+      frameCanvas.indexOf('data-testid="roi-move-handle"'),
+    "the move handle must render after overlapping narrow-band resize handles"
+  );
 });
 
 test("operator camera area treats connected hardware without a probed frame as an idle empty state", () => {
@@ -245,7 +260,7 @@ test("operator temperature polling runs every 500ms only when real temperature i
   }), false);
 });
 
-test("operator results page keeps AFAS re-analysis controls without debug JSON", () => {
+test("operator results page uses chart-only AFAS range and tangent controls without debug JSON", () => {
   const resultsPage = sourceSlice(
     "function OperatorResultsPage({",
     "function ImportedRunSummary("
@@ -258,17 +273,27 @@ test("operator results page keeps AFAS re-analysis controls without debug JSON",
   assert.match(resultsPage, /<AfasParameterPanel/);
   assert.match(resultsPage, /buttonLabel="Re-analyze current position"/);
   assert.match(afasParameterPanel, /Savgol window/);
-  assert.match(afasParameterPanel, /Low start °C/);
-  assert.match(afasParameterPanel, /High start °C/);
+  assert.match(mainSource, /savgol_window_length:\s*21/);
+  assert.match(afasParameterPanel, /Interactive baselines and tangent/);
+  assert.match(afasParameterPanel, /Drag the low\/high shaded ranges and the tangent directly in the chart/);
+  for (const removedManualField of [
+    "Low start °C",
+    "Low end °C",
+    "High start °C",
+    "High end °C",
+    "Tangent offset"
+  ]) {
+    assert.doesNotMatch(afasParameterPanel, new RegExp(removedManualField));
+  }
   assert.doesNotMatch(resultsPage, /JSON\.stringify/);
 });
 
 test("engineering mode still exposes full setup and detector controls", () => {
   assert.match(mainSource, /function SetupSourceControls\(/);
   assert.match(mainSource, /function DetectorSetupControls\(/);
-  assert.match(mainSource, /<CDetectorModeControl/);
-  assert.match(mainSource, /Object class/);
-  assert.match(mainSource, /Detection method/);
+  assert.doesNotMatch(mainSource, /<CDetectorModeControl/);
+  assert.doesNotMatch(mainSource, /const OBJECT_CLASS_OPTIONS/);
+  assert.match(mainSource, /Narrow measurement band/);
   assert.match(mainSource, /advancedDetectorParameters/);
   assert.match(mainSource, /Reference valid point count/);
   assert.match(mainSource, /CameraSetupStatusPanel/);

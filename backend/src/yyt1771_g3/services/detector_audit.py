@@ -85,11 +85,34 @@ def _formal_rule_flags(
         return []
 
     debug = detection.debug_artifacts
+    if object_class == ObjectClass.WHOLE_ENVELOPE:
+        return _whole_envelope_flags(
+            detection,
+            debug,
+            same_window_tolerance_px=same_window_tolerance_px,
+        )
     if object_class == ObjectClass.A_BALLOON_ENVELOPE:
         return _a_mesh_flags(detection, debug, same_window_tolerance_px=same_window_tolerance_px)
     if object_class == ObjectClass.C_BUNDLE_ENVELOPE:
         return _c_wire_flags(debug)
     return []
+
+
+def _whole_envelope_flags(
+    detection: DetectionResult,
+    debug: dict[str, Any],
+    *,
+    same_window_tolerance_px: float,
+) -> list[str]:
+    flags: list[str] = []
+    if debug.get("contour_measurement_mode") != "contrast_widest_span":
+        flags.append("WHOLE_ENVELOPE_MODE_NOT_CONTRAST_WIDEST_SPAN")
+    selected_width = _float_or_none(debug.get("selected_width_px"))
+    if selected_width is None:
+        flags.append("WHOLE_ENVELOPE_MISSING_SELECTED_WIDTH")
+    elif detection.distance_px is None or abs(float(detection.distance_px) - selected_width) > same_window_tolerance_px:
+        flags.append("WHOLE_ENVELOPE_SAME_SCANLINE_DISTANCE_MISMATCH")
+    return flags
 
 
 def _a_mesh_flags(

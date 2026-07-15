@@ -120,6 +120,10 @@
 | P-0106 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / backend / real camera preview | 真实硬件绑定通过后 Operator 应默认实时浏览相机，目标预览帧率设为 20 FPS | 2026-07-14 | 2026-07-14 | Codex | 20 FPS profile/调度已生效，Operator 自动显示真机画面且当前帧检测继续可用 |
 | P-0107 | OPEN | P1 | backend / frontend / multi-client camera preview | 多个浏览器页面同时实时预览时会争用 camera operation 并产生间歇性 409 | 2026-07-14 | 2026-07-14 | Codex | 单页面流程可用；需实现多客户端共享预览或串行调度后复测 |
 | P-0108 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows upgrade / hardware setup / camera preview | Windows 新装和保留旧 hardware.yaml 的升级都必须获得完成即保存、自动实时预览和 20 FPS 设备预览行为 | 2026-07-14 | 2026-07-14 | Codex | 源码、回归测试、打包 smoke 和验收文档已更新；待 Windows x64 CI 产物及真机安装/升级复测 |
+| P-0109 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / release gate / cross-platform tests | Windows CI 后端测试失败时仍继续打包并显示绿色，dev.6 产物不能视为完整验证通过 | 2026-07-14 | 2026-07-15 | Codex | 原生命令失败拦截与 14 项跨平台失败修复已补齐；本地完整回归通过，Windows x64 CI 仍待新提交验证 |
+| P-0110 | RESOLVED_BROWSER_VERIFIED | P0 | results/export / AFAS interactive review | 低高温拟合区间和最大斜率切线只能手输/自动计算，不能在图中拖动并实时更新 AS/AF | 2026-07-14 | 2026-07-14 | Codex | 图上温区平移/缩放、切线平移/改斜率、后端实时交点、松手保存及默认窗口 21 已通过 Golden A/C Chrome 复测 |
+| P-0111 | RESOLVED_BROWSER_VERIFIED | P1 | results/export / AFAS automatic restore | 人工调整温区和最大斜率切线后缺少一键恢复自动计算 | 2026-07-14 | 2026-07-14 | Codex | 清除全部人工覆盖、后端正式重算、刷新持久化及 Golden C Chrome 复测已通过 |
+| P-0113 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / packaged launcher / production policy | 打包启动器参数可能被遗留环境变量覆盖，且无控制台 EXE 仍创建 stderr 日志处理器 | 2026-07-15 | 2026-07-15 | Codex | CLI 运行来源、产品模式和配置路径改为权威覆盖；windowed EXE 无 stderr 时仅写 UTF-8 文件日志，待 Windows 新包复测 |
 
 ---
 
@@ -1124,7 +1128,7 @@ RESOLVED_BROWSER_VERIFIED
 - Priority: P1
 - Module: `scripts/g3_fast_start.sh`, `AGENTS.md`, `backend/src/yyt1771_g3/temperature/simulated.py`, `backend/src/yyt1771_g3/api/main.py`, `backend/src/yyt1771_g3/core/hardware_config.py`
 - Found date: 2026-07-07
-- Last update: 2026-07-07
+- Last update: 2026-07-15
 
 #### Problem
 
@@ -1153,6 +1157,8 @@ RESOLVED_BROWSER_VERIFIED
 - 2026-07-07: 脚本使用 Python `subprocess.Popen(..., start_new_session=True)` 持久启动后端/前端，避免 Codex 命令结束后清理普通 `nohup &` 子进程。
 - 2026-07-07: 新增 `SimulatedTemperatureController` 和 `temp.backend=simulated`，使 `real-simtemp` / `sim-sim` 不依赖 `/dev/ttys004` 外部虚拟串口。
 - 2026-07-07: 更新 `AGENTS.md` 6.4.0，把纯启动请求改为优先使用快速脚本；更新 `scripts/README.md` 和 `configs/local/README.md`。
+- 2026-07-15: 回归复现：未显式设置环境变量时执行 `scripts/g3_fast_start.sh sim-sim --restart --no-open`，脚本虽计算出期望来源 `simulated_material`，但新后端进程未收到该值，`/api/app/runtime` 回落为 `real_hardware`，脚本在 runtime source 校验处退出。
+- 2026-07-15: 根因修复：快速脚本在确定目标模式后显式导出 `YYT1771_G3_RUNTIME_SOURCE=$EXPECTED_RUNTIME_SOURCE`，确保后端启动环境与脚本复用/验收条件一致；等待重新执行快速启动和真实浏览器复测。
 
 #### Tests run
 
@@ -1180,6 +1186,17 @@ real-real mode switch: about 2.6s
 real-real reuse: about 0.15-0.63s
 ```
 
+2026-07-15 regression verification:
+
+```bash
+bash -n scripts/g3_fast_start.sh
+scripts/g3_fast_start.sh sim-sim --restart --no-open
+YYT1771_G3_SIMULATED_DATASET_ID=golden_c_20260529_dev_lab \
+  scripts/g3_fast_start.sh sim-sim --restart --no-open
+curl -sS http://127.0.0.1:8022/api/app/runtime
+# PASS: runtime_source=simulated_material; both cold restarts reached Ready
+```
+
 #### Browser retest log
 
 - Retest date: 2026-07-07
@@ -1194,6 +1211,21 @@ real-real reuse: about 0.15-0.63s
 - Actual: Playwright snapshot 显示 `YY/T 1771 G3` 主界面、Setup 导航、A/C 离线数据集、真实相机入口和温控设置；`/api/hardware/profile` 返回 `hik_gige_mvs lu92xx_modbus_rtu /dev/cu.usbserial-11210`；重复启动复用后端和前端，耗时为亚秒级。
 - Result: PASS
 - Evidence: `output/playwright/g3-fast-start-real-real-20260707.png`, `.playwright-cli/page-2026-07-06T17-31-31-425Z.yml`
+
+#### Browser regression retest log
+
+- Retest date: 2026-07-15
+- Browser: Playwright Google Chrome 150.0.0.0
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022/`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Page: Operator `实时测试`; `历史导入`
+- Steps: 不预设 `YYT1771_G3_RUNTIME_SOURCE`，直接执行 `scripts/g3_fast_start.sh sim-sim --restart --no-open`；确认脚本输出 `Runtime source: simulated_material` 并到达 `Ready`；用 Chrome 打开页面，对 Golden A/C 分别执行 Probe，并导入旧 ZIP。
+- Expected: sim-sim 新后端继承脚本选定的 `simulated_material`，快速启动校验不再中止，页面可加载并执行真实浏览器流程。
+- Actual: 脚本两次冷重启均健康并到达 `Ready`；`/api/app/runtime` 返回 `runtime_source=simulated_material`；Chrome 页面正常加载，两组素材 Probe 均为 VALID，旧 ZIP 正常导入，console 0 errors / 0 warnings。
+- Result: PASS
+- Evidence: `output/playwright/p0112-whole-envelope-narrow-band-20260715/browser.trace`, `output/playwright/p0112-whole-envelope-narrow-band-20260715/golden-a-probe-valid-overlay.png`, `output/playwright/p0112-whole-envelope-narrow-band-20260715/golden-c-probe-valid-overlay.png`, `output/playwright/p0112-whole-envelope-narrow-band-20260715/legacy-import-history-labels.png`
 
 #### Current status
 
@@ -10423,6 +10455,416 @@ git diff --check: PASS.
 - Actual: pending.
 - Result: pending; Mac source tests do not count as Windows packaged real-hardware browser verification.
 - Evidence: pending Windows screenshots, logs, artifact name and SHA256.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0109 — Windows CI 测试失败仍上传绿色产物，且存在 14 项跨平台失败
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `.github/workflows/windows-release.yml`, `packaging/windows/build_release.ps1`, backend cross-platform tests/runtime paths
+- Found date: 2026-07-14
+- Last update: 2026-07-15
+- Owner/tool: Codex
+
+#### Problem
+
+Windows release run `29329785854` 的后端测试实际结果为 `14 failed, 239 passed, 11 skipped`，但 PowerShell 构建脚本继续执行 PyInstaller、Inno Setup 和 artifact 上传，GitHub Actions 最终显示绿色成功。该产物因此不能视为通过完整发布门禁。
+
+#### Expected
+
+```text
+1. Python/npm/pytest/PyInstaller/Inno Setup 任一原生命令返回非零退出码时立即终止构建。
+2. 失败构建不得压缩、签名摘要或上传 portable/Setup 产物。
+3. 后端测试不得依赖不会进入 Git checkout 的 configs/local 文件。
+4. manifest/JSON/ZIP 中的逻辑相对路径跨平台保持正斜杠格式。
+5. Windows 默认编码不得影响 UTF-8 JSON 读取。
+6. 仅适用于 POSIX 动态库源码重写的测试不得在 Windows 假失败；Windows MVS runtime 使用独立测试覆盖。
+```
+
+#### Actual / root cause
+
+- `$ErrorActionPreference = "Stop"` 不会把所有 native executable 的非零退出码自动转换为 PowerShell terminating error；原脚本没有检查 `$LASTEXITCODE`。
+- 两项分析测试使用系统默认编码读取包含中文的 JSON，Windows `charmap` 解码失败。
+- 六项 real-camera run 断言暴露 `Path` 在 Windows 生成反斜杠 manifest 相对路径。
+- Golden smoke 在捕获 `OfflineDatasetError` 之前就加载本机 registry；Windows CI 没有被忽略的 `configs/local/offline_datasets.local.json`。
+- 三项 runtime API 测试引用被 `.gitignore` 排除的本机硬件 YAML，Windows checkout 回落为真实硬件默认配置。
+- SDK 路径保存测试在 Windows 会检查 PE machine，但测试 DLL 原来只是普通文本。
+- 一项 macOS/Linux dylib 源码重写测试在 Windows 错误执行；Windows DLL 注册/预加载已有独立测试。
+
+#### Fix summary
+
+1. `build_release.ps1` 新增 `Assert-NativeSuccess`，在 venv、pip、npm、前端测试/构建、后端测试、PyInstaller 和 Inno Setup 后逐项检查 `$LASTEXITCODE`。
+2. run manifest 的 raw/preview 相对路径统一使用 `.as_posix()`。
+3. 分析测试显式使用 UTF-8 读取 JSON。
+4. Golden registry 不可访问时按本地素材测试边界跳过，不再让 Windows 正式包 CI 依赖 Mac 本机路径。
+5. SDK 路径测试生成最小合法 x64 PE header；POSIX dylib 测试仅在非 Windows 执行。
+6. runtime API 测试在 `tmp_path` 中生成独立真实/模拟硬件 profile，不再引用 `configs/local/*.yaml`。
+7. Windows packaging 单元测试覆盖每个关键 native build step 的失败检查。
+
+#### Tests run
+
+```text
+Original Windows CI log audit: run 29329785854, all 14 failures classified.
+Targeted original-failure regression: 87 passed.
+Backend full suite: 268 passed.
+Frontend full suite: 157 passed.
+Frontend production build: PASS.
+Launcher/runtime/packaging follow-up: 10 passed.
+bash -n scripts/g3_fast_start.sh: PASS.
+```
+
+#### Windows retest log
+
+- Retest date: pending new Windows x64 CI artifact
+- Browser: Edge or Chrome on target Windows 10/11 x64
+- OS: pending
+- Frontend URL: `http://127.0.0.1:8022/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; production real-hardware package
+- Page: GitHub Actions release gate, packaged startup, device setup, Operator
+- Steps: push/commit current patch; run Windows release; confirm backend tests pass and a deliberately/non-deliberately failing native step prevents artifact upload; install generated Setup and execute packaged browser flow.
+- Expected: Windows test suite has no cross-platform failures; only a fully green build uploads artifacts; packaged app starts normally.
+- Actual: pending because current changes are not committed/pushed and macOS cannot build a Windows PyInstaller/Inno Setup artifact.
+- Result: pending
+- Evidence: current root-cause source is [GitHub Actions run 29329785854](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29329785854); replacement artifact/log pending.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0110 — 结果页 AFAS 温区与切线无法图上交互调整
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/services/afas_analysis.py`, `backend/src/yyt1771_g3/services/analysis_service.py`, `backend/src/yyt1771_g3/api/main.py`, `frontend/src/afasInteraction.ts`, `frontend/src/main.tsx`, `frontend/src/api/client.ts`, `frontend/src/curves.ts`, `frontend/src/styles.css`
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex
+
+#### Problem
+
+结果与导出页低温区、高温区依赖四个数值输入，最大斜率切线只能由自动计算/偏移参数间接调整。操作者不能直接在图中调整基线区间、切线位置和斜率，拖动中也不会实时看到后端权威 AS/AF 交点。默认 Savitzky–Golay 窗口为 51，不符合本次要求的 21。
+
+#### Expected
+
+```text
+1. 删除低温/高温区间数值手输，改为图上拖动。
+2. 拖动阴影区整体时平移温区，拖动任一边界时只改变该边界。
+3. 低温/高温辅助线随温区重拟合。
+4. 最大斜率切线支持整线平移和端点改斜率。
+5. 拖动中由 backend 重算并实时更新 AS/AF；松手后正式持久化。
+6. Savitzky–Golay 默认窗口改为 21。
+```
+
+#### Fix summary
+
+1. AFAS 后端 schema 升级并增加 `tangent_slope_override` / `tangent_intercept_override`，正式 AS/AF 仍由 backend 计算；默认 `savgol_window_length` 改为 21。
+2. 新增不落盘 `POST /api/runs/{run_id}/analysis/preview`，拖动时复用已保存 preprocessing；松手仍调用正式 `/analysis` 并更新 v1 `analysis_result.json` 或 v2 `analysis_summary.json`。
+3. 预览端点仅读取 AFAS summary 并返回当前位置的紧凑补丁，Golden C 实测从约 10.2 MB / 1.8 s 降为 28.7 KB / 42–63 ms，避免每次 pointer move 重读 8,623 条 SQLite 检测结果。
+4. 前端新增温区边界吸附、整体平移、切线平移和以对端为锚点的斜率调整；使用 pointer capture、60 ms 预览节流、取消旧请求和过期响应隔离。
+5. 删除四个温区手输项和 tangent offset 手输项，保留只读温区、切线模式、操作提示和“正在更新/调整已保存”状态。
+6. 真实浏览器复测中修复 AS/AF marker 和切线宽命中区抢事件；四个温区边界增加最上层的全高 14 px 透明命中带，避免鼠标从虚线间隙穿透后误触发整体平移。
+7. 紧凑预览补丁在前端按 `region_id` 合并，不会覆盖其他测量位置。
+
+#### Tests run
+
+```text
+Frontend full suite: npm test -> 156 passed.
+Frontend production build: npm run build -> PASS (TypeScript + Vite).
+Backend full suite: PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 -m pytest -q backend/tests -> 265 passed in 129.22s.
+Targeted AFAS frontend tests -> 11 passed.
+Targeted analysis backend tests -> 14 passed.
+git diff --check -> PASS.
+```
+
+#### Browser retest log — Golden A
+
+- Retest date: 2026-07-14
+- Browser: Playwright Chrome headless 150
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`
+- Page: Operator `结果与导出` / AFAS 详细分析 / 导出
+- Steps:
+  1. 恢复 `run-golden_a_20260522_dev_lab-20260712T072115924584Z`，记录调整前正式分析。
+  2. 整体拖动低温区，拖动高温区起始边界，观察基线和 AS/AF 预览更新。
+  3. 整线拖动切线，再拖动切线端点改变斜率。
+  4. 每次松手等待“调整已保存”，刷新页面确认持久化。
+  5. 在不支持目录选择器的 fallback 环境中导出 ZIP，核对 `analysis_summary.json`。
+- Expected: 温区/切线图上可拖，拖动中后端更新交点，松手保存，刷新和导出保持一致。
+- Actual: 低温区由 1.20–3.96 °C 移至 1.66–4.56 °C；高温区调整为 10.60–15.00 °C；切线平移和改斜率均实时更新交点。最终 `As=12.0237185211 °C`、`Af=12.1444058311 °C`、手动切线斜率 `-839.1606134449`。预览请求中旧请求主动 abort，最新请求和每次正式保存均为 200；刷新后参数与 AS/AF 保留。导出 ZIP 中值与页面/磁盘 summary 一致。
+- Result: PASS
+- Evidence: `output/playwright/p0110-afas-interaction-20260714/golden-a-analysis-before.json`; `output/playwright/p0110-afas-interaction-20260714/golden-a-analysis-after.json`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/element-2026-07-14T14-01-08-442Z.png`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/traces/trace-1784036914848.trace`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/yyt1771-g3-export-run-golden-a-20260522-dev-lab-20260712T072115924584Z.zip`
+
+#### Browser retest log — Golden C
+
+- Retest date: 2026-07-14
+- Browser: Playwright Chrome headless 150
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab`
+- Page: Operator `结果与导出` / AFAS 详细分析
+- Steps:
+  1. 使用已完成的 8,623 帧 V1 检测 `run-golden_c_20260529_dev_lab-20260714T130611753254Z` 无损派生紧凑 V2 测试运行，不修改 V1 原结果，不重跑检测。
+  2. 从上次运行恢复 V2 结果，确认 8,622 个正式点和实际平滑窗口 21。
+  3. 整体拖动低温区，拖动高温区起始边界；在图中部刻意从虚线旁 5 px 处拖动，复测透明边界命中带。
+  4. 整线平移切线，拖动端点改斜率。
+  5. 再次按住切线平移 8 px，在未松手时等待 300 ms 并记录页面 AS/AF，然后松手保存。
+  6. 刷新页面，检查温区、手动切线、AS/AF 和窗口 21 持久化。
+- Expected: 边界与整体平移命中稳定；切线拖动中快速收到后端交点；松手正式保存且刷新后不丢失。
+- Actual: 透明命中带修复后，高温区从 13.20–17.20 °C 拖左边界至 10.90–17.20 °C，右边界保持 17.20 °C。切线未松手时 AS/AF 已由 14.15/15.55 °C 更新为 14.34/15.79 °C。紧凑 preview 为 HTTP 200、28,708 bytes、56.705 ms。最终正式值为 `low=[-1.10,2.86] °C`、`high=[10.90,17.20] °C`、`slope=56.8316927567`、`intercept=-617.4447998692`、`As=14.3366208684 °C`、`Af=15.7890328423 °C`；页面显示“调整已保存”，刷新后保留，平滑窗口仍为 21。
+- Result: PASS
+- Evidence: `output/playwright/p0110-afas-interaction-20260714/golden-c-summary-before.json`; `output/playwright/p0110-afas-interaction-20260714/golden-c-summary-after.json`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/element-2026-07-14T14-38-28-556Z.png`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/traces/trace-1784038384145.trace`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/traces/trace-1784039846516.trace`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/traces/trace-1784039846516.network`; `output/runs/run-golden_c_20260529_dev_lab-20260714T130611753254Z-afas-ui-v2-20260714T141010012287Z/analysis_summary.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0111 — AFAS 图上人工调整缺少一键恢复自动计算
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P1
+- Module: `frontend/src/main.tsx`, `frontend/src/i18n.ts`, `frontend/src/styles.css`, `backend/tests/integration/test_analysis_api.py`
+- Found date: 2026-07-14
+- Last update: 2026-07-14
+- Owner/tool: Codex
+
+#### Problem
+
+P-0110 已支持在结果页人工拖动低温区、高温区和最大斜率切线，但调整后缺少一个明确入口，用于同时清除三类人工覆盖并恢复后端初始自动计算状态。
+
+#### Expected
+
+```text
+1. 结果与导出页提供“恢复自动计算”按钮。
+2. 点击后低温基线、高温基线恢复自动温区，最大斜率切线恢复自动斜率与位置。
+3. AS/AF 由后端重新计算并正式保存，刷新页面后仍保持自动状态。
+4. 已处于自动状态时按钮不可重复提交。
+```
+
+#### Fix summary
+
+1. AFAS 图表工具栏新增“恢复自动计算”按钮；当前已经是自动状态时按钮禁用，避免重复提交。
+2. 点击后清除 `low_range_celsius`、`high_range_celsius`、`tangent_slope_override`、`tangent_intercept_override`，并将 `tangent_offset` 恢复为 `0`；当前 AFAS 预处理/滤波参数保持不变。
+3. 复原通过正式 `/api/runs/{run_id}/analysis` 请求由后端重新计算并持久化，不用前端数值冒充自动结果。
+4. UI 增加“正在恢复自动计算”“已恢复自动计算”状态，参数区“计算模式”统一反映温区或切线任一人工覆盖。
+5. 新增前端回归检查，并扩展分析 API 集成测试，验证人工状态可完整清空、自动温区重新解析、自动切线 `manual_override=false` 且结果写入磁盘。
+
+#### Tests run
+
+```text
+Frontend full suite: npm test -> 157 passed.
+Frontend production build: npm run build -> PASS (TypeScript + Vite).
+Backend analysis API integration: pytest -q backend/tests/integration/test_analysis_api.py -> 2 passed in 6.89s.
+git diff --check -> PASS.
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-14
+- Browser: Playwright HeadlessChrome 150.0.0.0
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab`
+- Run: `run-golden_c_20260529_dev_lab-20260714T130611753254Z-afas-ui-v2-20260714T141010012287Z`
+- Page: Operator `结果与导出` / AFAS 详细分析
+- Steps:
+  1. 恢复 P-0110 留下的人工状态，确认按钮可用、计算模式为“手动”，AS/AF 为 `14.34/15.79 °C`。
+  2. 点击“恢复自动计算”，等待正式重算完成。
+  3. 检查状态文案、按钮禁用状态、自动温区、自动切线、AS/AF 和滤波窗口。
+  4. 浏览器整页 reload，再次进入“结果与导出”，确认自动结果仍保留。
+  5. 检查 `analysis_summary.json` 和 Playwright network trace 中的请求体、HTTP 状态及持久化字段。
+- Expected: 五个人工覆盖字段清空；基线与最大斜率切线恢复自动计算；AS/AF 后端重算并持久化；滤波窗口不被复原操作修改。
+- Actual: 请求明确提交 `low/high=null`、`tangent_offset=0`、`slope/intercept=null`，HTTP 200。自动温区恢复为 `[-2.00,1.98] °C` 和 `[13.92,17.90] °C`，自动切线 `slope=215.6206940352`、`intercept=-3370.5241685057`、`manual_override=false`，AS/AF 更新为 `16.5264472162/17.0785337424 °C`。页面显示“已恢复自动计算”，计算模式为“自动”，按钮禁用；reload 后保持一致。Savgol window 仍为 `21`。浏览器控制台 0 warning / 0 error。
+- Result: PASS
+- Evidence: `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/element-2026-07-14T14-58-04-289Z.png`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/element-2026-07-14T14-58-31-862Z.png`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/element-2026-07-14T14-59-04-560Z.png`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/traces/trace-1784041060155.trace`; `output/playwright/p0110-afas-interaction-20260714/.playwright-cli/traces/trace-1784041060155.network`; `output/runs/run-golden_c_20260529_dev_lab-20260714T130611753254Z-afas-ui-v2-20260714T141010012287Z/analysis_summary.json`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0112 — 当前产品仍残留 A/C 分类且 ROI 未正式定义为窄测量带
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `AGENTS.md`, `docs/requirements`, `docs/algorithms`, `docs/data`, `docs/testing`, `backend/src/yyt1771_g3/core`, `backend/src/yyt1771_g3/vision`, `frontend/src`
+- Found date: 2026-07-14
+- Last update: 2026-07-15
+- Owner/tool: Codex
+
+#### Problem
+
+当前产品已不再按 A 类球囊、C 类线束或 D 类预留对象进行业务分类，只保留统一的整体外包络测量原则；但规范、schema、默认测量定义、工程界面、离线素材标签和 detector 分流仍暴露 A/C/D 分类。与此同时，实际操作会把 rotated ROI 高度缩到最小，使其接近一条测量线以减少带外噪声，现有默认 ROI 高度仍为图像高度的 28%，规范也未把该操作正式定义为窄测量带。
+
+#### Expected
+
+```text
+1. 当前产品统一使用 WHOLE_ENVELOPE，不再向操作者提供 A/C/D 分类。
+2. 正式原则只保留整体外包络：内部缝隙、纹理、暗线、单根细支和外部噪点不得成为 A/B。
+3. 当前默认检测使用对比度阈值，在可旋转窄测量带内提取整体外包络最外侧跨度。
+4. 新建 ROI 默认采用交互允许的最小非零带宽 8 px；可继续拖动、旋转和移动。
+5. 旧 A/C/D、旧 detector 和 Golden 数据集 ID 仅保留历史导入、回放、导出与回归兼容，不再代表当前产品分类。
+6. 不把 ROI 存成零高度单像素线，避免插值、显示命中和单像素抖动问题。
+```
+
+#### Actual
+
+2026-07-15 首轮前端定向测试发现 `setupSources.ts` 新增运行时导入后，现有单入口 Node ESM 测试无法解析编译目录中的 extensionless dependency；143 项通过、13 项因同一模块解析原因失败。该问题不涉及 detector 结果，已在当前迁移中移除跨模块运行时依赖，等待复跑确认。
+
+2026-07-15 首轮真实浏览器 Probe 后复测发现：诊断轮廓叠加层位于 ROI 交互手柄之后渲染，其线条接管指针命中，导致画面中可见的移动/旋转/缩放手柄无法拖动。已将 `.contourProjectionOverlay` 改为 `pointer-events: none`，确保诊断图层只显示、不阻断窄测量带交互，并补充前端回归断言；等待构建与浏览器复测。
+
+2026-07-15 同轮复测在诊断层放行后继续发现：8 px 测量带缩放显示后仅约 4.5 屏幕像素，上下缩放手柄因 SVG 绘制顺序覆盖中心移动手柄，拖动中心实际把带宽由 8 px 改成 39.89 px。已同时禁止 A/B 展示层接管指针，并把中心移动手柄调整到缩放手柄之后绘制，保证窄带中心优先执行整体移动，边点/角点继续用于缩放；等待再次浏览器复测。
+
+#### Fix summary
+
+- 当前新建测量统一为 `WHOLE_ENVELOPE + ContrastWidestSpanDetector + contrast_widest_span + max_width`；后端保留旧 A/C/D 与旧 detector 的只读兼容解析，不再把它们作为当前业务选项。
+- 新建真实相机、模拟素材和重设 ROI 均使用 measurement coordinates 下 8 px 的非零窄测量带；ROI 仍为可移动、旋转、缩放的 `rotated_rect`，局部宽度轴继续作为正式 A/B 轴。
+- detector dispatch、temporal stabilization 和 detector audit 改为按统一对比度最宽跨度模式工作；审计检查 `distance_px` 与同一扫描行 `selected_width_px` 一致。
+- 当前 UI 删除对象类别、旧 detector、detector mode 和 width mode 选择；显示“整体外包络 / 对比度最宽跨度检测 / 窄测量带”。旧 ZIP 只显示“历史整体外包络配置 / 历史整体外包络检测器”。
+- 两组 Golden registry 的当前字段改为统一模型，旧 A/C 与 Balloon/Bundle 信息迁入 `legacy_profile`，dataset id 保持不变。
+- 修复 Probe 后诊断轮廓/A-B 展示层阻断 ROI 指针事件的问题，并调整 8 px 窄带手柄绘制顺序，使中心移动手柄不会被上下缩放手柄覆盖。
+- 同步更新锁定需求、算法、数据、测试、里程碑与本地配置说明。
+
+#### Tests run
+
+```bash
+cd frontend && npm test
+# PASS: 157 passed
+
+cd frontend && npm run build
+# PASS: TypeScript + Vite production build
+
+cd frontend
+./node_modules/.bin/esbuild tests/roiInteraction.test.ts --bundle --platform=node --format=cjs \
+  --outfile=/tmp/g3-roi-interaction-test-20260715/roiInteraction.test.cjs
+node /tmp/g3-roi-interaction-test-20260715/roiInteraction.test.cjs
+# PASS: move / resize / rotate / 8 px minimum assertions
+
+PYTHONPATH=backend/src \
+/Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 \
+-m pytest -q backend/tests
+# PASS: 268 passed
+
+python3 -m json.tool configs/examples/offline_datasets.local.example.json >/dev/null
+python3 -m json.tool configs/local/offline_datasets.local.json >/dev/null
+bash -n scripts/g3_fast_start.sh
+git diff --check
+# PASS
+```
+
+验证说明：ROI 专项第一次尝试用 `tsc --module CommonJS` 临时编译时，被 `api/client.ts` 的 `import.meta.env` 模块规则阻断；改用项目已安装的 esbuild 打包后专项断言通过。历史 ZIP 导入完成后的一个 Playwright 辅助 `waitForFunction` 命令因回调写法报 `ReferenceError: document is not defined`，随后的真实页面 snapshot、截图和浏览器 console 检查确认导入成功；这两项均为验证命令适配问题，不是应用断言或页面错误。
+
+#### Browser retest log
+
+- Retest date: 2026-07-15
+- Browser: Playwright Google Chrome 150.0.0.0
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Page: Operator `实时测试`; `历史导入`
+- Steps:
+  1. 使用修复后的 `scripts/g3_fast_start.sh sim-sim --restart --no-open` 启动 8022/5176，确认 `/api/app/runtime.runtime_source=simulated_material`。
+  2. 分别以 `YYT1771_G3_SIMULATED_DATASET_ID=golden_a_20260522_dev_lab` 和 `golden_c_20260529_dev_lab` 启动，刷新 Operator 页面。
+  3. 检查当前界面不含 A/C/D 分类选择、旧 detector 选择或 width mode 选择；确认新建 ROI 名称为“窄测量带”、宽度值和 input min 均为 `8`。
+  4. 两组素材分别点击“检测当前帧”，检查请求 measurement definition、VALID 状态、A/B、正式测宽带、distance 和 debug artifacts。
+  5. Golden A 在 Probe 叠加层存在时拖动中心、东侧缩放手柄和旋转手柄，再次 Probe 并检查请求中的 measurement coordinates ROI。
+  6. 导入 2026-07-06 的旧 A 类导出 ZIP，检查历史兼容显示。
+- Expected: 当前界面无 A/C/D 分类；新建 ROI 为 8 px 窄测量带；拖动、旋转、Probe、A/B 和 distance 正常；旧素材可加载。
+- Actual:
+  - `/api/offline-datasets` 同时返回两组素材，当前字段均为 `WHOLE_ENVELOPE / ContrastWidestSpanDetector / max_width`，旧值只存在于 `legacy_profile`。
+  - Golden A 初始 Probe 请求为 `WHOLE_ENVELOPE + ContrastWidestSpanDetector + contrast_widest_span + max_width`，ROI 高度 `8`；页面返回 VALID，默认距离 `994.00 px` 并显示 A/B 与正式测宽带。
+  - Probe 后中心手柄实际命中 `roi-move-handle`；拖动后中心由 `(1024, 682)` 变为 `(1077.84, 717.89)`，东侧缩放后长度由 `1269.76` 变为 `1180.02`，旋转后角度为 `20.56°`，全过程带宽保持 `8`；再次 Probe 为 VALID、距离 `851.00 px`。
+  - Golden C Probe 为 VALID；`A=(928.12, 679)`、`B=(1069.12, 679)`，同一扫描行，`distance_px≈141`、`selected_width_px=141`、`contour_measurement_mode=contrast_widest_span`。
+  - 旧 ZIP 成功导入并显示“历史整体外包络配置 / 历史整体外包络检测器”，未重新显示 A/C 产品分类选择。
+  - 浏览器 console：0 errors、0 warnings。
+- Result: PASS
+- Evidence:
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/golden-a-initial-8px-band.png`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/golden-a-probe-valid-overlay.png`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/golden-a-drag-rotate-resize.png`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/golden-c-probe-valid-overlay.png`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/legacy-import-history-labels.png`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/browser.trace`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/browser.network`
+  - `output/playwright/p0112-whole-envelope-narrow-band-20260715/browser-console.log`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0113 — Windows 打包启动器可被遗留环境变量降级且无控制台日志流不安全
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/launcher.py`, `backend/tests/unit/test_launcher.py`, `docs/windows_setup.md`
+- Found date: 2026-07-15
+- Last update: 2026-07-15
+- Owner/tool: Codex
+
+#### Problem
+
+Windows 正式快捷方式启动 `G3Workstation.exe` 时，命令行默认参数为 `--source real --product-mode production`，但 `_configure_environment()` 使用 `os.environ.setdefault()`。如果目标机用户环境中残留 `YYT1771_G3_RUNTIME_SOURCE=simulated_material`、`YYT1771_G3_PRODUCT_MODE=development` 或旧硬件配置路径，命令行参数不会生效，违反正式包固定 `production + real_hardware` 的交付规则。
+
+同时 PyInstaller spec 使用 `console=False`。Windows windowed executable 中 `sys.stderr` 可能为 `None`，原启动器仍无条件创建 `logging.StreamHandler()`，可能产生不可见的日志写入异常；正式诊断应稳定写入 `%LOCALAPPDATA%\YYT1771-G3\logs\g3-workstation.log`。
+
+#### Expected
+
+```text
+1. G3Workstation.exe 的显式/默认 CLI source、product mode、hardware config 是本次进程的权威值。
+2. 真实生产启动清除无效的模拟 dataset 环境残留。
+3. windowed EXE 没有 stderr 时仅使用 UTF-8 文件日志，不尝试写不存在的控制台流。
+4. 源码开发辅助脚本与零环境安装包边界在文档中明确区分。
+```
+
+#### Fix summary
+
+- 启动器将 runtime source、product mode 和最终 hardware config 改为直接赋值；显式 dataset id 同样覆盖继承值，真实模式清除模拟 dataset id。
+- 日志处理器始终包含 UTF-8 `FileHandler`，仅当 `sys.stderr` 可用时追加 `StreamHandler`。
+- 新增“遗留模拟/开发环境被正式 CLI 覆盖”和“windowed 无 stderr 仍可初始化文件日志”测试。
+- `docs/windows_setup.md` 改为源码开发辅助入口说明，明确正式零环境包直接运行 Setup/EXE，不依赖 Git Bash。
+
+#### Tests run
+
+```bash
+PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/python3 \
+  -m pytest -q \
+  backend/tests/unit/test_launcher.py \
+  backend/tests/unit/test_windows_packaging.py \
+  backend/tests/integration/test_runtime_api.py
+# PASS: 10 passed
+```
+
+#### Windows retest log
+
+- Retest date: pending new Windows x64 artifact
+- Browser: Edge or Chrome
+- OS: Windows 10/11 x64 pending
+- Frontend URL: `http://127.0.0.1:8022/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; real Hik camera + real LU92XX
+- Page: packaged startup and `/api/app/runtime`
+- Steps: pre-set conflicting user environment values; launch installed desktop shortcut; verify API remains `real_hardware + production`; inspect `%LOCALAPPDATA%\YYT1771-G3\logs\g3-workstation.log`; then execute device setup and Operator flow.
+- Expected: inherited values cannot change packaged production policy; app starts without console/logging error; UTF-8 file log is present.
+- Actual: pending Windows artifact.
+- Result: pending
+- Evidence: pending Windows screenshot, runtime JSON and log path.
 
 #### Final status
 

@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from yyt1771_g3.core.coordinates import roi_local_to_measurement_point
-from yyt1771_g3.core.enums import DetectionStatus, DetectorMode, DetectorType, ObjectClass
+from yyt1771_g3.core.enums import DetectionStatus, DetectorMode, DetectorType
 from yyt1771_g3.core.models import (
     ABPoints,
     DetectionCandidate,
@@ -101,22 +101,18 @@ def detect_frame_with_state(
             generate_diagnostics=generate_diagnostics,
             collect_temporal_artifacts=collect_temporal_artifacts,
         )
-    if measurement.object_class == ObjectClass.C_BUNDLE_ENVELOPE and detector in {
-        DetectorType.BUNDLE_ENVELOPE,
-        DetectorType.CONTRAST_WIDEST_SPAN,
-        DetectorType.LEGACY_BUNDLE_ENVELOPE,
-    }:
-        if _uses_contrast_widest_span_mode(measurement):
-            return _detect_contrast_widest_span(
-                frame,
-                measurement.roi,
-                measurement.detector_config,
-                frame_index=frame_index,
-                detector_name=str(DetectorType.CONTRAST_WIDEST_SPAN.value),
-                stability_state=state,
-                generate_diagnostics=generate_diagnostics,
-                collect_temporal_artifacts=collect_temporal_artifacts,
-            )
+    if _uses_contrast_widest_span_mode(measurement):
+        return _detect_contrast_widest_span(
+            frame,
+            measurement.roi,
+            measurement.detector_config,
+            frame_index=frame_index,
+            detector_name=str(DetectorType.CONTRAST_WIDEST_SPAN.value),
+            stability_state=state,
+            generate_diagnostics=generate_diagnostics,
+            collect_temporal_artifacts=collect_temporal_artifacts,
+        )
+    if detector == DetectorType.BUNDLE_ENVELOPE:
         return _detect_wire_bundle_max_width(
             frame,
             measurement.roi,
@@ -153,10 +149,7 @@ def detect_frame_with_state(
 
 
 def _uses_contrast_widest_span_mode(measurement: MeasurementDefinition) -> bool:
-    return (
-        measurement.object_class == ObjectClass.C_BUNDLE_ENVELOPE
-        and measurement.detector_mode == DetectorMode.CONTRAST_WIDEST_SPAN
-    )
+    return measurement.detector_mode == DetectorMode.CONTRAST_WIDEST_SPAN
 
 
 def _measurement_with_call_config(

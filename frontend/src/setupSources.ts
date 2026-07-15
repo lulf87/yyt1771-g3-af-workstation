@@ -4,6 +4,11 @@ import type {
   SerialPortInfo,
   TemperatureStatusResponse
 } from "./api/client";
+export const CURRENT_OBJECT_CLASS = "WHOLE_ENVELOPE";
+export const CURRENT_DETECTOR = "ContrastWidestSpanDetector";
+export const CURRENT_DETECTOR_MODE = "contrast_widest_span" as const;
+export const CURRENT_WIDTH_MODE = "max_width" as const;
+export const MIN_MEASUREMENT_BAND_HEIGHT_PX = 8;
 
 export type SetupSourceKind = "offline_dataset" | "real_camera";
 export type SetupPageKind = "setup" | "run" | "playback" | "analysis";
@@ -98,9 +103,8 @@ export type RunSetupSummary = {
   roiCenter: string;
   roiSize: string;
   roiAngle: string;
-  objectClass: string;
-  detector: string;
-  widthMode: string;
+  measurementPrinciple: string;
+  detectionMethod: string;
   maxFramesPerRun: string;
   targetFps: string;
   targetTemperatureCelsius: string;
@@ -175,9 +179,9 @@ function uiText(language: UiLanguage, text: string): string {
     None: "无",
     "Not read": "尚未读取",
     unavailable: "不可用",
-    "A balloon envelope": "A 类球囊/网状结构整体外包络",
-    "C bundle envelope": "C 类多细支/多线束整体外包络",
-    "D reserved object": "D 类预留对象",
+    "Whole envelope": "整体外包络",
+    "Legacy whole-envelope profile": "历史整体外包络配置",
+    "Contrast widest-span detection": "对比度最宽跨度检测",
     "Distance outlier filter": "距离异常点过滤",
     "Maximum allowed jump (px)": "最大允许跳变（像素）",
     "Reference valid point count": "对比最近有效点数量",
@@ -196,18 +200,14 @@ function uiNone(language: UiLanguage): string {
 }
 
 function uiObjectClass(language: UiLanguage, value: string): string {
-  if (language === "en") return value;
-  if (value === "A_BALLOON_ENVELOPE") return uiText(language, "A balloon envelope");
-  if (value === "C_BUNDLE_ENVELOPE") return uiText(language, "C bundle envelope");
-  if (value === "D_RESERVED_OBJECT") return uiText(language, "D reserved object");
+  if (value === CURRENT_OBJECT_CLASS) return uiText(language, "Whole envelope");
+  if (value === "A_BALLOON_ENVELOPE" || value === "C_BUNDLE_ENVELOPE" || value === "D_RESERVED_OBJECT") {
+    return uiText(language, "Legacy whole-envelope profile");
+  }
   return value;
 }
 
 function uiStatus(language: UiLanguage, value: string): string {
-  return uiText(language, value);
-}
-
-function uiWidthMode(language: UiLanguage, value: string): string {
   return uiText(language, value);
 }
 
@@ -234,7 +234,7 @@ export function createDefaultRoiForShape(shape: number[]): RotatedROI {
     center_x: round2(width / 2),
     center_y: round2(height / 2),
     width: round2(width * 0.62),
-    height: round2(height * 0.28),
+    height: round2(Math.min(height, MIN_MEASUREMENT_BAND_HEIGHT_PX)),
     angle_deg: 0
   };
 }
@@ -269,10 +269,10 @@ export function createRealCameraMeasurementFromShape(
   return {
     measurement_id: "real_camera-preview",
     source: "real_camera",
-    object_class: previous?.object_class ?? "A_BALLOON_ENVELOPE",
-    detector: previous?.detector ?? "BalloonEnvelopeDetector",
-    detector_mode: previous?.detector_mode ?? "default",
-    width_mode: previous?.width_mode ?? "max_width",
+    object_class: CURRENT_OBJECT_CLASS,
+    detector: CURRENT_DETECTOR,
+    detector_mode: CURRENT_DETECTOR_MODE,
+    width_mode: CURRENT_WIDTH_MODE,
     measurement_coordinates: "source_pixel",
     roi,
     regions,
@@ -580,9 +580,8 @@ export function buildRunSetupSummary(
     roiCenter: `${formatNumber(measurement.roi.center_x)}, ${formatNumber(measurement.roi.center_y)}`,
     roiSize: `${formatNumber(measurement.roi.width)} × ${formatNumber(measurement.roi.height)}`,
     roiAngle: `${formatNumber(measurement.roi.angle_deg)}°`,
-    objectClass: uiObjectClass(language, measurement.object_class),
-    detector: measurement.detector,
-    widthMode: uiWidthMode(language, measurement.width_mode),
+    measurementPrinciple: uiObjectClass(language, measurement.object_class),
+    detectionMethod: uiText(language, "Contrast widest-span detection"),
     maxFramesPerRun:
       source === "real_camera"
         ? uiText(language, "No frame limit")
@@ -637,7 +636,7 @@ export function buildSetupTemperatureSummary(
 
 function fitRoiToShape(roi: RotatedROI, width: number, height: number, resetSize: boolean): RotatedROI {
   const nextWidth = resetSize ? width * 0.62 : roi.width;
-  const nextHeight = resetSize ? height * 0.28 : roi.height;
+  const nextHeight = resetSize ? Math.min(height, MIN_MEASUREMENT_BAND_HEIGHT_PX) : roi.height;
   return {
     type: "rotated_rect",
     center_x: round2(clamp(roi.center_x, 0, width)),

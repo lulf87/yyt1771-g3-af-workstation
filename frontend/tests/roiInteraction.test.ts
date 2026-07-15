@@ -71,7 +71,14 @@ function testRotateRoiToPointer() {
   approx(rotated.angle_deg, 90, "rotated angle");
 }
 
+function testResizeKeepsNonZeroNarrowMeasurementBand() {
+  const collapsed = resizeRoiFromHandle(roi, "s", { x: 100, y: 40 });
+
+  approx(collapsed.height, 8, "minimum measurement band width");
+}
+
 testMoveRoi();
 testResizeRoiFromCornerHandle();
 testResizeKeepsRotatedAxis();
 testRotateRoiToPointer();
+testResizeKeepsNonZeroNarrowMeasurementBand();

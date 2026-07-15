@@ -1,237 +1,190 @@
-# G3 A/B 检测与外包络算法需求 v0.1
+# G3 A/B 检测与整体外包络算法需求 v0.1
+
+更新日期：2026-07-15
 
 ## 1. 算法目标
 
-G3 算法目标是识别 ROI 内待测物体整体外包络，并在 A/C 类对象中持续输出整体外包络最大宽度处的 A/B 点和 distance_px。
+G3 当前不再按 A、C 或 D 类对象分流。唯一正式算法目标是：在可旋转窄测量带内，根据像素亮暗对比提取待测目标的整体外包络支持，并持续输出同一有效扫描行上两个最外侧 A/B 点与 `distance_px`。
+
+```text
+当前对象模型：WHOLE_ENVELOPE
+当前 detector：ContrastWidestSpanDetector
+当前 width mode：max_width
+```
+
+旧 `A_BALLOON_ENVELOPE`、`C_BUNDLE_ENVELOPE`、`D_RESERVED_OBJECT` 以及 Balloon/Bundle detector 仅用于历史 run、旧导出和 Golden 回归兼容，不再是当前产品分类或新建测量默认值。
 
 ---
 
-## 2. 核心定义
+## 2. 几何与正式结果定义
 
 ```text
-正式 A/B = ROI 内目标整体外包络最大宽度位置的两个外侧接触点。
-A/B 测量轴 = 垂直于 ROI 主方向。
-distance_px = A/B 两点欧氏距离。
+rotated ROI 局部宽度轴（u 轴） = A/B 测量轴。
+rotated ROI 高度 = 测量带采样宽度。
+新建 ROI 默认高度 = 8 px（measurement coordinates）。
+正式 A/B = 同一有效扫描行上整体外包络的两个最外侧接触点。
+distance_px = A/B 两点在 measurement coordinates 中的欧氏距离。
 ```
+
+ROI 在数据结构中仍是非零面积 `rotated_rect`，不能保存为零高度几何线。8 px 窄测量带在操作上接近画线，但可对邻近像素进行稳定采样，并避免零宽度变换、命中区域消失和单像素抖动。
 
 ---
 
-## 3. 外包络要求
+## 3. 当前正式检测流程
+
+`ContrastWidestSpanDetector` 的正式流程为：
 
 ```text
-外包络可以跨过内部缝隙。
-不能使用纯凸包无脑包住大量外部空白。
-内部暗线、纹理、交叉线不构成正式边界。
-外部 speck 不得成为目标。
+1. 在 source-pixel measurement coordinates 下裁剪并矫正 rotated ROI。
+2. 将窄测量带转换为灰度图。
+3. 计算带内灰度中位数 background_median。
+4. 使用 cutoff = background_median - contrast_threshold 提取暗目标像素。
+5. 对目标支持做连通域筛选，排除面积、长度或延展性不足的 speck。
+6. 对测量带内每个扫描行使用小型邻域带统计目标支持。
+7. 每个有效扫描行只使用该行支持的最左、最右外侧位置，内部空隙不成为 A/B。
+8. 在有效扫描行中选择外侧跨度最大的同一行；不得把不同扫描行的左右端点拼接成正式结果。
+9. 将局部 A/B 映射回 measurement coordinates，并计算 distance_px。
+10. 应用帧间稳定、跳变过滤与 INVALID 规则。
 ```
 
-### 3.1 当前归档 A/C 分流实现记录
-
-```text
-2026-06-04：根据用户确认，Setup probe 和 Run 逐帧检测统一参考 /Users/lulingfeng/Documents/工作/开发/归档 的轮廓检测方案，并按归档目录分为 A 网格类与 C 线束类。
-
-共同路径：
-1. 在 measurement coordinates 下裁剪 rotated ROI。
-2. 使用 ROI angle_deg 作为 theta。
-3. 前端 Setup / Run 只显示后端 debug_artifacts，不计算正式 distance。
-4. debug_artifacts 保存 contour_projection_box / contour_direction_arrow / contour_theta_deg / contour_length_px。
-
-A 类 BalloonEnvelopeDetector：
-1. 对 ROI 图像执行暗线增强、滞后阈值、形态学去噪。
-2. 选取满足面积、宽度和高度比例的 mesh_region。
-3. 使用稳定行窗口 envelope_rows 提取左右整体外包络。
-4. distance_px = mesh_region 在同一 selected row/window 上的左右外包络跨度；不同 row/window 的 min-left 与 max-right 只能作为 debug 诊断，不能拼接为正式 A/B。
-5. contour_measurement_mode = archived_mesh_envelope_rows。
-
-C 类 BundleEnvelopeDetector：
-1. 对 ROI 图像执行暗线增强和线束分割。
-2. 保留面积足够或具有细长几何特征的 wire components。
-3. 对 wire mask 沿 ROI theta 方向计算稳健 projection bounds。
-4. distance_px = projection bounds 的 raw_length。
-5. contour_measurement_mode = archived_wire_bundle_projection。
-```
+前端只负责设置窄测量带和显示后端结果，不得自行计算正式 A/B、distance 或阈值 mask。
 
 ---
 
-## 4. BalloonEnvelopeDetector
+## 4. 整体外包络原则
 
-用于 A 类对象。
-
-必须处理：
+必须满足：
 
 ```text
-白底暗色网状结构增强
-网眼内部空白不作为边界
-内部暗线 / 交叉线不作为边界
-外轮廓弱边缘和局部断裂
-底部夹具/连接丝通过 ROI 排除
-夹子 / 连接丝 / 支撑丝 / 窄尾不决定 max-width
-max-width A/B
+A/B 必须位于当前测量带内目标支持的整体最外侧。
+内部白色缝隙可以被外包络跨过。
+内部暗线、纹理、交叉线和单根细支边界不能成为正式 A/B。
+多细支或多线束在测量带内必须视为一个整体目标，不能测单根线宽。
+外部 speck、小黑点和灰尘不能扩张整体外包络。
+不能使用纯凸包无条件包住大量外部空白。
+夹具、连接丝、支撑丝、窄尾和焊点不得决定正式 A/B。
 ```
 
-推荐第一版 pipeline：
-
-```text
-1. 在 measurement coordinates 下裁剪 ROI。
-2. 通过背景校正或大核形态学闭运算估计白色背景。
-3. 计算暗线响应，增强金属网状结构。
-4. 使用双阈值滞后保留与强响应连通的弱响应，得到 strut_mask。
-5. 使用小核 opening / closing / dilation 去噪并连接网状主体。
-6. 选取满足面积、宽度、高度比例的主体连通域，得到 mesh_region。
-7. 沿 A/B 测量轴方向建立滑动窗口，统计窗口内 mesh_region 的两侧分位数外包络。
-8. 剔除横向跨度过窄或前景像素过稀的窗口，降低夹子、支撑丝、窄尾影响。
-9. 在保留窗口中选择同一 selected row/window 的整体 max-width，得到正式 A/B 和 distance_px；不得把不同窗口的 left/right 边界拼接成正式测量线。
-10. 可额外生成 outer_contour_debug / filled_contour_debug；debug 轮廓不作为正式 distance_px 的唯一来源。
-```
-
-输出：
-
-```text
-strut_mask
-mesh_region
-envelope_rows
-left_boundary_px
-right_boundary_px
-outer_contour_debug
-filled_contour_debug
-raw_best_candidate
-selected_candidate
-ab_points
-distance_px
-quality
-rejected_reason
-debug_overlay
-```
-
-建议最小配置参数：
-
-```text
-dark_enhance_bg_kernel_px
-hysteresis_low_ratio
-mask_open_kernel_px
-mask_close_kernel_px
-mask_dilate_kernel_px
-min_component_area_px
-envelope_quantile
-envelope_window_px
-envelope_step_px
-min_window_pixels
-window_width_keep_ratio
-window_count_keep_ratio
-mesh_min_width_ratio
-mesh_min_height_ratio
-mesh_region_margin_px
-mesh_row_width_keep_ratio
-mesh_row_count_keep_ratio
-debug_contour_close_kernel_px
-debug_contour_smooth_window_px
-```
+操作者应把窄测量带放在有效测量主体上，并避开夹具等非测量结构。窄带用于降低带外噪声，但不能替代连通域筛选、最小支持量、跳变过滤和 INVALID 判定。
 
 ---
 
-## 5. BundleEnvelopeDetector
-
-用于 C 类对象。
-
-必须处理：
+## 5. 窄测量带要求
 
 ```text
-多细支作为整体目标
-相邻细支之间白色间隙视为内部
-不测单根线
-忽略内部暗线 / 交叉线
-外部 speck 排除
-max-width A/B
+默认高度：8 px。
+最小交互高度：8 px。
+正式存储：非零高度 rotated_rect。
+允许操作：移动、沿局部宽度/高度轴缩放、旋转、重设。
+坐标：始终保存为 measurement coordinates；浏览器缩放只影响显示。
+运行锁定：run 开始后锁定本次测量带快照。
 ```
 
-推荐第一版 pipeline：
-
-```text
-1. 在 measurement coordinates 下裁剪 ROI。
-2. 通过大核形态学闭运算估计白色背景。
-3. 计算暗线响应并平滑。
-4. 使用 Otsu 阈值乘以 threshold_scale，并叠加 min_response，得到 wire mask。
-5. 使用小核 closing 桥接短断裂。
-6. 连通域按面积、主轴长度和 elongation 保留线束成分，排除 speck。
-7. 沿 ROI theta 方向对 wire pixels 做稳健投影，得到 min/max along 与 min/max perpendicular。
-8. distance_px 使用 raw_length_along_direction_px；raw_width_perpendicular_px 作为诊断信息保存。
-9. debug overlay 显示 projection box、direction arrow 和 theta/L。
-```
-
-建议最小配置参数：
-
-```text
-dark_enhance_bg_kernel_px
-contour_projection_quantile
-wire_threshold_scale
-wire_min_response
-wire_bridge_kernel_px
-wire_min_component_area_px
-wire_min_length_px
-wire_min_elongation
-wire_box_padding_px
-```
+高度增大可提高局部缺损时的容错，但会引入更多带外结构；高度缩到 8 px 可最大程度减少带外噪声。算法在带内选择最宽有效扫描行，因此 8 px 是窄带采样，不是把 8 行像素无条件合并成一个大外包络。
 
 ---
 
-## 6. 候选选择
+## 6. 候选与稳定策略
 
 每帧：
 
 ```text
-1. 在 ROI 内生成 target/envelope 表达；A 类可使用 strut_mask + mesh_region + envelope_rows，C 类可使用 envelope mask。
-2. 沿垂直 ROI 主方向扫描候选测量轴或窗口。
-3. 每条测量轴/窗口与整体外包络求两个外侧接触点。
-4. 计算 width_px。
-5. 过滤非法候选。
-6. 选择 raw_best_candidate。
-7. 应用稳定策略得到 selected_candidate。
+1. 生成对比度目标 mask。
+2. 为每个有效扫描行生成一个左右外侧跨度候选。
+3. 过滤目标支持不足、边界不可信或由孤立噪点形成的候选。
+4. 选择 raw_best_candidate。
+5. 若多个候选宽度差 <= tie_width_epsilon_px，优先接近上一帧 selected_candidate 的候选。
+6. 只有明显更宽或连续 N 帧更优才切换。
+7. 跳变过大且证据不足时输出 INVALID，不输出看似正常的错误 A/B。
 ```
 
 ---
 
-## 7. 稳定策略
+## 7. INVALID 规则
+
+以下情况必须输出 INVALID：
 
 ```text
-如果多个候选宽度差 <= tie_width_epsilon_px，则认为宽度等价。
-宽度等价时，优先选择接近上一帧 selected_candidate 的候选。
-只有明显更宽或连续 N 帧更优才切换。
-跳变过大且质量不足时输出 INVALID。
+未找到满足对比度和最小支持量的目标。
+目标仅由外部 speck 或孤立小连通域构成。
+整体外包络不可信。
+A/B 不是同一有效扫描行的两个外侧接触点。
+候选来自内部缝隙、内部暗线或单根细支宽度。
+A/B 超出 ROI 或 measurement coordinates。
+相邻帧跳变超过限制且没有足够连续证据。
+质量评分不足。
 ```
+
+Invalid 优先原则不变：宁可缺失一个正式曲线点，也不能输出错误距离。
 
 ---
 
-## 8. Invalid 规则
+## 8. 正式与诊断输出
 
-以下情况必须 INVALID：
-
-```text
-未找到可信目标
-外包络不可信
-A/B 不在外包络上
-候选来自内部缝隙 / 暗线 / 单根线
-候选来自外部 speck
-跳变超过限制且没有足够证据
-ROI 内目标覆盖不足
-```
-
----
-
-## 9. 诊断信息
-
-每帧输出：
+每帧至少输出：
 
 ```text
 detection_status
-confidence
-edge_strength
-contour_area
-roi_coverage
-jump_from_previous
+ab_points
+distance_px
+quality
 rejected_reason
 selected_detector
-preprocessing_parameters
+contrast_threshold
+roi_background_median
+contrast_cutoff_gray
+mask_pixel_count
+valid_scanline_count
+selected_scan_v
+selected_left_u
+selected_right_u
+selected_width_px
 raw_best_candidate
 selected_candidate
-overlay_debug_image
+measurement_segment
+debug_overlay_image（按配置生成）
+```
+
+诊断 mask、轮廓框和 overlay 不能替代正式 A/B；正式值始终由 backend detector 生成。
+
+---
+
+## 9. 历史兼容边界
+
+以下值属于 legacy compatibility：
+
+```text
+ObjectClass.A_BALLOON_ENVELOPE
+ObjectClass.C_BUNDLE_ENVELOPE
+ObjectClass.D_RESERVED_OBJECT
+DetectorType.BALLOON_ENVELOPE
+DetectorType.BUNDLE_ENVELOPE
+DetectorType.LEGACY_BUNDLE_ENVELOPE
+DetectorType.RESERVED_OBJECT
+DetectorMode.C_ENVELOPE_LEGACY
+```
+
+兼容要求：
+
+```text
+1. 旧 run、旧 ZIP、旧 manifest 必须仍可解析和显示。
+2. 历史配置应按原值回放，不得静默改写已有正式结果。
+3. 新建测量、当前 Operator 和当前 Engineering Setup 不再提供 legacy 分类或 detector 选项。
+4. Golden dataset ID 中的 a/c 仅是不可变历史标识，不表示当前对象分类。
+5. 对 legacy 路径的专项回归可以继续显式构造旧 measurement definition，但不得把它设为当前默认。
+```
+
+---
+
+## 10. 验收要求
+
+```text
+1. 新建测量固定为 WHOLE_ENVELOPE + ContrastWidestSpanDetector + max_width。
+2. 新建 ROI 高度为 8 px，且可以移动、旋转和缩放。
+3. 浏览器缩放不改变正式 ROI、A/B 或 distance_px。
+4. A/B 来自同一有效扫描行的整体外侧跨度。
+5. 内部缝隙、纹理、单根细支和外部 speck 不成为正式 A/B。
+6. 阈值或 ROI 改变后，当前帧 Probe 由 backend 重新计算。
+7. 旧 A/C 数据和旧导出仍可读取，但当前 UI 不再显示 A/C/D 分类选择。
+8. golden_a_20260522_dev_lab 与 golden_c_20260529_dev_lab 均通过真实浏览器回归。
 ```

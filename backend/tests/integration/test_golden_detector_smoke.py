@@ -159,11 +159,11 @@ def test_golden_a_frame_680_bright_bubble_is_removed_from_clean_diagnostic_mask(
 
 
 def test_golden_a_split_mesh_components_are_measured_as_one_body() -> None:
-    registry = load_dataset_registry()
     try:
+        registry = load_dataset_registry()
         registry.resolve_dataset("golden_a_20260522_dev_lab")
     except OfflineDatasetError as exc:
-        pytest.skip(str(exc))
+        pytest.skip(f"local golden dataset is not accessible: {exc}")
 
     measurement = MeasurementDefinition(
         measurement_id="golden-a-split-mesh-components",

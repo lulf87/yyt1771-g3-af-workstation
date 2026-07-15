@@ -11,7 +11,7 @@ from yyt1771_g3.core.models import (
     RegionAnalysisResult,
     RunManifest,
 )
-from yyt1771_g3.services.afas_analysis import build_afas_postprocessing
+from yyt1771_g3.services.afas_analysis import analyze_preprocessed_afas, build_afas_postprocessing
 
 
 FORMAL_TEMPERATURE_DISTANCE_STATUSES = {
@@ -77,6 +77,59 @@ def recompute_region_analysis_result(
         regions,
         analysis_id=current_analysis.analysis_id,
     )
+
+
+def preview_region_afas_adjustment(
+    current_analysis: AnalysisResult,
+    region_id: str,
+    *,
+    afas_analysis_parameters: Mapping[str, Any] | None = None,
+) -> AnalysisResult:
+    region = next((candidate for candidate in current_analysis.regions if candidate.region_id == region_id), None)
+    if region is None:
+        raise ValueError(f"Unknown analysis region: {region_id}")
+    preview = preview_region_afas_patch(
+        region,
+        parameter_overrides=afas_analysis_parameters,
+    )
+    replacement = region.model_copy(
+        update={
+            "afas_analysis": preview["afas_analysis"],
+            "summary": preview["summary"],
+        }
+    )
+    regions = [replacement if candidate.region_id == region_id else candidate for candidate in current_analysis.regions]
+    payload = current_analysis.model_dump(mode="python")
+    payload["regions"] = [candidate.model_dump(mode="python") for candidate in regions]
+    return AnalysisResult.model_validate(payload)
+
+
+def preview_region_afas_patch(
+    region: RegionAnalysisResult | Mapping[str, Any],
+    *,
+    parameter_overrides: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if isinstance(region, RegionAnalysisResult):
+        region_id = region.region_id
+        preprocessing = region.afas_preprocessing
+        temperature_distance = region.temperature_distance
+    else:
+        region_id = str(region.get("region_id", ""))
+        preprocessing_value = region.get("afas_preprocessing")
+        preprocessing = preprocessing_value if isinstance(preprocessing_value, Mapping) else {}
+        temperature_distance_value = region.get("temperature_distance")
+        temperature_distance = temperature_distance_value if isinstance(temperature_distance_value, list) else []
+    if not region_id:
+        raise ValueError("Analysis region is missing region_id")
+    afas_analysis = analyze_preprocessed_afas(
+        preprocessing,
+        parameter_overrides=parameter_overrides,
+    )
+    return {
+        "region_id": region_id,
+        "afas_analysis": afas_analysis,
+        "summary": _region_analysis_summary(temperature_distance, preprocessing, afas_analysis),
+    }
 
 
 def detection_results_by_region(manifest: RunManifest) -> dict[str, list[DetectionResult]]:

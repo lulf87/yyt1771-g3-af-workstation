@@ -13,7 +13,7 @@ datasets/local/   本地真实大数据，不建议提交。
 
 ## 本地真实离线素材
 
-当前 G3 第一阶段已经确认两组真实离线素材，路径登记在：
+当前 G3 已确认两组真实离线素材，路径登记在：
 
 ```text
 configs/local/offline_datasets.local.json
@@ -22,9 +22,11 @@ configs/local/offline_datasets.local.json
 不要在代码中硬编码绝对路径。后端、前端和测试都应通过 dataset id 调用：
 
 ```text
-golden_a_20260522_dev_lab  A 类球囊 / 网状结构
-golden_c_20260529_dev_lab  C 类多细支 / 多线束整体结构
+golden_a_20260522_dev_lab  整体外包络回归素材（a 为历史 ID）
+golden_c_20260529_dev_lab  整体外包络回归素材（c 为历史 ID）
 ```
+
+新建测量统一使用 `WHOLE_ENVELOPE + ContrastWidestSpanDetector + max_width` 和默认 8 px 非零窄测量带。仓库内旧 measurement_definition 与 expected output 是历史 detector 回归基线，不是当前产品分类。
 
 本机素材根目录：
 

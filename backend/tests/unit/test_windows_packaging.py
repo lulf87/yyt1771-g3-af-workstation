@@ -25,3 +25,13 @@ def test_windows_build_starts_packaged_executable_before_upload() -> None:
     assert "/api/hardware/profile" in script
     assert "target_frame_rate_hz" in script
     assert "did not expose the 20 FPS camera target" in script
+    assert 'function Assert-NativeSuccess([string]$Step)' in script
+    assert 'Assert-NativeSuccess "Python virtual environment creation"' in script
+    assert 'Assert-NativeSuccess "pip upgrade"' in script
+    assert 'Assert-NativeSuccess "build dependency installation"' in script
+    assert 'Assert-NativeSuccess "frontend npm ci"' in script
+    assert 'Assert-NativeSuccess "frontend tests"' in script
+    assert 'Assert-NativeSuccess "frontend production build"' in script
+    assert 'Assert-NativeSuccess "backend tests"' in script
+    assert 'Assert-NativeSuccess "PyInstaller build"' in script
+    assert 'Assert-NativeSuccess "Inno Setup build"' in script

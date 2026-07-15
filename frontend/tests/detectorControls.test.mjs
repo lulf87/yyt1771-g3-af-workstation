@@ -97,25 +97,18 @@ test("live raw and stabilized fallback curve points respect curve point status",
   );
 });
 
-test("C object class defaults to the legacy bundle envelope detector", () => {
-  const objectOptions = mainSource.match(/const OBJECT_CLASS_OPTIONS = \[[\s\S]*?\];/);
-  assert.ok(objectOptions, "OBJECT_CLASS_OPTIONS should exist");
-
-  assert.match(
-    objectOptions[0],
-    /value: "C_BUNDLE_ENVELOPE", label: "C bundle envelope", detector: "BundleEnvelopeDetector"/
-  );
-});
-
-test("C detector mode options keep contrast widest-span optional", () => {
-  const match = mainSource.match(/const C_DETECTOR_MODE_OPTIONS = \[[\s\S]*?\];/);
-  assert.ok(match, "C_DETECTOR_MODE_OPTIONS should exist");
+test("current setup uses one whole-envelope detector without legacy class selectors", () => {
+  const match = mainSource.match(/function DetectorSetupControls\([\s\S]*?function DistanceOutlierFilterControl\(/);
+  assert.ok(match, "DetectorSetupControls block should exist");
   const block = match[0];
 
-  assert.match(block, /value: "default", label: "Original envelope detection"/);
-  assert.match(block, /value: "c_envelope_legacy", label: "Original envelope detection"/);
-  assert.match(block, /value: "contrast_widest_span", label: "Contrast widest-span detection"/);
-  assert.doesNotMatch(block, /selected.*contrast_widest_span/);
+  assert.match(mainSource, /object_class: CURRENT_OBJECT_CLASS/);
+  assert.match(mainSource, /detector: CURRENT_DETECTOR/);
+  assert.match(mainSource, /detector_mode: CURRENT_DETECTOR_MODE/);
+  assert.doesNotMatch(block, /Object class/);
+  assert.doesNotMatch(block, /CDetectorModeControl/);
+  assert.doesNotMatch(block, /DETECTOR_OPTIONS/);
+  assert.doesNotMatch(block, /Width mode/);
 });
 
 test("overlay prefers backend measurement_segment for A/B line drawing", () => {

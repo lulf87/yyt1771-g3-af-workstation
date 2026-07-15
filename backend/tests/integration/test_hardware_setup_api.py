@@ -6,6 +6,15 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 
+def _write_test_pe(path: Path, *, machine: int = 0x8664) -> None:
+    pe_bytes = bytearray(0x86)
+    pe_bytes[0:2] = b"MZ"
+    pe_bytes[0x3C:0x40] = (0x80).to_bytes(4, "little")
+    pe_bytes[0x80:0x84] = b"PE\x00\x00"
+    pe_bytes[0x84:0x86] = machine.to_bytes(2, "little")
+    path.write_bytes(pe_bytes)
+
+
 def test_hardware_setup_environment_reports_sdk_and_serial_checks(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.camera.base import CameraUnavailableError
@@ -81,7 +90,7 @@ temp:
     binding_file.write_text("# test binding\n", encoding="utf-8")
     runtime_dll = tmp_path / "Common Files" / "MVS" / "Runtime" / "Win64_x64" / "MvCameraControl.dll"
     runtime_dll.parent.mkdir(parents=True)
-    runtime_dll.write_bytes(b"test runtime")
+    _write_test_pe(runtime_dll)
 
     monkeypatch.setattr(
         "yyt1771_g3.services.hardware_setup_service.local_hardware_profile_path",
@@ -156,12 +165,7 @@ def test_hardware_sdk_paths_endpoint_rejects_win32_mvs_runtime(monkeypatch, tmp_
     (binding_dir / "MvCameraControl_class.py").write_text("# test binding\n", encoding="utf-8")
     runtime_dll = tmp_path / "Win32_i86" / "MvCameraControl.dll"
     runtime_dll.parent.mkdir()
-    pe_bytes = bytearray(0x86)
-    pe_bytes[0:2] = b"MZ"
-    pe_bytes[0x3C:0x40] = (0x80).to_bytes(4, "little")
-    pe_bytes[0x80:0x84] = b"PE\x00\x00"
-    pe_bytes[0x84:0x86] = (0x014C).to_bytes(2, "little")
-    runtime_dll.write_bytes(pe_bytes)
+    _write_test_pe(runtime_dll, machine=0x014C)
     monkeypatch.setattr(
         "yyt1771_g3.services.hardware_setup_service.local_hardware_profile_path",
         lambda path=None: config_path,

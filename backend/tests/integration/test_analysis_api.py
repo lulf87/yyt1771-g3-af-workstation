@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from yyt1771_g3.core.enums import DetectionStatus, DetectorType, ObjectClass, TemperatureSyncStatus, WidthMode
@@ -92,8 +93,100 @@ def test_analysis_api_recomputes_and_persists_afas_parameters(tmp_path, monkeypa
     assert payload["afas_analysis"]["parameters"]["resolved_low_range_celsius"] == [20.0, 26.0]
     assert payload["afas_analysis"]["parameters"]["resolved_high_range_celsius"] == [45.0, 51.0]
 
-    stored = json.loads((tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text())
+    stored = json.loads(
+        (tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text(encoding="utf-8")
+    )
     assert stored["afas_analysis"]["parameters"]["tangent_offset"] == 1
+
+    tangent = payload["afas_analysis"]["fit"]["tangent"]
+    manual_slope = float(tangent["slope"]) * 0.9
+    manual_intercept = float(tangent["intercept"]) + 2.0
+    preview_response = client.post(
+        f"/api/runs/{manifest.run_id}/analysis/preview",
+        json={
+            "region_id": "region_1",
+            "afas_analysis_parameters": {
+                "low_range_celsius": [20.0, 26.0],
+                "high_range_celsius": [45.0, 51.0],
+                "tangent_slope_override": manual_slope,
+                "tangent_intercept_override": manual_intercept,
+            },
+        },
+    )
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()["analysis_preview"]
+    assert preview["region_id"] == "region_1"
+    assert preview["afas_analysis"]["fit"]["tangent"]["slope"] == pytest.approx(manual_slope)
+    assert preview["afas_analysis"]["fit"]["tangent"]["intercept"] == pytest.approx(manual_intercept)
+    assert preview["afas_analysis"]["fit"]["tangent"]["manual_override"] is True
+    stored_after_preview = json.loads(
+        (tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text(encoding="utf-8")
+    )
+    assert stored_after_preview == stored
+
+    manual_persist_response = client.post(
+        f"/api/runs/{manifest.run_id}/analysis",
+        json={
+            "afas_preprocessing_parameters": {
+                "group_by_temperature": False,
+                "outlier_window": 13,
+                "outlier_threshold": 4.0,
+                "outlier_max_iterations": 2,
+                "savgol_window_length": 9,
+                "savgol_polyorder": 2,
+            },
+            "afas_analysis_parameters": {
+                "low_range_celsius": [20.0, 26.0],
+                "high_range_celsius": [45.0, 51.0],
+                "tangent_offset": 2,
+                "tangent_slope_override": manual_slope,
+                "tangent_intercept_override": manual_intercept,
+            },
+        },
+    )
+    assert manual_persist_response.status_code == 200
+    assert manual_persist_response.json()["analysis_result"]["afas_analysis"]["fit"]["tangent"]["manual_override"] is True
+
+    restore_response = client.post(
+        f"/api/runs/{manifest.run_id}/analysis",
+        json={
+            "afas_preprocessing_parameters": {
+                "group_by_temperature": False,
+                "outlier_window": 13,
+                "outlier_threshold": 4.0,
+                "outlier_max_iterations": 2,
+                "savgol_window_length": 9,
+                "savgol_polyorder": 2,
+            },
+            "afas_analysis_parameters": {
+                "low_range_celsius": None,
+                "high_range_celsius": None,
+                "tangent_offset": 0,
+                "tangent_slope_override": None,
+                "tangent_intercept_override": None,
+            },
+        },
+    )
+
+    assert restore_response.status_code == 200
+    restored = restore_response.json()["analysis_result"]
+    restored_parameters = restored["afas_analysis"]["parameters"]
+    assert restored["afas_preprocessing"]["parameters"]["savgol_window_length"] == 9
+    assert restored_parameters["low_range_celsius"] is None
+    assert restored_parameters["high_range_celsius"] is None
+    assert restored_parameters["tangent_offset"] == 0
+    assert restored_parameters["tangent_slope_override"] is None
+    assert restored_parameters["tangent_intercept_override"] is None
+    assert restored_parameters["resolved_low_range_celsius"] == pytest.approx([20.0, 26.2])
+    assert restored_parameters["resolved_high_range_celsius"] == pytest.approx([44.8, 51.0])
+    assert restored["afas_analysis"]["fit"]["tangent"]["manual_override"] is False
+
+    stored_after_restore = json.loads(
+        (tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text(encoding="utf-8")
+    )
+    assert stored_after_restore["afas_analysis"]["parameters"] == restored_parameters
+    assert stored_after_restore["afas_analysis"]["fit"]["tangent"]["manual_override"] is False
 
 
 def test_analysis_api_applies_global_afas_parameters_to_every_region(tmp_path, monkeypatch) -> None:  # noqa: ANN001
@@ -200,7 +293,9 @@ def test_analysis_api_applies_global_afas_parameters_to_every_region(tmp_path, m
     assert scoped_regions[0] == original_region_1
     assert scoped_regions[1]["afas_preprocessing"]["parameters"]["savgol_window_length"] == 11
     assert scoped_regions[1]["afas_analysis"]["parameters"]["tangent_offset"] == 2
-    stored = json.loads((tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text())
+    stored = json.loads(
+        (tmp_path / "runs" / manifest.run_id / "analysis_result.json").read_text(encoding="utf-8")
+    )
     assert stored["regions"] == scoped_regions
 
     unknown = TestClient(app).post(

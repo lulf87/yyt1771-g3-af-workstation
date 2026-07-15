@@ -11,7 +11,7 @@ from yyt1771_g3.core.models import CurvePoint
 
 
 AFAS_PREPROCESSING_SCHEMA_VERSION = "g3_afas_preprocessing.v0.2"
-AFAS_ANALYSIS_SCHEMA_VERSION = "g3_afas_tangent_analysis.v0.2"
+AFAS_ANALYSIS_SCHEMA_VERSION = "g3_afas_tangent_analysis.v0.3"
 MAX_SAVGOL_WINDOW_DATA_FRACTION = 0.55
 DEFAULT_TEMPERATURE_GROUP_BIN_CELSIUS = 0.01
 DEFAULT_MIN_DERIVATIVE_TEMPERATURE_STEP_CELSIUS = 0.01
@@ -22,7 +22,7 @@ DEFAULT_AFAS_PREPROCESSING_PARAMETERS = {
     "outlier_window": 11,
     "outlier_threshold": 5.0,
     "outlier_max_iterations": 3,
-    "savgol_window_length": 51,
+    "savgol_window_length": 21,
     "savgol_polyorder": 3,
 }
 
@@ -30,6 +30,8 @@ DEFAULT_AFAS_ANALYSIS_PARAMETERS = {
     "low_range_celsius": None,
     "high_range_celsius": None,
     "tangent_offset": 0,
+    "tangent_slope_override": None,
+    "tangent_intercept_override": None,
     "min_derivative_temperature_step_celsius": DEFAULT_MIN_DERIVATIVE_TEMPERATURE_STEP_CELSIUS,
 }
 
@@ -41,7 +43,7 @@ class AfasPreprocessingParameters:
     outlier_window: int = 11
     outlier_threshold: float = 5.0
     outlier_max_iterations: int = 3
-    savgol_window_length: int = 51
+    savgol_window_length: int = 21
     savgol_polyorder: int = 3
 
     @classmethod
@@ -58,7 +60,7 @@ class AfasPreprocessingParameters:
             outlier_window=int(merged.get("outlier_window", 11)),
             outlier_threshold=float(merged.get("outlier_threshold", 5.0)),
             outlier_max_iterations=int(merged.get("outlier_max_iterations", 3)),
-            savgol_window_length=int(merged.get("savgol_window_length", 51)),
+            savgol_window_length=int(merged.get("savgol_window_length", 21)),
             savgol_polyorder=int(merged.get("savgol_polyorder", 3)),
         )
 
@@ -79,6 +81,8 @@ class AfasAnalysisParameters:
     low_range_celsius: tuple[float, float] | None = None
     high_range_celsius: tuple[float, float] | None = None
     tangent_offset: int = 0
+    tangent_slope_override: float | None = None
+    tangent_intercept_override: float | None = None
     min_derivative_temperature_step_celsius: float = DEFAULT_MIN_DERIVATIVE_TEMPERATURE_STEP_CELSIUS
 
     @classmethod
@@ -90,6 +94,8 @@ class AfasAnalysisParameters:
             low_range_celsius=_normalize_range(merged.get("low_range_celsius")),
             high_range_celsius=_normalize_range(merged.get("high_range_celsius")),
             tangent_offset=int(merged.get("tangent_offset", 0)),
+            tangent_slope_override=_normalize_optional_number(merged.get("tangent_slope_override")),
+            tangent_intercept_override=_normalize_optional_number(merged.get("tangent_intercept_override")),
             min_derivative_temperature_step_celsius=max(0.0, float(merged.get(
                 "min_derivative_temperature_step_celsius",
                 DEFAULT_MIN_DERIVATIVE_TEMPERATURE_STEP_CELSIUS,
@@ -101,6 +107,8 @@ class AfasAnalysisParameters:
             "low_range_celsius": None if self.low_range_celsius is None else list(self.low_range_celsius),
             "high_range_celsius": None if self.high_range_celsius is None else list(self.high_range_celsius),
             "tangent_offset": self.tangent_offset,
+            "tangent_slope_override": self.tangent_slope_override,
+            "tangent_intercept_override": self.tangent_intercept_override,
             "min_derivative_temperature_step_celsius": self.min_derivative_temperature_step_celsius,
         }
 
@@ -165,42 +173,33 @@ def preprocess_temperature_distance(
     warnings: list[str] = []
     smoothing_applied = True
     effective_window: int | None = int(parameters.savgol_window_length)
-    smoothing_warning = _full_length_savgol_window_warning(
+    smoothing_warning: str | None = None
+    effective_window, edge_warning = _edge_safe_savgol_window_length(
         len(repaired_values),
         window_length=parameters.savgol_window_length,
+        polyorder=parameters.savgol_polyorder,
     )
-    if smoothing_warning is not None:
+    if edge_warning is not None:
+        warnings.append(edge_warning)
+    if effective_window is None:
         smoothing_applied = False
         effective_window = None
         smoothed_temperatures = repaired_temperatures.copy()
         smoothed_values = repaired_values.copy()
     else:
-        effective_window, edge_warning = _edge_safe_savgol_window_length(
-            len(repaired_values),
-            window_length=parameters.savgol_window_length,
-            polyorder=parameters.savgol_polyorder,
-        )
-        if edge_warning is not None:
-            warnings.append(edge_warning)
-        if effective_window is None:
+        try:
+            smoothed_temperatures, smoothed_values = smooth_data(
+                repaired_temperatures,
+                repaired_values,
+                window_length=effective_window,
+                polyorder=parameters.savgol_polyorder,
+            )
+        except ValueError as exc:
             smoothing_applied = False
             effective_window = None
+            smoothing_warning = str(exc)
             smoothed_temperatures = repaired_temperatures.copy()
             smoothed_values = repaired_values.copy()
-        else:
-            try:
-                smoothed_temperatures, smoothed_values = smooth_data(
-                    repaired_temperatures,
-                    repaired_values,
-                    window_length=effective_window,
-                    polyorder=parameters.savgol_polyorder,
-                )
-            except ValueError as exc:
-                smoothing_applied = False
-                effective_window = None
-                smoothing_warning = str(exc)
-                smoothed_temperatures = repaired_temperatures.copy()
-                smoothed_values = repaired_values.copy()
 
     if smoothing_warning is not None:
         warnings.append(smoothing_warning)
@@ -294,11 +293,25 @@ def analyze_preprocessed_afas(
             f"{parameters.min_derivative_temperature_step_celsius:g} °C."
         )
     max_slope_index = find_max_slope_index(derivatives, offset=parameters.tangent_offset)
-    tangent_slope, tangent_intercept = compute_tangent_at_point(
+    automatic_tangent_slope, automatic_tangent_intercept = compute_tangent_at_point(
         temperatures,
         values,
         derivatives,
         max_slope_index,
+    )
+    tangent_slope = (
+        parameters.tangent_slope_override
+        if parameters.tangent_slope_override is not None
+        else automatic_tangent_slope
+    )
+    tangent_intercept = (
+        parameters.tangent_intercept_override
+        if parameters.tangent_intercept_override is not None
+        else automatic_tangent_intercept
+    )
+    tangent_manually_adjusted = (
+        parameters.tangent_slope_override is not None
+        or parameters.tangent_intercept_override is not None
     )
     try:
         low_slope, low_intercept = fit_baseline(temperatures, values, *low_range)
@@ -328,7 +341,10 @@ def analyze_preprocessed_afas(
                 "max_slope_value": _optional_float(values[max_slope_index]),
                 "low_baseline": _line_payload(low_range, float("nan"), float("nan")),
                 "high_baseline": _line_payload(high_range, float("nan"), float("nan")),
-                "tangent": _line_payload(None, tangent_slope, tangent_intercept),
+                "tangent": {
+                    **_line_payload(None, tangent_slope, tangent_intercept),
+                    "manual_override": tangent_manually_adjusted,
+                },
             },
             "result": {"As": None, "Af_tan": None, "max_slope_temp": _optional_float(temperatures[max_slope_index])},
         }
@@ -379,7 +395,10 @@ def analyze_preprocessed_afas(
             "max_slope_value": _optional_float(values[max_slope_index]),
             "low_baseline": _line_payload(low_range, low_slope, low_intercept),
             "high_baseline": _line_payload(high_range, high_slope, high_intercept),
-            "tangent": _line_payload(None, tangent_slope, tangent_intercept),
+            "tangent": {
+                **_line_payload(None, tangent_slope, tangent_intercept),
+                "manual_override": tangent_manually_adjusted,
+            },
         },
         "result": {
             "As": _optional_float(as_value),
@@ -561,7 +580,7 @@ def remove_outliers(
 def smooth_data(
     temps: Sequence[float],
     values: Sequence[float],
-    window_length: int = 51,
+    window_length: int = 21,
     polyorder: int = 3,
 ) -> tuple[np.ndarray, np.ndarray]:
     temperatures = np.asarray(temps, dtype=float)
@@ -707,6 +726,15 @@ def _normalize_range(value: Any) -> tuple[float, float] | None:
     if isinstance(value, (list, tuple)) and len(value) == 2:
         return float(value[0]), float(value[1])
     raise ValueError("analysis range values must be [start, end] pairs")
+
+
+def _normalize_optional_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    if not np.isfinite(numeric):
+        raise ValueError("manual tangent values must be finite numbers")
+    return numeric
 
 
 def _resolve_ranges(

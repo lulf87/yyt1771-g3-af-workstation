@@ -75,9 +75,9 @@ test("real camera measurement is derived from preview shape without changing det
   const measurement = createRealCameraMeasurementFromShape(previous, [1364, 2048]);
 
   assert.equal(measurement.measurement_id, "real_camera-preview");
-  assert.equal(measurement.object_class, "A_BALLOON_ENVELOPE");
-  assert.equal(measurement.detector, "BalloonEnvelopeDetector");
-  assert.equal(measurement.detector_mode, "default");
+  assert.equal(measurement.object_class, "WHOLE_ENVELOPE");
+  assert.equal(measurement.detector, "ContrastWidestSpanDetector");
+  assert.equal(measurement.detector_mode, "contrast_widest_span");
   assert.equal(measurement.source, "real_camera");
   assert.equal(measurement.width_mode, "max_width");
   assert.equal(measurement.measurement_coordinates, "source_pixel");
@@ -85,7 +85,7 @@ test("real camera measurement is derived from preview shape without changing det
   assert.equal(measurement.roi.center_x, 1024);
   assert.equal(measurement.roi.center_y, 682);
   assert.equal(measurement.roi.width, 1269.76);
-  assert.equal(measurement.roi.height, 381.92);
+  assert.equal(measurement.roi.height, 8);
   assert.equal(measurement.roi.angle_deg, -1.5);
 });
 
@@ -103,8 +103,8 @@ test("real camera frame refresh preserves all configured measurement positions",
   const previous = {
     measurement_id: "real_camera-preview",
     source: "real_camera",
-    object_class: "C_BUNDLE_ENVELOPE",
-    detector: "BundleEnvelopeDetector",
+    object_class: "WHOLE_ENVELOPE",
+    detector: "ContrastWidestSpanDetector",
     detector_mode: "contrast_widest_span",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
@@ -156,8 +156,9 @@ test("run setup summary is derived from the saved setup measurement definition",
   const measurement = {
     measurement_id: "setup-real-camera",
     source: "real_camera",
-    object_class: "C_BUNDLE_ENVELOPE",
-    detector: "BundleEnvelopeDetector",
+    object_class: "WHOLE_ENVELOPE",
+    detector: "ContrastWidestSpanDetector",
+    detector_mode: "contrast_widest_span",
     width_mode: "max_width",
     measurement_coordinates: "source_pixel",
     roi: {
@@ -165,7 +166,7 @@ test("run setup summary is derived from the saved setup measurement definition",
       center_x: 957.46,
       center_y: 726.36,
       width: 1269.76,
-      height: 381.92,
+      height: 8,
       angle_deg: -2.5
     },
     detector_config: {
@@ -180,11 +181,10 @@ test("run setup summary is derived from the saved setup measurement definition",
     sourceLabel: "Real camera",
     sourceId: "real_camera",
     roiCenter: "957.46, 726.36",
-    roiSize: "1269.76 × 381.92",
+    roiSize: "1269.76 × 8.00",
     roiAngle: "-2.50°",
-    objectClass: "C_BUNDLE_ENVELOPE",
-    detector: "BundleEnvelopeDetector",
-    widthMode: "max_width",
+    measurementPrinciple: "Whole envelope",
+    detectionMethod: "Contrast widest-span detection",
     maxFramesPerRun: "No frame limit",
     targetFps: "4",
     targetTemperatureCelsius: "42.50 °C",

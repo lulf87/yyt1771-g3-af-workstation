@@ -102,6 +102,7 @@ elif [[ "$MODE" == "sim-sim" ]]; then
 else
   EXPECTED_RUNTIME_SOURCE="real_hardware"
 fi
+export YYT1771_G3_RUNTIME_SOURCE="$EXPECTED_RUNTIME_SOURCE"
 
 BACKEND_URL="http://$HOST:$BACKEND_PORT"
 FRONTEND_URL="http://$HOST:$FRONTEND_PORT/"

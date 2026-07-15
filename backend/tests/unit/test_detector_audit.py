@@ -170,3 +170,28 @@ def test_audit_accepts_c_contrast_widest_span_mode() -> None:
 
     assert summary["error_count"] == 0
     assert summary["warning_count"] == 0
+
+
+def test_audit_accepts_current_whole_envelope_same_scanline_distance() -> None:
+    manifest = _manifest(
+        [
+            _valid(
+                1,
+                180.0,
+                {
+                    "contour_measurement_mode": "contrast_widest_span",
+                    "selected_scan_v": 4.0,
+                    "selected_left_u": 12.0,
+                    "selected_right_u": 192.0,
+                    "selected_width_px": 180.0,
+                },
+            )
+        ],
+        object_class=ObjectClass.WHOLE_ENVELOPE,
+        detector=DetectorType.CONTRAST_WIDEST_SPAN,
+    )
+
+    summary = audit_run_manifest(manifest)
+
+    assert summary["error_count"] == 0
+    assert summary["warning_count"] == 0

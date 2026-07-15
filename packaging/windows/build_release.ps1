@@ -12,18 +12,32 @@ $Python = Join-Path $Venv "Scripts\python.exe"
 $Dist = Join-Path $BuildRoot "dist"
 $Work = Join-Path $BuildRoot "pyinstaller"
 
+function Assert-NativeSuccess([string]$Step) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Step failed with exit code $LASTEXITCODE"
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 if (-not (Test-Path $Python)) {
     py -3.11 -m venv $Venv
+    Assert-NativeSuccess "Python virtual environment creation"
 }
 & $Python -m pip install --upgrade pip
+Assert-NativeSuccess "pip upgrade"
 & $Python -m pip install -r (Join-Path $Repo "backend\requirements-build.txt")
+Assert-NativeSuccess "build dependency installation"
 
 Push-Location (Join-Path $Repo "frontend")
 try {
     npm ci
-    if (-not $SkipTests) { npm test }
+    Assert-NativeSuccess "frontend npm ci"
+    if (-not $SkipTests) {
+        npm test
+        Assert-NativeSuccess "frontend tests"
+    }
     npm run build
+    Assert-NativeSuccess "frontend production build"
 } finally {
     Pop-Location
 }
@@ -31,12 +45,14 @@ try {
 if (-not $SkipTests) {
     $env:PYTHONPATH = Join-Path $Repo "backend\src"
     & $Python -m pytest (Join-Path $Repo "backend\tests") -q
+    Assert-NativeSuccess "backend tests"
 }
 
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Dist, $Work
 & $Python -m PyInstaller --noconfirm --clean `
     --distpath $Dist --workpath $Work `
     (Join-Path $Repo "packaging\windows\g3_workstation.spec")
+Assert-NativeSuccess "PyInstaller build"
 
 $PortableDir = Join-Path $Dist "YYT1771-G3"
 $Executable = Join-Path $PortableDir "G3Workstation.exe"
@@ -88,6 +104,7 @@ if (-not $SkipInstaller) {
     if (-not (Test-Path $Iscc)) { throw "Inno Setup 6 not found: $Iscc" }
     & $Iscc "/DMyAppVersion=$Version" "/DSourceDir=$PortableDir" `
         "/DOutputDir=$BuildRoot" (Join-Path $Repo "packaging\windows\installer.iss")
+    Assert-NativeSuccess "Inno Setup build"
     $Setup = Join-Path $BuildRoot "YYT1771-G3-Setup-$Version-x64.exe"
     Get-FileHash -Algorithm SHA256 $Setup | Format-List
 }

@@ -42,7 +42,7 @@ def _contrast_measurement(
 ) -> MeasurementDefinition:
     return MeasurementDefinition(
         measurement_id="contrast-synthetic",
-        object_class=ObjectClass.C_BUNDLE_ENVELOPE,
+        object_class=ObjectClass.WHOLE_ENVELOPE,
         detector=detector,
         detector_mode="contrast_widest_span",
         width_mode=WidthMode.MAX_WIDTH,

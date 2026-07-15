@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 import threading
 import time
 import urllib.request
@@ -39,25 +40,30 @@ def main(argv: list[str] | None = None) -> int:
 
 def _configure_environment(args: argparse.Namespace) -> None:
     source = "real_hardware" if args.source == "real" else "simulated_material"
-    os.environ.setdefault("YYT1771_G3_RUNTIME_SOURCE", source)
-    os.environ.setdefault("YYT1771_G3_PRODUCT_MODE", args.product_mode)
+    os.environ["YYT1771_G3_RUNTIME_SOURCE"] = source
+    os.environ["YYT1771_G3_PRODUCT_MODE"] = args.product_mode
     if args.hardware_config:
-        os.environ.setdefault("YYT1771_G3_HARDWARE_CONFIG", args.hardware_config)
+        hardware_config = Path(args.hardware_config).expanduser()
     elif args.source == "sim" and not is_frozen():
-        simulated_profile = project_root() / "configs" / "local" / "simcamera_simtemp.local.yaml"
-        os.environ.setdefault("YYT1771_G3_HARDWARE_CONFIG", str(simulated_profile))
+        hardware_config = project_root() / "configs" / "local" / "simcamera_simtemp.local.yaml"
     else:
-        os.environ.setdefault("YYT1771_G3_HARDWARE_CONFIG", str(hardware_config_path()))
+        hardware_config = hardware_config_path()
+    os.environ["YYT1771_G3_HARDWARE_CONFIG"] = str(hardware_config)
     if args.dataset_id:
-        os.environ.setdefault("YYT1771_G3_SIMULATED_DATASET_ID", args.dataset_id)
+        os.environ["YYT1771_G3_SIMULATED_DATASET_ID"] = args.dataset_id
+    elif args.source == "real":
+        os.environ.pop("YYT1771_G3_SIMULATED_DATASET_ID", None)
 
 
 def _configure_logging(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [logging.FileHandler(path, encoding="utf-8")]
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        handlers=[logging.FileHandler(path, encoding="utf-8"), logging.StreamHandler()],
+        handlers=handlers,
         force=True,
     )
 

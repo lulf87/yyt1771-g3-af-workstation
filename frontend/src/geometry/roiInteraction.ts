@@ -2,7 +2,8 @@ import type { ABPoint, RotatedROI } from "../api/client";
 
 export type RoiResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
 
-const MIN_ROI_SIZE_PX = 8;
+export const MIN_MEASUREMENT_BAND_HEIGHT_PX = 8;
+const MIN_ROI_SIZE_PX = MIN_MEASUREMENT_BAND_HEIGHT_PX;
 
 export function moveRoiFromDrag(
   roi: RotatedROI,

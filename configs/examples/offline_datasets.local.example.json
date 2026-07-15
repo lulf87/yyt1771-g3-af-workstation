@@ -5,9 +5,14 @@
   "datasets": [
     {
       "id": "golden_a_20260522_dev_lab",
-      "label": "A 类球囊/网状结构离线素材：20260522-183158-dev_lab",
-      "object_class": "A_BALLOON_ENVELOPE",
-      "g3_type": "A",
+      "label": "整体外包络回归素材：20260522-183158-dev_lab",
+      "object_class": "WHOLE_ENVELOPE",
+      "g3_type": "WHOLE_ENVELOPE",
+      "legacy_profile": {
+        "object_class": "A_BALLOON_ENVELOPE",
+        "detector": "BalloonEnvelopeDetector",
+        "g3_type": "A"
+      },
       "source_generation": "G1 yyt1771_starter dev_lab capture",
       "root_path": "/ABSOLUTE/PATH/TO/yyt1771_starter/examples/runtime/camera_captures/20260522-183158-dev_lab",
       "manifest": "manifest.json",
@@ -17,7 +22,7 @@
       "frame_glob": "frame_*.npy",
       "frame_format": "npy",
       "expected_fps": 10.0,
-      "default_detector": "BalloonEnvelopeDetector",
+      "default_detector": "ContrastWidestSpanDetector",
       "default_width_mode": "max_width",
       "required_for_milestones": [
         "M0",
@@ -35,18 +40,23 @@
         "Analysis/Export"
       ],
       "notes": [
-        "图 1/2 对应此数据集：A 类初始状态和最终状态。",
-        "ROI 仅应框住有效测量主体，不应包含底部连接丝、夹具、焊点。",
-        "A 类正式测宽应基于暗线增强后的网状主体左右整体外包络；内部网眼、暗线、交叉线不作为正式边界。",
-        "夹子、连接丝、支撑丝、窄尾不得决定 A 类 max_width。",
-        "A/B = ROI 内整体外包络 max-width 位置的两个外侧接触点。"
+        "dataset id 中的 a 是历史标识，不表示当前产品分类。",
+        "新建 ROI 使用默认 8 px 非零窄测量带，并避开连接丝、夹具和焊点。",
+        "正式测宽使用对比度目标支持的整体外包络；内部网眼、暗线和交叉线不作为正式边界。",
+        "夹子、连接丝、支撑丝和窄尾不得决定 max_width。",
+        "A/B = 同一有效扫描行上整体外包络的两个最外侧接触点。"
       ]
     },
     {
       "id": "golden_c_20260529_dev_lab",
-      "label": "C 类多细支/多线束整体离线素材：20260529-194304-dev_lab",
-      "object_class": "C_BUNDLE_ENVELOPE",
-      "g3_type": "C",
+      "label": "整体外包络回归素材：20260529-194304-dev_lab",
+      "object_class": "WHOLE_ENVELOPE",
+      "g3_type": "WHOLE_ENVELOPE",
+      "legacy_profile": {
+        "object_class": "C_BUNDLE_ENVELOPE",
+        "detector": "BundleEnvelopeDetector",
+        "g3_type": "C"
+      },
       "source_generation": "G1 yyt1771_starter dev_lab capture",
       "root_path": "/ABSOLUTE/PATH/TO/yyt1771_starter/examples/runtime/camera_captures/20260529-194304-dev_lab",
       "manifest": "manifest.json",
@@ -56,7 +66,7 @@
       "frame_glob": "frame_*.npy",
       "frame_format": "npy",
       "expected_fps": 10.0,
-      "default_detector": "BundleEnvelopeDetector",
+      "default_detector": "ContrastWidestSpanDetector",
       "default_width_mode": "max_width",
       "required_for_milestones": [
         "M0",
@@ -74,10 +84,11 @@
         "Analysis/Export"
       ],
       "notes": [
-        "图 3/4 对应此数据集：C 类初始状态和最终状态。",
+        "dataset id 中的 c 是历史标识，不表示当前产品分类。",
+        "新建 ROI 使用默认 8 px 非零窄测量带。",
         "多根细支必须作为一个整体目标；相邻细支之间的白色空隙视为目标内部。",
         "不得检测单根细支宽度，不得把内部缝隙、暗线、纹理作为正式 A/B。",
-        "A/B = ROI 内整体外包络 max-width 位置的两个外侧接触点。"
+        "A/B = 同一有效扫描行上整体外包络的两个最外侧接触点。"
       ]
     }
   ]

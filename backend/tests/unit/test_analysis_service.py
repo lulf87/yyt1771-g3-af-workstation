@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from yyt1771_g3.core.enums import (
     CurvePointStatus,
     DetectionStatus,
@@ -279,8 +281,9 @@ def test_analysis_result_includes_afas_preprocessing_and_tangent_result() -> Non
 
     analysis = build_analysis_result(manifest, analysis_id="analysis-afas")
 
+    assert analysis.afas_preprocessing["parameters"]["savgol_window_length"] == 21
     assert analysis.afas_preprocessing["smoothed"]["applied"] is True
-    assert analysis.afas_preprocessing["smoothed"]["effective_savgol_window_length"] < 51
+    assert analysis.afas_preprocessing["smoothed"]["effective_savgol_window_length"] <= 21
     assert len(analysis.afas_preprocessing["smoothed"]["values"]) == len(analysis.temperature_distance)
     assert analysis.afas_analysis["result_status"] == "ok"
     assert analysis.afas_analysis["result"]["As"] is not None
@@ -344,6 +347,54 @@ def test_analysis_result_accepts_afas_parameter_overrides() -> None:
     assert analysis.afas_analysis["parameters"]["resolved_high_range_celsius"] == [45.0, 51.0]
     assert analysis.afas_analysis["parameters"]["tangent_offset"] == 1
     assert analysis.afas_analysis["fit"]["tangent"]["slope"] is not None
+
+
+def test_afas_analysis_accepts_manual_tangent_slope_and_position() -> None:
+    detection_results: list[DetectionResult] = []
+    for index in range(63):
+        temperature = 20.0 + index * 0.5
+        transition = 1.0 / (1.0 + 2.718281828 ** (-(temperature - 36.0) / 2.2))
+        detection_results.append(
+            _valid_detection(
+                index + 1,
+                100.0 + transition * 55.0,
+                TemperatureSyncStatus.TEMP_SYNC_OK,
+                temperature,
+            )
+        )
+    manifest = RunManifest(
+        run_id="run-afas-manual-tangent",
+        dataset_id="golden_a_20260522_dev_lab",
+        measurement_definition=MeasurementDefinition(
+            measurement_id="m-afas-manual-tangent",
+            object_class=ObjectClass.A_BALLOON_ENVELOPE,
+            detector=DetectorType.BALLOON_ENVELOPE,
+            width_mode=WidthMode.MAX_WIDTH,
+            roi=RotatedROI(center_x=10.0, center_y=10.0, width=12.0, height=8.0),
+        ),
+        detection_results=detection_results,
+    )
+
+    automatic = build_analysis_result(manifest, analysis_id="analysis-afas-automatic")
+    automatic_fit = automatic.afas_analysis["fit"]["tangent"]
+    manual_slope = float(automatic_fit["slope"]) * 0.85
+    manual_intercept = float(automatic_fit["intercept"]) + 4.0
+    adjusted = build_analysis_result(
+        manifest,
+        analysis_id="analysis-afas-manual",
+        afas_analysis_parameters={
+            "tangent_slope_override": manual_slope,
+            "tangent_intercept_override": manual_intercept,
+        },
+    )
+
+    tangent = adjusted.afas_analysis["fit"]["tangent"]
+    assert tangent["slope"] == pytest.approx(manual_slope)
+    assert tangent["intercept"] == pytest.approx(manual_intercept)
+    assert tangent["manual_override"] is True
+    assert adjusted.afas_analysis["parameters"]["tangent_slope_override"] == pytest.approx(manual_slope)
+    assert adjusted.afas_analysis["parameters"]["tangent_intercept_override"] == pytest.approx(manual_intercept)
+    assert adjusted.afas_analysis["result"]["As"] != automatic.afas_analysis["result"]["As"]
 
 
 def test_afas_analysis_marks_nonfinite_tangent_fit_unavailable() -> None:
