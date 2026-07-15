@@ -124,6 +124,7 @@
 | P-0110 | RESOLVED_BROWSER_VERIFIED | P0 | results/export / AFAS interactive review | 低高温拟合区间和最大斜率切线只能手输/自动计算，不能在图中拖动并实时更新 AS/AF | 2026-07-14 | 2026-07-14 | Codex | 图上温区平移/缩放、切线平移/改斜率、后端实时交点、松手保存及默认窗口 21 已通过 Golden A/C Chrome 复测 |
 | P-0111 | RESOLVED_BROWSER_VERIFIED | P1 | results/export / AFAS automatic restore | 人工调整温区和最大斜率切线后缺少一键恢复自动计算 | 2026-07-14 | 2026-07-14 | Codex | 清除全部人工覆盖、后端正式重算、刷新持久化及 Golden C Chrome 复测已通过 |
 | P-0113 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / packaged launcher / production policy | 打包启动器参数可能被遗留环境变量覆盖，且无控制台 EXE 仍创建 stderr 日志处理器 | 2026-07-15 | 2026-07-15 | Codex | CLI 运行来源、产品模式和配置路径改为权威覆盖；windowed EXE 无 stderr 时仅写 UTF-8 文件日志，待 Windows 新包复测 |
+| P-0114 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / frontend tests | 前端测试直接执行 Unix `node_modules/.bin/tsc`，Windows Runner 全部模块编译辅助流程报 ENOENT | 2026-07-15 | 2026-07-15 | Codex | 改为用当前 Node 执行 TypeScript JS 入口；本地 157 项测试和生产构建通过，替代 Windows CI 待完成 |
 
 ---
 
@@ -10865,6 +10866,65 @@ PYTHONPATH=backend/src /Users/lulingfeng/miniforge3/envs/yyt1771-mvs-x86/bin/pyt
 - Actual: pending Windows artifact.
 - Result: pending
 - Evidence: pending Windows screenshot, runtime JSON and log path.
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0114 — Windows 前端测试无法执行 Unix tsc shim
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P0
+- Module: `frontend/tests`, Windows release CI
+- Found date: 2026-07-15
+- Last update: 2026-07-15
+- Owner/tool: Codex
+
+#### Problem
+
+Windows release run `29396041406` 在严格发布门禁启用后，于前端测试阶段失败并停止上传。157 项测试中 96 项报同一错误：
+
+```text
+spawnSync ...\frontend\node_modules\.bin\tsc ENOENT
+```
+
+#### Root cause
+
+相关 Node 测试为了临时编译 TypeScript 模块，直接把 `node_modules/.bin/tsc` 作为 `execFileSync` 可执行文件。该路径是 POSIX shim；Windows npm 安装生成的是 `tsc.cmd`，而 `.cmd` 也不能作为无 shell 的跨平台 `execFileSync` 目标。
+
+#### Fix summary
+
+- 所有相关测试改用 `process.execPath` 启动当前 Node。
+- TypeScript 编译器通过跨平台 JS 入口 `node_modules/typescript/bin/tsc` 作为第一个 Node 参数执行。
+- 保留无 shell 的参数数组调用，避免命令行转义和注入差异。
+- 失败 run 已确认没有进入前端 build、后端测试、PyInstaller、Inno Setup 或 artifact 上传。
+
+#### Tests run
+
+```text
+Windows CI failure evidence: GitHub Actions run 29396041406
+Local frontend tests: PASS, 157 passed
+Local frontend production build: PASS
+git diff --check: PASS
+Replacement Windows CI: pending
+```
+
+#### Browser retest log
+
+- Retest date: pending replacement Windows artifact
+- Browser: Edge or Chrome
+- OS: Windows 10/11 x64 pending
+- Frontend URL: `http://127.0.0.1:8022/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: none; production real-hardware package
+- Page: packaged startup / Device setup / Operator
+- Steps: build with corrected cross-platform test compiler invocation; install generated Setup; start packaged application.
+- Expected: all frontend tests pass on Windows, build continues through packaged EXE smoke and artifact upload.
+- Actual: pending replacement run.
+- Result: pending
+- Evidence: [failed Windows run 29396041406](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29396041406)
 
 #### Final status
 

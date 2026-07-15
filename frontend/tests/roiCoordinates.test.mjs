@@ -16,8 +16,9 @@ async function loadCoordinatesModule() {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   execFileSync(
-    resolve(rootDir, "node_modules/.bin/tsc"),
+    process.execPath,
     [
+      resolve(rootDir, "node_modules/typescript/bin/tsc"),
       "--target",
       "ES2020",
       "--module",

@@ -18,8 +18,9 @@ async function loadSetupSourcesModule() {
   rmSync(setupOutDir, { recursive: true, force: true });
   mkdirSync(setupOutDir, { recursive: true });
   execFileSync(
-    resolve(rootDir, "node_modules/.bin/tsc"),
+    process.execPath,
     [
+      resolve(rootDir, "node_modules/typescript/bin/tsc"),
       "--target",
       "ES2020",
       "--module",
@@ -43,8 +44,9 @@ async function loadApiClientModule() {
   rmSync(apiOutDir, { recursive: true, force: true });
   mkdirSync(apiOutDir, { recursive: true });
   execFileSync(
-    resolve(rootDir, "node_modules/.bin/tsc"),
+    process.execPath,
     [
+      resolve(rootDir, "node_modules/typescript/bin/tsc"),
       "--target",
       "ES2020",
       "--module",

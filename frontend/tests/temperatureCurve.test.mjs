@@ -12,8 +12,8 @@ after(() => rmSync(outDir, { recursive: true, force: true }));
 async function loadModule() {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  execFileSync(resolve(rootDir, "node_modules/.bin/tsc"), [
-    "--target", "ES2020", "--module", "ES2020", "--moduleResolution", "node",
+  execFileSync(process.execPath, [
+    resolve(rootDir, "node_modules/typescript/bin/tsc"), "--target", "ES2020", "--module", "ES2020", "--moduleResolution", "node",
     "--strict", "--skipLibCheck", "--types", "vite/client", "--outDir", outDir, "src/temperatureCurve.ts"
   ], { cwd: rootDir, stdio: "pipe" });
   return import(`${pathToFileURL(resolve(outDir, "temperatureCurve.js")).href}?${Date.now()}`);
