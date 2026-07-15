@@ -120,11 +120,11 @@
 | P-0106 | RESOLVED_BROWSER_VERIFIED | P1 | frontend / backend / real camera preview | 真实硬件绑定通过后 Operator 应默认实时浏览相机，目标预览帧率设为 20 FPS | 2026-07-14 | 2026-07-14 | Codex | 20 FPS profile/调度已生效，Operator 自动显示真机画面且当前帧检测继续可用 |
 | P-0107 | OPEN | P1 | backend / frontend / multi-client camera preview | 多个浏览器页面同时实时预览时会争用 camera operation 并产生间歇性 409 | 2026-07-14 | 2026-07-14 | Codex | 单页面流程可用；需实现多客户端共享预览或串行调度后复测 |
 | P-0108 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows upgrade / hardware setup / camera preview | Windows 新装和保留旧 hardware.yaml 的升级都必须获得完成即保存、自动实时预览和 20 FPS 设备预览行为 | 2026-07-14 | 2026-07-14 | Codex | 源码、回归测试、打包 smoke 和验收文档已更新；待 Windows x64 CI 产物及真机安装/升级复测 |
-| P-0109 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / release gate / cross-platform tests | Windows CI 后端测试失败时仍继续打包并显示绿色，dev.6 产物不能视为完整验证通过 | 2026-07-14 | 2026-07-15 | Codex | 原生命令失败拦截与 14 项跨平台失败修复已补齐；本地完整回归通过，Windows x64 CI 仍待新提交验证 |
+| P-0109 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / release gate / cross-platform tests | Windows CI 后端测试失败时仍继续打包并显示绿色，dev.6 产物不能视为完整验证通过 | 2026-07-14 | 2026-07-15 | Codex | dev.8 Windows CI 已通过 157 项前端、257 项后端（13 skipped）、PyInstaller/EXE smoke/Inno Setup 并上传产物；目标机浏览器复测待补 |
 | P-0110 | RESOLVED_BROWSER_VERIFIED | P0 | results/export / AFAS interactive review | 低高温拟合区间和最大斜率切线只能手输/自动计算，不能在图中拖动并实时更新 AS/AF | 2026-07-14 | 2026-07-14 | Codex | 图上温区平移/缩放、切线平移/改斜率、后端实时交点、松手保存及默认窗口 21 已通过 Golden A/C Chrome 复测 |
 | P-0111 | RESOLVED_BROWSER_VERIFIED | P1 | results/export / AFAS automatic restore | 人工调整温区和最大斜率切线后缺少一键恢复自动计算 | 2026-07-14 | 2026-07-14 | Codex | 清除全部人工覆盖、后端正式重算、刷新持久化及 Golden C Chrome 复测已通过 |
 | P-0113 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / packaged launcher / production policy | 打包启动器参数可能被遗留环境变量覆盖，且无控制台 EXE 仍创建 stderr 日志处理器 | 2026-07-15 | 2026-07-15 | Codex | CLI 运行来源、产品模式和配置路径改为权威覆盖；windowed EXE 无 stderr 时仅写 UTF-8 文件日志，待 Windows 新包复测 |
-| P-0114 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / frontend tests | 前端测试直接执行 Unix `node_modules/.bin/tsc`，Windows Runner 全部模块编译辅助流程报 ENOENT | 2026-07-15 | 2026-07-15 | Codex | 改为用当前 Node 执行 TypeScript JS 入口；本地 157 项测试和生产构建通过，替代 Windows CI 待完成 |
+| P-0114 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / frontend tests | 前端测试直接执行 Unix `node_modules/.bin/tsc`，Windows Runner 全部模块编译辅助流程报 ENOENT | 2026-07-15 | 2026-07-15 | Codex | 改为用当前 Node 执行 TypeScript JS 入口；dev.8 Windows CI 的 157 项前端测试与生产构建通过，目标机浏览器复测待补 |
 
 ---
 
@@ -10530,9 +10530,9 @@ bash -n scripts/g3_fast_start.sh: PASS.
 - Page: GitHub Actions release gate, packaged startup, device setup, Operator
 - Steps: push/commit current patch; run Windows release; confirm backend tests pass and a deliberately/non-deliberately failing native step prevents artifact upload; install generated Setup and execute packaged browser flow.
 - Expected: Windows test suite has no cross-platform failures; only a fully green build uploads artifacts; packaged app starts normally.
-- Actual: pending because current changes are not committed/pushed and macOS cannot build a Windows PyInstaller/Inno Setup artifact.
-- Result: pending
-- Evidence: current root-cause source is [GitHub Actions run 29329785854](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29329785854); replacement artifact/log pending.
+- Actual: Windows release run `29397194439` 通过：前端 157 passed、后端 257 passed / 13 skipped、PyInstaller 成功、打包 EXE 的 health/生产无离线素材/20 FPS profile smoke 成功、Inno Setup 成功并上传 dev.8 artifact。目标 Win11 的真实硬件浏览器流程尚未执行。
+- Result: PARTIAL PASS；Windows CI/打包门禁已验证，真实相机 + LU92XX 浏览器验收待补。
+- Evidence: [原失败 run 29329785854](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29329785854); [成功 Windows release run 29397194439](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29397194439); artifact `YYT1771-G3-Windows-x64-0.1.0-dev.8`; installer SHA-256 `214445B96B3C0D20E88D319E7E5741C786B811708724E67598713FCDF7CA4FF6`.
 
 #### Final status
 
@@ -10908,7 +10908,7 @@ Windows CI failure evidence: GitHub Actions run 29396041406
 Local frontend tests: PASS, 157 passed
 Local frontend production build: PASS
 git diff --check: PASS
-Replacement Windows CI: pending
+Replacement Windows CI: PASS, run 29397194439; frontend 157 passed, backend 257 passed / 13 skipped; PyInstaller, packaged EXE smoke, Inno Setup and artifact upload passed
 ```
 
 #### Browser retest log
@@ -10922,9 +10922,9 @@ Replacement Windows CI: pending
 - Page: packaged startup / Device setup / Operator
 - Steps: build with corrected cross-platform test compiler invocation; install generated Setup; start packaged application.
 - Expected: all frontend tests pass on Windows, build continues through packaged EXE smoke and artifact upload.
-- Actual: pending replacement run.
-- Result: pending
-- Evidence: [failed Windows run 29396041406](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29396041406)
+- Actual: replacement Windows run `29397194439` passed all 157 frontend tests and the production build, then continued through 257 passed / 13 skipped backend tests, PyInstaller, packaged EXE smoke, Inno Setup and artifact upload.
+- Result: PARTIAL PASS；Windows CI 编译器调用已验证，目标机安装后的真实浏览器/硬件流程待补。
+- Evidence: [failed Windows run 29396041406](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29396041406); [successful replacement run 29397194439](https://github.com/lulf87/yyt1771-g3-af-workstation/actions/runs/29397194439); artifact `YYT1771-G3-Windows-x64-0.1.0-dev.8`.
 
 #### Final status
 
