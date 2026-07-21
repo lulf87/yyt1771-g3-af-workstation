@@ -253,7 +253,7 @@ class FakeApiCameraSource:
         self.closed = True
 
 
-def test_camera_exposure_read_selected_camera_merges_non_empty_identity(monkeypatch) -> None:  # noqa: ANN001
+def test_camera_exposure_read_selected_camera_uses_authoritative_partial_identity(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig
 
@@ -274,6 +274,7 @@ def test_camera_exposure_read_selected_camera_merges_non_empty_identity(monkeypa
                 model="saved-model",
                 serial_number="saved-serial",
                 ip="192.168.1.20",
+                allowed_models=["saved-model"],
                 pixel_format="mono8",
                 exposure_us=23456.0,
                 target_frame_rate_hz=7.0,
@@ -288,10 +289,10 @@ def test_camera_exposure_read_selected_camera_merges_non_empty_identity(monkeypa
                 "camera": {
                     "backend": "hik_gige_mvs",
                     "transport": "",
-                    "model": "selected-model",
+                    "model": "",
                     "serial_number": "selected-serial",
                     "ip": "",
-                    "user_defined_name": "device-setup-selection",
+                    "user_defined_name": "",
                 }
             },
         )
@@ -311,10 +312,12 @@ def test_camera_exposure_read_selected_camera_merges_non_empty_identity(monkeypa
         "lock_reason": "",
     }
     assert len(sources) == 1
-    assert sources[0].profile["model"] == "selected-model"
+    assert sources[0].profile["model"] == ""
     assert sources[0].profile["serial_number"] == "selected-serial"
-    assert sources[0].profile["ip"] == "192.168.1.20"
-    assert sources[0].profile["transport"] == "gige_vision"
+    assert sources[0].profile["ip"] == ""
+    assert sources[0].profile["user_defined_name"] == ""
+    assert sources[0].profile["allowed_models"] == []
+    assert sources[0].profile["transport"] == ""
     assert sources[0].profile["pixel_format"] == "mono8"
     assert sources[0].profile["target_frame_rate_hz"] == 20.0
 
@@ -349,7 +352,77 @@ def test_camera_exposure_read_without_camera_uses_saved_binding(monkeypatch) -> 
     assert response.status_code == 200
     assert response.json()["actual_us"] == 34567.0
     assert len(sources) == 1
-    assert sources[0].profile == saved_camera.to_profile()
+    assert sources[0].profile == {
+        **saved_camera.to_profile(),
+        "target_frame_rate_hz": 20.0,
+    }
+
+
+def test_camera_exposure_selected_camera_requires_serial_or_ip_without_opening_source(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    api_main._reset_preview_camera_source()
+    sources: list[FakeApiCameraSource] = []
+
+    class CountingSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            sources.append(self)
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingSource)
+    response = TestClient(api_main.app).post(
+        "/api/camera/exposure/read",
+        json={
+            "camera": {
+                "model": "MV-CU060-10GM",
+                "serial_number": "",
+                "ip": "",
+            }
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["stage"] == "validate"
+    assert sources == []
+
+
+def test_camera_exposure_saved_low_fps_profile_reuses_preview_source_across_read_update_preview(
+    monkeypatch,
+    tmp_path,
+) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    hardware_path = tmp_path / "hardware.yaml"
+    hardware_path.write_text(
+        "camera:\n  target_frame_rate_hz: 8.0\n  exposure_us: 10000.0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(hardware_path))
+    api_main._reset_preview_camera_source()
+    sources: list[FakeApiCameraSource] = []
+
+    class CountingSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            sources.append(self)
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingSource)
+    client = TestClient(api_main.app)
+
+    try:
+        responses = [
+            client.get("/api/camera/preview"),
+            client.post("/api/camera/exposure/read", json={}),
+            client.put("/api/camera/exposure", json={"exposure_us": 12345.0}),
+            client.get("/api/camera/preview"),
+        ]
+    finally:
+        api_main._reset_preview_camera_source()
+
+    assert [response.status_code for response in responses] == [200, 200, 200, 200]
+    assert len(sources) == 1
+    assert sources[0].profile["target_frame_rate_hz"] == 20.0
+    assert sources[0].profile["exposure_us"] == 12345.0
 
 
 def test_camera_exposure_api_reuses_preview_source_and_persists_actual(monkeypatch, tmp_path) -> None:  # noqa: ANN001
@@ -1220,6 +1293,169 @@ def test_temperature_serial_ports_endpoint_includes_configured_port(monkeypatch)
     assert [port["device"] for port in response.json()["ports"]] == ["COM5", "/dev/ttys000"]
 
 
+def test_real_camera_run_resolves_run_store_before_opening_hardware(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    sources: list[FakeApiCameraSource] = []
+    controllers: list[FakeApiTemperatureController] = []
+
+    class CountingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            sources.append(self)
+
+    def build_controller(config):  # noqa: ANN001, ANN202, ARG001
+        controller = FakeApiTemperatureController()
+        controllers.append(controller)
+        return controller
+
+    def fail_run_store():  # noqa: ANN202
+        raise RuntimeError("run store initialization failed")
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", build_controller)
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+    monkeypatch.setattr(api_main, "_run_store", fail_run_store)
+
+    response = TestClient(api_main.app, raise_server_exceptions=False).post(
+        "/api/real-camera-runs",
+        json={
+            "max_frames": 1,
+            "measurement_definition": _operator_measurement_payload("run-store-before-hardware"),
+        },
+    )
+
+    assert response.status_code == 500
+    assert sources == []
+    assert controllers == []
+
+
+def test_real_camera_run_closes_unhanded_controller_when_camera_open_fails(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    sources = []
+    controllers = []
+
+    class UnavailableCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            self.close_count = 0
+            sources.append(self)
+
+        def read_exposure_capability(self) -> CameraExposureCapability:
+            raise CameraUnavailableError("camera exposure read failed")
+
+        def close(self) -> None:
+            self.close_count += 1
+            super().close()
+
+    class CountingController(FakeApiTemperatureController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_count = 0
+
+        def close(self) -> None:
+            self.close_count += 1
+            super().close()
+
+    def build_controller(config):  # noqa: ANN001, ANN202, ARG001
+        controller = CountingController()
+        controllers.append(controller)
+        return controller
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", UnavailableCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", build_controller)
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+
+    response = TestClient(api_main.app).post(
+        "/api/real-camera-runs",
+        json={
+            "max_frames": 1,
+            "measurement_definition": _operator_measurement_payload("camera-open-cleanup"),
+        },
+    )
+
+    assert response.status_code == 503
+    assert len(sources) == 1
+    assert sources[0].close_count == 1
+    assert len(controllers) == 1
+    assert controllers[0].close_count == 1
+
+
+def test_real_camera_stream_releases_camera_lock_when_event_close_raises(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    run_id = "run-close-error-lock-regression"
+    iterators = []
+    operations = []
+    original_camera_operation = api_main._camera_operation
+
+    class CloseRaisingEvents:
+        def __init__(self, camera_source, temperature_controller) -> None:  # noqa: ANN001
+            self.camera_source = camera_source
+            self.temperature_controller = temperature_controller
+            self.emitted = False
+            self.close_count = 0
+
+        def __iter__(self):  # noqa: ANN204
+            return self
+
+        def __next__(self):  # noqa: ANN204
+            if self.emitted:
+                raise StopIteration
+            self.emitted = True
+            return {"event": "complete", "run_id": run_id, "state": "READY"}
+
+        def close(self) -> None:
+            self.close_count += 1
+            self.temperature_controller.close()
+            self.camera_source.close()
+            raise RuntimeError("event iterator close failed")
+
+    def build_events(run_store, *, camera_source, temperature_controller, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        events = CloseRaisingEvents(camera_source, temperature_controller)
+        iterators.append(events)
+        return events
+
+    def track_camera_operation(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        operation = original_camera_operation(*args, **kwargs)
+        operations.append(operation)
+        return operation
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", FakeApiCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
+    monkeypatch.setattr(api_main, "iter_real_camera_run_events", build_events)
+    monkeypatch.setattr(api_main, "_camera_operation", track_camera_operation)
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+    client = TestClient(api_main.app, raise_server_exceptions=False)
+
+    try:
+        stream_response = client.post(
+            "/api/real-camera-runs/stream",
+            json={
+                "max_frames": 1,
+                "measurement_definition": _operator_measurement_payload("close-error-lock"),
+            },
+        )
+        exposure_response = client.post("/api/camera/exposure/read", json={})
+    finally:
+        api_main._clear_real_camera_stream_stop(run_id)
+        if api_main._camera_operation_lock.locked():
+            operations[0].__exit__(None, None, None)
+        api_main._reset_preview_camera_source()
+
+    assert stream_response.status_code == 200
+    assert len(iterators) == 1
+    assert iterators[0].close_count == 1
+    assert exposure_response.status_code == 200
+
+
 def test_real_camera_run_endpoint_freezes_actual_exposure_and_passes_temperature_controller(
     monkeypatch,
     tmp_path,
@@ -1419,6 +1655,40 @@ def test_real_camera_run_stream_endpoint_freezes_actual_exposure_and_saves_run(
     assert preview_png.headers["content-type"] == "image/png"
     raw_frame_png = client.get(f"/api/runs/{events[-1]['run_manifest']['run_id']}/raw-frames/1.png")
     assert raw_frame_png.status_code == 404
+
+
+def test_operator_real_camera_stream_snapshots_actual_exposure_in_v2_run_meta(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+    from yyt1771_g3.storage.run_store import RunStore
+
+    api_main._reset_preview_camera_source()
+
+    class ActualExposureCameraSource(FakeApiCameraSource):
+        def read_exposure_capability(self) -> CameraExposureCapability:
+            return CameraExposureCapability(True, 100.0, 100000.0, 1.0, 50000.0, 43212.0)
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", ActualExposureCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+
+    response = TestClient(api_main.app).post(
+        "/api/real-camera-runs/stream",
+        json={
+            "operator_mode": True,
+            "max_frames": 1,
+            "target_fps": 10.0,
+            "camera_profile": {"pixel_format": "mono8", "exposure_us": 50000.0},
+            "measurement_definition": _operator_measurement_payload("operator-v2-actual-exposure"),
+        },
+    )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    assert events[-1]["event"] == "complete"
+    meta = RunStore(tmp_path / "runs").read_run_meta(events[-1]["run_id"])
+    assert meta.config_snapshot["camera_profile"]["exposure_us"] == 43212.0
 
 
 def test_real_camera_run_endpoint_preserves_raw_frame_endpoint_when_enabled(monkeypatch, tmp_path) -> None:  # noqa: ANN001

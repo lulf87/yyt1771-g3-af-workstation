@@ -90,6 +90,43 @@ def run_real_camera(
     save_preview_frames: bool = True,
     preview_max_width: int = 1200,
 ) -> RealCameraRunResult:
+    try:
+        return _run_real_camera_impl(
+            run_store,
+            camera_source=camera_source,
+            temperature_controller=temperature_controller,
+            measurement=measurement,
+            max_frames=max_frames,
+            target_fps=target_fps,
+            camera_profile=camera_profile,
+            temp_sync_target_ms=temp_sync_target_ms,
+            temperature_backend=temperature_backend,
+            save_raw_frames=save_raw_frames,
+            save_preview_frames=save_preview_frames,
+            preview_max_width=preview_max_width,
+        )
+    finally:
+        try:
+            _stop_temperature_controller(temperature_controller)
+        finally:
+            camera_source.close()
+
+
+def _run_real_camera_impl(
+    run_store: RunStore,
+    *,
+    camera_source: CameraSource,
+    temperature_controller: TemperatureController | None = None,
+    measurement: MeasurementDefinition,
+    max_frames: int | None = None,
+    target_fps: float | None = None,
+    camera_profile: dict[str, Any] | None = None,
+    temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
+    temperature_backend: str = "",
+    save_raw_frames: bool = False,
+    save_preview_frames: bool = True,
+    preview_max_width: int = 1200,
+) -> RealCameraRunResult:
     if len(measurement.enabled_regions) > 1:
         return _run_real_camera_multi(
             run_store,
@@ -127,39 +164,32 @@ def run_real_camera(
     detection_results: list[DetectionResult] = []
     stop_reason = "complete"
 
-    temperature_start_error = ""
-    try:
-        temperature_start_error = _prepare_temperature_controller(temperature_controller, measurement)
-        for frame_index in range(1, frame_limit + 1):
-            frame_record, temperature_record, detection, state, policy_state = _process_real_camera_frame(
-                camera_source,
-                temperature_controller,
-                measurement=measurement,
-                raw_dir=raw_dir,
-                preview_dir=preview_dir,
-                run_dir=run_dir,
-                frame_index=frame_index,
-                stability_state=state,
-                policy_state=policy_state,
-                temperature_start_error=temperature_start_error,
-                temp_sync_target_ms=temp_sync_target_ms,
-                save_raw_frames=save_raw_frames,
-                save_preview_frames=save_preview_frames,
-                preview_max_width=preview_max_width,
-            )
-            detection = temporal_stabilizer.apply(detection)
-            detection = distance_outlier_filter.apply(detection)
-            frame_records.append(frame_record)
-            temperature_records.append(temperature_record)
-            detection_results.append(detection)
-            if _target_temperature_reached(measurement, detection):
-                stop_reason = "target_temperature_reached"
-                break
-    finally:
-        try:
-            _stop_temperature_controller(temperature_controller)
-        finally:
-            camera_source.close()
+    temperature_start_error = _prepare_temperature_controller(temperature_controller, measurement)
+    for frame_index in range(1, frame_limit + 1):
+        frame_record, temperature_record, detection, state, policy_state = _process_real_camera_frame(
+            camera_source,
+            temperature_controller,
+            measurement=measurement,
+            raw_dir=raw_dir,
+            preview_dir=preview_dir,
+            run_dir=run_dir,
+            frame_index=frame_index,
+            stability_state=state,
+            policy_state=policy_state,
+            temperature_start_error=temperature_start_error,
+            temp_sync_target_ms=temp_sync_target_ms,
+            save_raw_frames=save_raw_frames,
+            save_preview_frames=save_preview_frames,
+            preview_max_width=preview_max_width,
+        )
+        detection = temporal_stabilizer.apply(detection)
+        detection = distance_outlier_filter.apply(detection)
+        frame_records.append(frame_record)
+        temperature_records.append(temperature_record)
+        detection_results.append(detection)
+        if _target_temperature_reached(measurement, detection):
+            stop_reason = "target_temperature_reached"
+            break
 
     return _save_real_camera_run_result(
         run_store,
@@ -181,6 +211,47 @@ def run_real_camera(
 
 
 def iter_real_camera_run_events(
+    run_store: RunStore,
+    *,
+    camera_source: CameraSource,
+    temperature_controller: TemperatureController | None = None,
+    measurement: MeasurementDefinition,
+    max_frames: int | None = None,
+    target_fps: float | None = None,
+    camera_profile: dict[str, Any] | None = None,
+    temp_sync_target_ms: float = REAL_CAMERA_DEFAULT_TEMP_SYNC_TARGET_MS,
+    temperature_backend: str = "",
+    save_raw_frames: bool = False,
+    save_preview_frames: bool = True,
+    preview_max_width: int = 1200,
+    stop_requested: Callable[[str], bool] | None = None,
+    compact_stream: bool = False,
+) -> Iterator[dict[str, Any]]:
+    try:
+        yield from _iter_real_camera_run_events_impl(
+            run_store,
+            camera_source=camera_source,
+            temperature_controller=temperature_controller,
+            measurement=measurement,
+            max_frames=max_frames,
+            target_fps=target_fps,
+            camera_profile=camera_profile,
+            temp_sync_target_ms=temp_sync_target_ms,
+            temperature_backend=temperature_backend,
+            save_raw_frames=save_raw_frames,
+            save_preview_frames=save_preview_frames,
+            preview_max_width=preview_max_width,
+            stop_requested=stop_requested,
+            compact_stream=compact_stream,
+        )
+    finally:
+        try:
+            _stop_temperature_controller(temperature_controller)
+        finally:
+            camera_source.close()
+
+
+def _iter_real_camera_run_events_impl(
     run_store: RunStore,
     *,
     camera_source: CameraSource,
@@ -378,30 +449,24 @@ def iter_real_camera_run_events(
             "analysis_result": saved_result.analysis.model_dump(mode="json"),
         }
     finally:
-        try:
-            if saved_result is None and frame_records:
-                _save_real_camera_run_result(
-                    run_store,
-                    run_id=run_id,
-                    measurement=measurement,
-                    frame_records=frame_records,
-                    temperature_records=temperature_records,
-                    detection_results=detection_results,
-                    max_frames=frame_limit,
-                    target_fps=target_fps,
-                    camera_profile=camera_profile,
-                    temp_sync_target_ms=temp_sync_target_ms,
-                    temperature_backend=temperature_backend,
-                    save_raw_frames=save_raw_frames,
-                    save_preview_frames=save_preview_frames,
-                    preview_max_width=preview_max_width,
-                    stop_reason=stop_reason,
-                )
-        finally:
-            try:
-                _stop_temperature_controller(temperature_controller)
-            finally:
-                camera_source.close()
+        if saved_result is None and frame_records:
+            _save_real_camera_run_result(
+                run_store,
+                run_id=run_id,
+                measurement=measurement,
+                frame_records=frame_records,
+                temperature_records=temperature_records,
+                detection_results=detection_results,
+                max_frames=frame_limit,
+                target_fps=target_fps,
+                camera_profile=camera_profile,
+                temp_sync_target_ms=temp_sync_target_ms,
+                temperature_backend=temperature_backend,
+                save_raw_frames=save_raw_frames,
+                save_preview_frames=save_preview_frames,
+                preview_max_width=preview_max_width,
+                stop_reason=stop_reason,
+            )
 
 
 def _run_real_camera_multi(
@@ -506,6 +571,7 @@ def _iter_real_camera_run_events_multi(
                 "mode": "real_camera_run",
                 "max_frames": frame_limit,
                 "target_fps": target_fps,
+                "camera_profile": camera_profile or {},
                 "save_raw_frames": save_raw_frames,
                 "save_preview_frames": save_preview_frames,
             },
@@ -754,61 +820,55 @@ def _iter_real_camera_run_events_multi(
             "analysis_result": analysis.model_dump(mode="json"),
         }
     finally:
-        try:
-            if compact_stream:
-                run_controls.release(run_id)
-                if not saved_v2 and frame_records:
-                    try:
-                        if pending_frames:
-                            with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
-                                database.append_batch(pending_frames, pending_temperatures, pending_region_results)
-                        grouped = {region.region_id: [] for region in measurement.enabled_regions}
-                        for detection in region_detection_results:
-                            grouped[detection.region_id].append(detection)
-                        region_analyses = [
-                            build_region_analysis_result(region, grouped.get(region.region_id, []))
-                            for region in measurement.enabled_regions
-                        ]
-                        summary = build_v2_analysis_summary(
-                            run_store,
-                            run_id=run_id,
-                            region_analyses=region_analyses,
-                            latest_results={key: values[-1] for key, values in grouped.items() if values},
-                        )
-                        run_store.write_analysis_summary(summary)
-                        update_v2_run_state(
-                            run_store, run_id, state=RunStateValue.READY, stage=RunStage.READY,
-                            processed_frames=len(frame_records), stop_reason="stream_closed",
-                        )
-                    except Exception as exc:
-                        update_v2_run_state(
-                            run_store, run_id, state=RunStateValue.ERROR, stage=RunStage.ERROR,
-                            processed_frames=len(frame_records), stop_reason="stream_closed", error=str(exc),
-                        )
-            elif saved_result is None and frame_records:
-                _save_real_camera_run_result(
-                    run_store,
-                    run_id=run_id,
-                    measurement=measurement,
-                    frame_records=frame_records,
-                    temperature_records=temperature_records,
-                    detection_results=detection_results,
-                    region_detection_results=region_detection_results,
-                    max_frames=frame_limit,
-                    target_fps=target_fps,
-                    camera_profile=camera_profile,
-                    temp_sync_target_ms=temp_sync_target_ms,
-                    temperature_backend=temperature_backend,
-                    save_raw_frames=save_raw_frames,
-                    save_preview_frames=save_preview_frames,
-                    preview_max_width=preview_max_width,
-                    stop_reason=stop_reason,
-                )
-        finally:
-            try:
-                _stop_temperature_controller(temperature_controller)
-            finally:
-                camera_source.close()
+        if compact_stream:
+            run_controls.release(run_id)
+            if not saved_v2 and frame_records:
+                try:
+                    if pending_frames:
+                        with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
+                            database.append_batch(pending_frames, pending_temperatures, pending_region_results)
+                    grouped = {region.region_id: [] for region in measurement.enabled_regions}
+                    for detection in region_detection_results:
+                        grouped[detection.region_id].append(detection)
+                    region_analyses = [
+                        build_region_analysis_result(region, grouped.get(region.region_id, []))
+                        for region in measurement.enabled_regions
+                    ]
+                    summary = build_v2_analysis_summary(
+                        run_store,
+                        run_id=run_id,
+                        region_analyses=region_analyses,
+                        latest_results={key: values[-1] for key, values in grouped.items() if values},
+                    )
+                    run_store.write_analysis_summary(summary)
+                    update_v2_run_state(
+                        run_store, run_id, state=RunStateValue.READY, stage=RunStage.READY,
+                        processed_frames=len(frame_records), stop_reason="stream_closed",
+                    )
+                except Exception as exc:
+                    update_v2_run_state(
+                        run_store, run_id, state=RunStateValue.ERROR, stage=RunStage.ERROR,
+                        processed_frames=len(frame_records), stop_reason="stream_closed", error=str(exc),
+                    )
+        elif saved_result is None and frame_records:
+            _save_real_camera_run_result(
+                run_store,
+                run_id=run_id,
+                measurement=measurement,
+                frame_records=frame_records,
+                temperature_records=temperature_records,
+                detection_results=detection_results,
+                region_detection_results=region_detection_results,
+                max_frames=frame_limit,
+                target_fps=target_fps,
+                camera_profile=camera_profile,
+                temp_sync_target_ms=temp_sync_target_ms,
+                temperature_backend=temperature_backend,
+                save_raw_frames=save_raw_frames,
+                save_preview_frames=save_preview_frames,
+                preview_max_width=preview_max_width,
+                stop_reason=stop_reason,
+            )
 
 
 def _real_region_event_payloads(

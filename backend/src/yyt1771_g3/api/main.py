@@ -211,6 +211,22 @@ def _build_real_camera_source_with_actual_profile(
     return source, {**camera_profile, "exposure_us": capability.actual_us}
 
 
+def _close_unhanded_real_camera_resources(
+    camera_source: CameraSource | None,
+    temperature_controller: Any,
+) -> None:
+    if camera_source is not None:
+        try:
+            camera_source.close()
+        except Exception:
+            logger.exception("Failed to close an unhanded real-camera source")
+    if temperature_controller is not None:
+        try:
+            temperature_controller.close()
+        except Exception:
+            logger.exception("Failed to close an unhanded temperature controller")
+
+
 def _register_real_camera_stream_stop(run_id: str) -> None:
     with _real_camera_stream_stop_lock:
         _real_camera_stream_stop_events.setdefault(run_id, threading.Event())
@@ -496,13 +512,30 @@ def _camera_exposure_payload(
 def _camera_profile_for_exposure_request(
     camera: HardwareCameraBindingRequest | None,
 ) -> dict[str, Any]:
-    profile = _hardware_config().camera.to_profile()
+    profile = {
+        **_hardware_config().camera.to_profile(),
+        "target_frame_rate_hz": SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
+    }
     if camera is None:
         return profile
     identity = camera.model_dump()
+    if not str(identity["serial_number"]).strip() and not str(identity["ip"]).strip():
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Selected camera requires serial_number or ip.",
+                "stage": "validate",
+                "details": {},
+            },
+        )
     return {
         **profile,
-        **{key: value for key, value in identity.items() if value not in (None, "")},
+        "model": "",
+        "serial_number": "",
+        "ip": "",
+        "user_defined_name": "",
+        "allowed_models": [],
+        **identity,
         "target_frame_rate_hz": SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
     }
 
@@ -1376,6 +1409,9 @@ def get_temperature_status(port: str | None = None) -> dict[str, Any]:
 @app.post("/api/real-camera-runs")
 def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
     _assert_runtime_source("real_hardware")
+    camera_source: CameraSource | None = None
+    temperature_controller = None
+    resources_handed_off = False
     try:
         config = _hardware_config()
         camera_profile = {**config.camera.to_profile(), **(request.camera_profile or {})}
@@ -1384,16 +1420,22 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
             request.measurement_definition.detector_config.temperature_serial_port,
         )
         _assert_operator_real_camera_available(request, run_config, camera_profile=camera_profile)
+        run_store = _run_store()
+        measurement = _measurement_with_source(
+            request.measurement_definition,
+            MeasurementSource.REAL_CAMERA,
+        )
         with _camera_operation("real_camera_run", timeout=5.0):
             with _camera_preview_lock:
                 _reset_preview_camera_source()
-            camera_source, actual_camera_profile = _build_real_camera_source_with_actual_profile(camera_profile)
             temperature_controller = build_temperature_controller(run_config)
+            camera_source, actual_camera_profile = _build_real_camera_source_with_actual_profile(camera_profile)
+            resources_handed_off = True
             result = run_real_camera(
-                _run_store(),
+                run_store,
                 camera_source=camera_source,
                 temperature_controller=temperature_controller,
-                measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
+                measurement=measurement,
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
                 camera_profile=actual_camera_profile,
@@ -1412,6 +1454,9 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
                 "details": exc.details,
             },
         ) from exc
+    finally:
+        if not resources_handed_off:
+            _close_unhanded_real_camera_resources(camera_source, temperature_controller)
     return {
         "run_manifest": result.manifest.model_dump(mode="json"),
         "analysis_result": result.analysis.model_dump(mode="json"),
@@ -1428,22 +1473,30 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
         request.measurement_definition.detector_config.temperature_serial_port,
     )
     _assert_operator_real_camera_available(request, run_config, camera_profile=camera_profile)
+    run_store = _run_store()
+    measurement = _measurement_with_source(
+        request.measurement_definition,
+        MeasurementSource.REAL_CAMERA,
+    )
     operation = _camera_operation("real_camera_run_stream", timeout=5.0)
     operation.__enter__()
 
     def event_lines():
         events = None
+        camera_source: CameraSource | None = None
+        temperature_controller = None
+        resources_handed_off = False
         active_run_id: str | None = None
         try:
             with _camera_preview_lock:
                 _reset_preview_camera_source()
-            camera_source, actual_camera_profile = _build_real_camera_source_with_actual_profile(camera_profile)
             temperature_controller = build_temperature_controller(run_config)
+            camera_source, actual_camera_profile = _build_real_camera_source_with_actual_profile(camera_profile)
             events = iter_real_camera_run_events(
-                _run_store(),
+                run_store,
                 camera_source=camera_source,
                 temperature_controller=temperature_controller,
-                measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
+                measurement=measurement,
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
                 camera_profile=actual_camera_profile,
@@ -1455,6 +1508,7 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
                 stop_requested=_real_camera_stream_stop_requested,
                 compact_stream=request.operator_mode,
             )
+            resources_handed_off = True
             for event in events:
                 event_run_id = _stream_event_run_id(event)
                 if event_run_id is not None and active_run_id is None:
@@ -1474,12 +1528,21 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
         except Exception as exc:
             yield json.dumps({"event": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
         finally:
-            close = getattr(events, "close", None)
-            if callable(close):
-                close()
-            if active_run_id is not None:
-                _clear_real_camera_stream_stop(active_run_id)
-            operation.__exit__(None, None, None)
+            try:
+                close = getattr(events, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        logger.exception("Failed to close real-camera run event iterator")
+                if not resources_handed_off:
+                    _close_unhanded_real_camera_resources(camera_source, temperature_controller)
+            finally:
+                try:
+                    if active_run_id is not None:
+                        _clear_real_camera_stream_stop(active_run_id)
+                finally:
+                    operation.__exit__(None, None, None)
 
     return StreamingResponse(event_lines(), media_type="application/x-ndjson")
 

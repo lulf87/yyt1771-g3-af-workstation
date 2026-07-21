@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from yyt1771_g3.camera.base import CameraFrame
 from yyt1771_g3.core.enums import DetectionStatus, DetectorType, ObjectClass, TemperatureSyncStatus, WidthMode
@@ -77,6 +78,31 @@ class FakeTemperatureController:
 
     def close(self) -> None:
         self.closed = True
+
+
+class CountingCameraSource(FakeCameraSource):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
+        super().close()
+
+
+class CountingTemperatureController(FakeTemperatureController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stop_count = 0
+        self.close_count = 0
+
+    def stop_output(self) -> None:
+        self.stop_count += 1
+        super().stop_output()
+
+    def close(self) -> None:
+        self.close_count += 1
+        super().close()
 
 
 class OffsetTemperatureController(FakeTemperatureController):
@@ -304,6 +330,116 @@ def test_operator_real_camera_stream_uses_compact_v2_completion(tmp_path: Path) 
     assert run_store.read_analysis_summary(complete["run_id"]).counts["region_results"] == 3
     assert not run_store.run_manifest_path(complete["run_id"]).exists()
     assert not run_store.analysis_result_path(complete["run_id"]).exists()
+
+
+def test_real_camera_run_closes_resources_once_when_initialization_fails(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    run_store = RunStore(tmp_path / "runs")
+    camera = CountingCameraSource()
+    temperature = CountingTemperatureController()
+
+    def fail_run_dir(run_id: str) -> Path:  # noqa: ARG001
+        raise RuntimeError("run directory initialization failed")
+
+    monkeypatch.setattr(run_store, "run_dir", fail_run_dir)
+
+    with pytest.raises(RuntimeError, match="run directory initialization failed"):
+        run_real_camera(
+            run_store,
+            camera_source=camera,
+            temperature_controller=temperature,
+            measurement=_real_camera_measurement(max_frames=1),
+            max_frames=1,
+        )
+
+    assert camera.close_count == 1
+    assert temperature.stop_count == 1
+    assert temperature.close_count == 1
+
+
+def test_real_camera_stream_closes_resources_once_when_initialization_fails(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    run_store = RunStore(tmp_path / "runs")
+    camera = CountingCameraSource()
+    temperature = CountingTemperatureController()
+
+    def fail_run_dir(run_id: str) -> Path:  # noqa: ARG001
+        raise RuntimeError("stream directory initialization failed")
+
+    monkeypatch.setattr(run_store, "run_dir", fail_run_dir)
+    events = iter_real_camera_run_events(
+        run_store,
+        camera_source=camera,
+        temperature_controller=temperature,
+        measurement=_real_camera_measurement(max_frames=1),
+        max_frames=1,
+    )
+
+    with pytest.raises(RuntimeError, match="stream directory initialization failed"):
+        next(events)
+
+    assert camera.close_count == 1
+    assert temperature.stop_count == 1
+    assert temperature.close_count == 1
+
+
+def test_operator_real_camera_stream_closes_resources_once_when_v2_initialization_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    run_store = RunStore(tmp_path / "runs")
+    camera = CountingCameraSource()
+    temperature = CountingTemperatureController()
+
+    def fail_initialize_v2_run(*args, **kwargs) -> None:  # noqa: ANN002, ANN003, ARG001
+        raise RuntimeError("compact v2 initialization failed")
+
+    monkeypatch.setattr(real_service, "initialize_v2_run", fail_initialize_v2_run)
+    events = iter_real_camera_run_events(
+        run_store,
+        camera_source=camera,
+        temperature_controller=temperature,
+        measurement=_real_camera_measurement(max_frames=1),
+        max_frames=1,
+        compact_stream=True,
+    )
+
+    with pytest.raises(RuntimeError, match="compact v2 initialization failed"):
+        next(events)
+
+    assert camera.close_count == 1
+    assert temperature.stop_count == 1
+    assert temperature.close_count == 1
+
+
+def test_real_camera_public_entry_points_close_resources_exactly_once_on_success(tmp_path: Path) -> None:
+    run_store = RunStore(tmp_path / "runs")
+    sync_camera = CountingCameraSource()
+    sync_temperature = CountingTemperatureController()
+    stream_camera = CountingCameraSource()
+    stream_temperature = CountingTemperatureController()
+
+    run_real_camera(
+        run_store,
+        camera_source=sync_camera,
+        temperature_controller=sync_temperature,
+        measurement=_real_camera_measurement(max_frames=1),
+        max_frames=1,
+    )
+    list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=stream_camera,
+            temperature_controller=stream_temperature,
+            measurement=_multi_region_real_camera_measurement(max_frames=1),
+            max_frames=1,
+        )
+    )
+
+    assert sync_camera.close_count == 1
+    assert sync_temperature.stop_count == 1
+    assert sync_temperature.close_count == 1
+    assert stream_camera.close_count == 1
+    assert stream_temperature.stop_count == 1
+    assert stream_temperature.close_count == 1
 
 
 def test_real_camera_run_defaults_to_preview_without_saving_raw_frames(tmp_path: Path) -> None:
