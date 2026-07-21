@@ -668,6 +668,56 @@ def test_camera_exposure_update_preserves_rollback_failure_details_and_logs_crit
     )
 
 
+def test_camera_exposure_update_logs_critical_when_apply_error_rollback_fails(
+    monkeypatch,
+    tmp_path,
+    caplog,
+) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(tmp_path / "hardware.yaml"))
+    api_main._reset_preview_camera_source()
+    persisted: list[float] = []
+
+    class MutatingApplyFailingSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            self.set_calls = 0
+
+        def set_exposure_us(self, value: float) -> float:
+            self.set_calls += 1
+            if self.set_calls == 1:
+                self.profile["exposure_us"] = float(value)
+                raise RuntimeError("apply readback failed")
+            raise RuntimeError("rollback hardware offline")
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", MutatingApplyFailingSource)
+    monkeypatch.setattr(api_main, "save_camera_exposure", persisted.append)
+    caplog.set_level(logging.CRITICAL, logger=api_main.logger.name)
+
+    try:
+        response = TestClient(api_main.app).put("/api/camera/exposure", json={"exposure_us": 12000.0})
+    finally:
+        api_main._reset_preview_camera_source()
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "message": "apply readback failed",
+        "stage": "apply",
+        "details": {
+            "requested_us": 12000.0,
+            "rollback_expected_us": 10000.0,
+            "rollback_status": "failed",
+            "rollback_error": "rollback hardware offline",
+        },
+    }
+    assert persisted == []
+    assert any(
+        record.levelno == logging.CRITICAL and "after apply error" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
 def test_real_camera_actual_exposure_snapshot_closes_source_when_readback_is_unsupported(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
 

@@ -14,12 +14,14 @@ class FakeExposureSource:
         applied_actual: float | None = None,
         rollback_actual: float | None = None,
         rollback_fails: bool = False,
+        apply_error_after_mutation: Exception | None = None,
         capability_reads: list[CameraExposureCapability | Exception] | None = None,
     ) -> None:
         self.actual = actual
         self.applied_actual = applied_actual
         self.rollback_actual = rollback_actual
         self.rollback_fails = rollback_fails
+        self.apply_error_after_mutation = apply_error_after_mutation
         self.capability_reads = list(capability_reads or [])
         self.calls: list[float] = []
 
@@ -37,6 +39,8 @@ class FakeExposureSource:
             raise RuntimeError("rollback rejected")
         if len(self.calls) == 1:
             self.actual = value if self.applied_actual is None else self.applied_actual
+            if self.apply_error_after_mutation is not None:
+                raise self.apply_error_after_mutation
         else:
             self.actual = value if self.rollback_actual is None else self.rollback_actual
         return self.actual
@@ -202,3 +206,50 @@ def test_apply_camera_exposure_reports_failed_rollback() -> None:
     assert exc_info.value.details["rollback_status"] == "failed"
     assert exc_info.value.details["rollback_expected_us"] == 10000.0
     assert "rollback rejected" in exc_info.value.details["rollback_error"]
+
+
+def test_apply_camera_exposure_rolls_back_when_apply_mutates_then_raises() -> None:
+    saved: list[float] = []
+    source = FakeExposureSource(
+        applied_actual=12348.0,
+        rollback_actual=10000.0000005,
+        apply_error_after_mutation=RuntimeError("apply readback failed"),
+    )
+
+    with pytest.raises(CameraControlError) as exc_info:
+        apply_camera_exposure(source, 12345.0, persist=saved.append)
+
+    assert exc_info.value.stage == "apply"
+    assert "apply readback failed" in str(exc_info.value)
+    assert source.calls == [12345.0, 10000.0]
+    assert source.actual == 10000.0000005
+    assert saved == []
+    assert exc_info.value.details == {
+        "requested_us": 12345.0,
+        "rollback_expected_us": 10000.0,
+        "rollback_actual_us": 10000.0000005,
+        "rollback_status": "restored",
+    }
+
+
+def test_apply_camera_exposure_reports_failed_rollback_after_apply_error() -> None:
+    saved: list[float] = []
+    source = FakeExposureSource(
+        applied_actual=12348.0,
+        rollback_fails=True,
+        apply_error_after_mutation=RuntimeError("apply readback failed"),
+    )
+
+    with pytest.raises(CameraControlError) as exc_info:
+        apply_camera_exposure(source, 12345.0, persist=saved.append)
+
+    assert exc_info.value.stage == "apply"
+    assert source.calls == [12345.0, 10000.0]
+    assert source.actual == 12348.0
+    assert saved == []
+    assert exc_info.value.details == {
+        "requested_us": 12345.0,
+        "rollback_expected_us": 10000.0,
+        "rollback_status": "failed",
+        "rollback_error": "rollback rejected",
+    }
