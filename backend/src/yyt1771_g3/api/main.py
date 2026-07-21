@@ -314,6 +314,32 @@ def _camera_operation(purpose: str, *, blocking: bool = True, timeout: float | N
         _camera_operation_lock.release()
 
 
+class _CameraOperationLease:
+    def __init__(self, operation: Any) -> None:
+        self._operation = operation
+        self._close_lock = threading.Lock()
+        self._closed = False
+
+    def close(self) -> None:
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._operation.__exit__(None, None, None)
+
+
+class _CameraOperationStreamingResponse(StreamingResponse):
+    def __init__(self, content: Any, *, operation_lease: _CameraOperationLease, media_type: str) -> None:
+        self._operation_lease = operation_lease
+        super().__init__(content, media_type=media_type)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._operation_lease.close()
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -1480,6 +1506,7 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
     )
     operation = _camera_operation("real_camera_run_stream", timeout=5.0)
     operation.__enter__()
+    operation_lease = _CameraOperationLease(operation)
 
     def event_lines():
         events = None
@@ -1542,9 +1569,17 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
                     if active_run_id is not None:
                         _clear_real_camera_stream_stop(active_run_id)
                 finally:
-                    operation.__exit__(None, None, None)
+                    operation_lease.close()
 
-    return StreamingResponse(event_lines(), media_type="application/x-ndjson")
+    try:
+        return _CameraOperationStreamingResponse(
+            event_lines(),
+            operation_lease=operation_lease,
+            media_type="application/x-ndjson",
+        )
+    except BaseException:
+        operation_lease.close()
+        raise
 
 
 @app.post("/api/real-camera-runs/{run_id}/stop")

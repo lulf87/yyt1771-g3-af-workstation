@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -7,6 +8,7 @@ import threading
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -251,6 +253,34 @@ class FakeApiCameraSource:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _TrackedCameraOperation:
+    def __init__(self, operation) -> None:  # noqa: ANN001
+        self.operation = operation
+        self.exit_count = 0
+        self._exit_lock = threading.Lock()
+
+    def __enter__(self):  # noqa: ANN204
+        return self.operation.__enter__()
+
+    def __exit__(self, exc_type, exc, traceback):  # noqa: ANN001, ANN204
+        with self._exit_lock:
+            self.exit_count += 1
+        return self.operation.__exit__(exc_type, exc, traceback)
+
+
+def _track_camera_operations(monkeypatch, api_main):  # noqa: ANN001, ANN202
+    original_camera_operation = api_main._camera_operation
+    operations: list[_TrackedCameraOperation] = []
+
+    def track_camera_operation(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        operation = _TrackedCameraOperation(original_camera_operation(*args, **kwargs))
+        operations.append(operation)
+        return operation
+
+    monkeypatch.setattr(api_main, "_camera_operation", track_camera_operation)
+    return operations
 
 
 def test_camera_exposure_read_selected_camera_uses_authoritative_partial_identity(monkeypatch) -> None:  # noqa: ANN001
@@ -1436,6 +1466,173 @@ def test_real_camera_run_closes_unhanded_controller_when_camera_open_fails(monke
     assert controllers[0].close_count == 1
 
 
+def test_real_camera_stream_asgi_immediate_disconnect_releases_preentered_operation(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    sources: list[FakeApiCameraSource] = []
+
+    class CountingCameraSource(FakeApiCameraSource):
+        def __init__(self, profile=None) -> None:  # noqa: ANN001
+            super().__init__(profile)
+            sources.append(self)
+
+    operations = _track_camera_operations(monkeypatch, api_main)
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CountingCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+    request = api_main.RealCameraRunRequest.model_validate(
+        {
+            "max_frames": 1,
+            "measurement_definition": _operator_measurement_payload("asgi-immediate-disconnect"),
+        }
+    )
+    response = api_main.stream_real_camera_run(request)
+    retained_body_iterator = response.body_iterator
+    retained_operation = operations[0]
+
+    assert api_main._camera_operation_lock.locked() is True
+    assert api_main._camera_operation_owner == "real_camera_run_stream"
+
+    sent_messages = []
+
+    async def invoke_with_immediate_disconnect() -> None:
+        disconnect_delivered = asyncio.Event()
+
+        async def receive():  # noqa: ANN202
+            disconnect_delivered.set()
+            return {"type": "http.disconnect"}
+
+        async def send(message) -> None:  # noqa: ANN001
+            if message["type"] == "http.response.start":
+                await disconnect_delivered.wait()
+            sent_messages.append(message)
+
+        await response(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/api/real-camera-runs/stream",
+                "raw_path": b"/api/real-camera-runs/stream",
+                "query_string": b"",
+                "headers": [],
+                "client": ("test-client", 1234),
+                "server": ("test-server", 80),
+                "root_path": "",
+            },
+            receive,
+            send,
+        )
+
+    try:
+        asyncio.run(invoke_with_immediate_disconnect())
+        locked_after_response = api_main._camera_operation_lock.locked()
+        owner_after_response = api_main._camera_operation_owner
+        try:
+            with api_main._camera_operation("post_disconnect_probe", blocking=False):
+                recovered = True
+        except api_main.HTTPException:
+            recovered = False
+    finally:
+        if api_main._camera_operation_lock.locked():
+            retained_operation.__exit__(None, None, None)
+        api_main._reset_preview_camera_source()
+
+    assert response.body_iterator is retained_body_iterator
+    assert operations[0] is retained_operation
+    assert sources == []
+    assert locked_after_response is False
+    assert owner_after_response is None
+    assert recovered is True
+
+
+def test_real_camera_stream_normal_asgi_completion_releases_operation_once(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    operations = _track_camera_operations(monkeypatch, api_main)
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", FakeApiCameraSource)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+    request = api_main.RealCameraRunRequest.model_validate(
+        {
+            "max_frames": 1,
+            "measurement_definition": _operator_measurement_payload("asgi-normal-completion"),
+        }
+    )
+    response = api_main.stream_real_camera_run(request)
+    retained_response = response
+    sent_messages = []
+
+    async def invoke_to_completion() -> None:
+        async def receive():  # noqa: ANN202
+            raise AssertionError("ASGI spec 2.4 streaming must not poll receive")
+
+        async def send(message) -> None:  # noqa: ANN001
+            sent_messages.append(message)
+
+        await response(
+            {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"}},
+            receive,
+            send,
+        )
+
+    try:
+        asyncio.run(invoke_to_completion())
+        locked_after_response = api_main._camera_operation_lock.locked()
+        owner_after_response = api_main._camera_operation_owner
+    finally:
+        if api_main._camera_operation_lock.locked():
+            operations[0].__exit__(None, None, None)
+        api_main._reset_preview_camera_source()
+
+    assert response is retained_response
+    assert sent_messages[0]["type"] == "http.response.start"
+    assert sent_messages[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+    assert locked_after_response is False
+    assert owner_after_response is None
+    assert operations[0].exit_count == 1
+
+
+def test_real_camera_stream_response_construction_failure_releases_operation(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
+
+    api_main._reset_preview_camera_source()
+    operations = _track_camera_operations(monkeypatch, api_main)
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
+
+    def fail_response_init(self, *args, **kwargs) -> None:  # noqa: ANN001, ANN002, ANN003, ARG001
+        raise RuntimeError("streaming response construction failed")
+
+    monkeypatch.setattr(api_main.StreamingResponse, "__init__", fail_response_init)
+    request = api_main.RealCameraRunRequest.model_validate(
+        {
+            "max_frames": 1,
+            "measurement_definition": _operator_measurement_payload("response-construction-failure"),
+        }
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="streaming response construction failed"):
+            api_main.stream_real_camera_run(request)
+        locked_after_failure = api_main._camera_operation_lock.locked()
+        owner_after_failure = api_main._camera_operation_owner
+    finally:
+        if api_main._camera_operation_lock.locked():
+            operations[0].__exit__(None, None, None)
+
+    assert locked_after_failure is False
+    assert owner_after_failure is None
+    assert operations[0].exit_count == 1
+
+
 def test_real_camera_stream_releases_camera_lock_when_event_close_raises(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.core.hardware_config import HardwareConfig, RunHardwareConfig
@@ -1443,8 +1640,7 @@ def test_real_camera_stream_releases_camera_lock_when_event_close_raises(monkeyp
     api_main._reset_preview_camera_source()
     run_id = "run-close-error-lock-regression"
     iterators = []
-    operations = []
-    original_camera_operation = api_main._camera_operation
+    operations = _track_camera_operations(monkeypatch, api_main)
 
     class CloseRaisingEvents:
         def __init__(self, camera_source, temperature_controller) -> None:  # noqa: ANN001
@@ -1473,15 +1669,9 @@ def test_real_camera_stream_releases_camera_lock_when_event_close_raises(monkeyp
         iterators.append(events)
         return events
 
-    def track_camera_operation(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
-        operation = original_camera_operation(*args, **kwargs)
-        operations.append(operation)
-        return operation
-
     monkeypatch.setattr(api_main, "HikMvsCameraSource", FakeApiCameraSource)
     monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeApiTemperatureController())
     monkeypatch.setattr(api_main, "iter_real_camera_run_events", build_events)
-    monkeypatch.setattr(api_main, "_camera_operation", track_camera_operation)
     monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig(run=RunHardwareConfig()))
     client = TestClient(api_main.app, raise_server_exceptions=False)
 
@@ -1504,6 +1694,7 @@ def test_real_camera_stream_releases_camera_lock_when_event_close_raises(monkeyp
     assert len(iterators) == 1
     assert iterators[0].close_count == 1
     assert exposure_response.status_code == 200
+    assert operations[0].exit_count == 1
 
 
 def test_real_camera_run_endpoint_freezes_actual_exposure_and_passes_temperature_controller(
