@@ -130,6 +130,7 @@ import {
   provenanceLabel,
   provenanceNeedsSimulatedWarning
 } from "./components/operator/SourceProvenanceBadge";
+import { ExposureControl } from "./components/camera/ExposureControl";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -2489,6 +2490,14 @@ function OperatorRunPage({
         <div className="controlStack operatorCameraStatus">
           <h3>{t("Camera")}</h3>
           {cameraPreviewError && !cameraOk && realHardwareAvailable ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
+          {!simulatedMode && realHardwareAvailable ? (
+            <ExposureControl
+              camera={null}
+              disabled={cameraPreviewRefreshStatus !== "ok"}
+              language={language}
+              runActive={operatorRunActive}
+            />
+          ) : null}
           <button
             className="primaryButton"
             disabled={probeCurrentFrameDisabled}
@@ -2902,6 +2911,7 @@ function DeviceSetupWizard({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const language = useUiLanguage();
   const t = useUiText();
   const [activeStep, setActiveStep] = useState(0);
   const [environment, setEnvironment] = useState<HardwareSetupEnvironment | null>(null);
@@ -3297,6 +3307,14 @@ function DeviceSetupWizard({
               {!cameras.length ? <div className="statusBlock">{t("No Hik cameras found")}</div> : null}
               {cameras.length > 1 && !selectedCamera ? <div className="inlineWarning">{t("Select one camera to continue")}</div> : null}
               {cameraTestResult ? <HardwareCameraTestResult result={cameraTestResult} /> : null}
+              {cameraTestResult?.status === "passed" && selectedCamera ? (
+                <ExposureControl
+                  camera={selectedCamera}
+                  disabled={testingCamera || testingBinding || savingBinding}
+                  language={language}
+                  runActive={false}
+                />
+              ) : null}
               <button className="primaryButton" disabled={!selectedCamera || testingCamera} onClick={runCameraTest} type="button">
                 <Camera size={16} aria-hidden="true" />
                 {testingCamera ? t("Testing") : t("Test camera")}

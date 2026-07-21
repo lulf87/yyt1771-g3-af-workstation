@@ -502,6 +502,90 @@ input {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.cameraExposureControl {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(132px, 0.35fr);
+  gap: 12px;
+  align-items: end;
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafb;
+}
+
+.cameraExposureHeader,
+.cameraExposureStatus {
+  grid-column: 1 / -1;
+}
+
+.cameraExposureHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cameraExposureHeader strong {
+  color: #344250;
+  font-size: 13px;
+}
+
+.cameraExposureHeader small,
+.cameraExposureStatus {
+  color: #64717f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cameraExposureControl > input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  accent-color: #0f766e;
+}
+
+.cameraExposureNumber {
+  display: grid;
+  gap: 6px;
+}
+
+.cameraExposureNumber span {
+  color: #526170;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.cameraExposureNumber input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #bcc7d1;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #243241;
+  background: #ffffff;
+}
+
+.cameraExposureStatus--applying {
+  color: #9a4f12;
+}
+
+.cameraExposureStatus--saved {
+  color: #0f766e;
+}
+
+.cameraExposureStatus--error {
+  color: #b42318;
+}
+
+.cameraExposureStatus--locked {
+  color: #75560f;
+}
+
+@media (max-width: 760px) {
+  .cameraExposureControl {
+    grid-template-columns: 1fr;
+  }
+}
+
 .operatorTemperatureReadout {
   display: grid;
   gap: 4px;

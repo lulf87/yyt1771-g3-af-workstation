@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
+const exposureControlPath = resolve(rootDir, "src/components/camera/ExposureControl.tsx");
 
 function sourceSlice(startMarker, endMarker) {
   const start = mainSource.indexOf(startMarker);
@@ -84,6 +85,59 @@ test("device setup wizard supports separate camera and temperature tests", () =>
   );
   assert.match(cameraResult, /result\.preview_image_data_url/);
   assert.match(temperatureResult, /result\.temperature_celsius/);
+});
+
+test("device setup mounts the shared exposure control after a successful camera test", () => {
+  assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
+  const component = readFileSync(exposureControlPath, "utf8");
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.equal(
+    component.match(/export function ExposureControl/g)?.length,
+    1,
+    "ExposureControl must have one shared definition"
+  );
+  assert.match(mainSource, /import \{ ExposureControl \} from "\.\/components\/camera\/ExposureControl";/);
+  assert.match(
+    wizard,
+    /cameraTestResult\?\.status === "passed"[\s\S]{0,500}<ExposureControl[\s\S]{0,300}camera=\{selectedCamera\}/
+  );
+  assert.match(
+    wizard,
+    /<ExposureControl[\s\S]{0,350}disabled=\{testingCamera \|\| testingBinding \|\| savingBinding\}[\s\S]{0,200}runActive=\{false\}/
+  );
+});
+
+test("shared exposure control validates camera bounds and restores the last confirmed value", () => {
+  assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
+  const component = readFileSync(exposureControlPath, "utf8");
+
+  assert.match(component, /createExposureCommitCoordinator/);
+  assert.match(component, /delayMs:\s*200/);
+  assert.match(component, /type="range"/);
+  assert.match(component, /min=\{capability\.minimum_us \?\? undefined\}/);
+  assert.match(component, /max=\{capability\.maximum_us \?\? undefined\}/);
+  assert.match(component, /step=\{capability\.increment_us \?\? "any"\}/);
+  assert.match(component, /coordinatorRef\.current\?\.schedule\(/);
+  assert.match(component, /onBlur=\{commitDraft\}/);
+  assert.match(component, /event\.key === "Enter"[\s\S]{0,120}commitDraft\(\)/);
+  assert.match(component, /if \(!draft\.trim\(\)\)/);
+  assert.match(component, /Number\.isFinite\(/);
+  assert.match(component, /capability\.minimum_us/);
+  assert.match(component, /capability\.maximum_us/);
+  assert.match(component, /confirmedRef\.current/);
+  assert.match(component, /onSuccess:[\s\S]{0,400}setDraft\(String\(actual/);
+  assert.match(component, /onError:[\s\S]{0,300}confirmedRef\.current/);
+  assert.match(component, /coordinator\.dispose\(\)/);
+  assert.match(component, /controller\.abort\(\)/);
+  assert.doesNotMatch(
+    component,
+    /\[[^\]]*confirmed[^\]]*\]/,
+    "confirmed exposure changes must not recreate the coordinator"
+  );
 });
 
 test("device setup wizard refresh buttons only scan the active hardware scope", () => {

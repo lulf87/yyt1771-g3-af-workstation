@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
 const stylesSource = readFileSync(resolve(rootDir, "src/styles.css"), "utf8");
+const i18nSource = readFileSync(resolve(rootDir, "src/i18n.ts"), "utf8");
+const exposureControlPath = resolve(rootDir, "src/components/camera/ExposureControl.tsx");
 const outDir = resolve(rootDir, ".tmp-operator-actual-use-test-build");
 
 after(() => {
@@ -104,6 +106,80 @@ test("operator camera area only exposes current-frame probe and hides engineerin
   ]) {
     assert.doesNotMatch(operatorPage, new RegExp(hiddenField));
   }
+});
+
+test("operator real-camera preview mounts the shared exposure control and locks it during a run", () => {
+  assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
+  const component = readFileSync(exposureControlPath, "utf8");
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(
+    operatorPage,
+    /!simulatedMode[\s\S]{0,300}<ExposureControl[\s\S]{0,250}camera=\{null\}/
+  );
+  assert.match(
+    operatorPage,
+    /<ExposureControl[\s\S]{0,350}runActive=\{operatorRunActive\}/
+  );
+  assert.match(component, /disabled=\{disabled \|\| runActive/);
+  assert.match(component, /if \(runActive\)/);
+  assert.match(
+    component,
+    /if \(runActive\) \{[\s\S]{0,120}setLoadedCapability\(null\)/,
+    "a stopped run must re-read exposure before stale capability controls can reopen"
+  );
+  assert.match(component, /readCameraExposure\(camera, controller\.signal\)/);
+  assert.match(
+    component,
+    /useEffect\([\s\S]{0,900}readCameraExposure\(camera, controller\.signal\)[\s\S]{0,900}\[cameraKey, runActive/
+  );
+});
+
+test("shared exposure control presents capability, lock, apply, save, unsupported, and error states", () => {
+  assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
+  const component = readFileSync(exposureControlPath, "utf8");
+
+  for (const copy of [
+    "Camera exposure",
+    "Camera exposure slider",
+    "Exposure (μs)",
+    "Loading exposure",
+    "Applying exposure",
+    "Applied and saved",
+    "Exposure locked during a formal run",
+    "Camera does not expose manual exposure control",
+    "Exposure update failed"
+  ]) {
+    assert.match(component, new RegExp(copy.replace(/[()]/g, "\\$&")));
+  }
+  for (const [key, translation] of [
+    ["Camera exposure", "相机曝光"],
+    ["Camera exposure slider", "相机曝光滑杆"],
+    ["Exposure (μs)", "曝光（μs）"],
+    ["Loading exposure", "正在读取曝光"],
+    ["Applying exposure", "正在应用曝光"],
+    ["Applied and saved", "已应用并保存"],
+    ["Exposure locked during a formal run", "正式测量期间曝光已锁定"],
+    ["Camera does not expose manual exposure control", "相机未提供手动曝光能力"],
+    ["Exposure update failed", "曝光应用失败"]
+  ]) {
+    assert.match(i18nSource, new RegExp(`"${key.replace(/[()]/g, "\\$&")}": "${translation}"`));
+  }
+  assert.doesNotMatch(component, /frame rate|fps|gain|auto exposure/i);
+});
+
+test("shared exposure control uses a compact responsive two-column layout", () => {
+  assert.match(
+    stylesSource,
+    /\.cameraExposureControl\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(180px, 1fr\) minmax\(132px, 0\.35fr\);/s
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*760px\)[\s\S]*\.cameraExposureControl\s*\{[^}]*grid-template-columns:\s*1fr;/
+  );
 });
 
 test("diagnostic overlays and narrow-band handle order preserve ROI dragging after probing", () => {
