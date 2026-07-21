@@ -56,72 +56,26 @@ function deferred() {
   return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
-const guardedOperationNames = [
-  "full refresh",
-  "environment refresh",
-  "SDK path save",
-  "camera scan",
-  "temperature port refresh",
-  "camera test",
-  "temperature test",
-  "binding test",
-  "configuration save"
-];
+test("an invalidated request cannot be accepted after a newer request starts", async () => {
+  const { createHardwareSetupOperationCoordinator } = await loadCoordinatorModule();
+  const coordinator = createHardwareSetupOperationCoordinator();
+  const requestR1 = deferred();
+  const requestR2 = deferred();
 
-for (const operationName of guardedOperationNames) {
-  for (const lateOutcome of ["fulfilled", "rejected"]) {
-    test(`${operationName}: closed R1 ${lateOutcome} cannot write state or unlock reopened R2`, async () => {
-      const { createHardwareSetupOperationCoordinator } = await loadCoordinatorModule();
-      const coordinator = createHardwareSetupOperationCoordinator();
-      const operationR1 = deferred();
-      const operationR2 = deferred();
-      let wizardOpen = true;
-      let operationBusy = true;
-      let appliedState = null;
-      let appliedError = null;
+  const pendingR1 = coordinator.run(() => requestR1.promise);
+  coordinator.invalidate();
+  const pendingR2 = coordinator.run(() => requestR2.promise);
 
-      function applyResult(result) {
-        if (!result.accepted || !wizardOpen) return;
-        operationBusy = false;
-        if (result.status === "fulfilled") appliedState = result.value;
-        else appliedError = result.reason;
-      }
+  requestR1.resolve({ source: "R1" });
+  assert.deepEqual(await pendingR1, { accepted: false });
 
-      const pendingR1 = coordinator.run(() => operationR1.promise);
-
-      wizardOpen = false;
-      coordinator.invalidate();
-      wizardOpen = true;
-      const pendingR2 = coordinator.run(() => operationR2.promise);
-
-      if (lateOutcome === "fulfilled") {
-        operationR1.resolve({ source: "R1", operationName });
-      } else {
-        operationR1.reject(new Error(`${operationName} R1 failed after close`));
-      }
-      const resultR1 = await pendingR1;
-      assert.deepEqual(resultR1, { accepted: false });
-      applyResult(resultR1);
-
-      assert.equal(operationBusy, true);
-      assert.equal(appliedState, null);
-      assert.equal(appliedError, null);
-
-      operationR2.resolve({ source: "R2", operationName });
-      const resultR2 = await pendingR2;
-      assert.deepEqual(resultR2, {
-        accepted: true,
-        status: "fulfilled",
-        value: { source: "R2", operationName }
-      });
-      applyResult(resultR2);
-
-      assert.equal(operationBusy, false);
-      assert.deepEqual(appliedState, { source: "R2", operationName });
-      assert.equal(appliedError, null);
-    });
-  }
-}
+  requestR2.resolve({ source: "R2" });
+  assert.deepEqual(await pendingR2, {
+    accepted: true,
+    status: "fulfilled",
+    value: { source: "R2" }
+  });
+});
 
 test("a staged operation scope becomes stale immediately after close invalidation", async () => {
   const { createHardwareSetupOperationCoordinator } = await loadCoordinatorModule();

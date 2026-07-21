@@ -118,8 +118,11 @@ test("operator real-camera preview mounts the shared exposure control and locks 
 
   assert.match(
     operatorPage,
-    /!simulatedMode[\s\S]{0,300}<ExposureControl[\s\S]{0,250}camera=\{null\}/
+    /!simulatedMode[\s\S]{0,300}<ExposureControl[\s\S]{0,250}camera=\{operatorCameraIdentity\}/
   );
+  assert.match(mainSource, /const \[hardwareProfile, setHardwareProfile\] = useState/);
+  assert.match(mainSource, /setHardwareProfile\(await getHardwareProfile\(\)\)/);
+  assert.match(mainSource, /hardwareProfileCameraIdentity\(hardwareProfile\)/);
   assert.match(
     operatorPage,
     /<ExposureControl[\s\S]{0,350}runActive=\{operatorRunActive\}/
@@ -141,10 +144,11 @@ test("operator real-camera preview mounts the shared exposure control and locks 
     /if \(runActive\) \{[\s\S]{0,120}setLoadedCapability\(null\)/,
     "a stopped run must re-read exposure before stale capability controls can reopen"
   );
-  assert.match(component, /readCameraExposure\(camera, controller\.signal\)/);
+  assert.match(component, /createCameraExposureReadSession/);
+  assert.match(component, /readCameraExposure\(identity, controller\.signal\)/);
   assert.match(
     component,
-    /useEffect\([\s\S]{0,1200}readCameraExposure\(camera, controller\.signal\)[\s\S]{0,1200}\[cameraKey, disabled, runActive/
+    /useEffect\([\s\S]{0,1800}exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,160}readCameraExposure\(identity, controller\.signal\)[\s\S]{0,1200}\[cameraKey, disabled, exposureReadSession, runActive/
   );
 });
 
@@ -155,10 +159,14 @@ test("shared exposure control reports balanced read and write busy and cancels o
   assert.match(component, /createExposureBusyTracker/);
   assert.match(component, /onBusyChange:\s*\(busy\)/);
   assert.match(component, /exposureBusyTrackerRef\.current!?\.begin\(\)/);
-  assert.match(component, /readCameraExposure\(camera, controller\.signal\)[\s\S]{0,1000}finally/);
-  assert.match(component, /let acceptResult = true;/);
-  assert.match(component, /if \(!acceptResult\) return;/);
-  assert.match(component, /return \(\) => \{[\s\S]{0,100}acceptResult = false;/);
+  assert.match(
+    component,
+    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,160}readCameraExposure\(identity, controller\.signal\)[\s\S]{0,1000}finally/
+  );
+  assert.match(
+    component,
+    /return \(\) => \{[\s\S]{0,100}exposureReadSession\.invalidate\(\)/
+  );
   assert.doesNotMatch(
     component,
     /controller\.abort\(\)/,

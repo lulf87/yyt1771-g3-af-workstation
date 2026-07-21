@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -30,6 +30,7 @@ import {
   frameImageUrl,
   getHardwareSetupEnvironment,
   getHardwareProfile,
+  hardwareProfileCameraIdentity,
   getAppRuntime,
   getOperatorSourceStatus,
   getTemperatureStatus,
@@ -66,6 +67,7 @@ import {
   type AfasPreprocessingParameters,
   type AnalysisResult,
   type AppRuntime,
+  type CameraExposureIdentity,
   type CameraPreviewResponse,
   type DetectionResult,
   type DiagnosticImages,
@@ -78,6 +80,7 @@ import {
   type HardwareCameraTestResponse,
   type HardwareBindingTestResponse,
   type HardwareCameraDevice,
+  type HardwareProfile,
   type HardwareSetupEnvironment,
   type HardwareSdkPathsSaveResponse,
   type HardwareTemperatureTestResponse,
@@ -131,7 +134,7 @@ import {
   provenanceNeedsSimulatedWarning
 } from "./components/operator/SourceProvenanceBadge";
 import { ExposureControl } from "./components/camera/ExposureControl";
-import { createHardwareSetupOperationCoordinator } from "./hardwareSetupRefreshCoordinator";
+import { createHardwareSetupSession } from "./hardwareSetupSession";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -663,6 +666,7 @@ function App() {
   const [operatorSourceStatusError, setOperatorSourceStatusError] = useState("");
   const [loadingOperatorSourceStatus, setLoadingOperatorSourceStatus] = useState(false);
   const [operatorSourceStatusLastCheckedAt, setOperatorSourceStatusLastCheckedAt] = useState<number | null>(null);
+  const [hardwareProfile, setHardwareProfile] = useState<HardwareProfile | null>(null);
   const [importedRun, setImportedRun] = useState<ImportedRunView | null>(null);
   const [frameIndex, setFrameIndex] = useState(1);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
@@ -700,6 +704,7 @@ function App() {
   const cameraPreviewModeRef = useRef<RealCameraPreviewMode>("live");
   const wasInRealCameraSetupRef = useRef(false);
   const pageForSetupEffects = pageForSetupSourceEffects(page);
+  const operatorCameraIdentity = hardwareProfileCameraIdentity(hardwareProfile);
   const operatorSourceRealHardwareAvailable = operatorSourceStatus?.real_hardware_available === true;
   const operatorTemperatureHardwareUnavailable =
     temperatureError !== null ||
@@ -716,6 +721,9 @@ function App() {
   useEffect(() => {
     void refreshAppRuntime();
     void refreshDatasets();
+    void refreshHardwareProfile().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
   }, []);
 
   useEffect(() => {
@@ -1018,7 +1026,7 @@ function App() {
   }
 
   async function refreshHardwareProfile() {
-    await getHardwareProfile();
+    setHardwareProfile(await getHardwareProfile());
   }
 
   async function refreshAppRuntime() {
@@ -1766,6 +1774,7 @@ function App() {
               selectedId={selectedId}
               operatorDataSource={operatorDataSource}
               appRuntime={appRuntime}
+              operatorCameraIdentity={operatorCameraIdentity}
               operatorSourceStatus={operatorSourceStatus}
               operatorSourceStatusError={operatorSourceStatusError}
               loadingOperatorSourceStatus={loadingOperatorSourceStatus}
@@ -1894,6 +1903,7 @@ function PageContent({
   selectedId,
   operatorDataSource,
   appRuntime,
+  operatorCameraIdentity,
   operatorSourceStatus,
   operatorSourceStatusError,
   loadingOperatorSourceStatus,
@@ -1957,6 +1967,7 @@ function PageContent({
   selectedId: string;
   operatorDataSource: OperatorDataSource;
   appRuntime: AppRuntime | null;
+  operatorCameraIdentity: CameraExposureIdentity | null;
   operatorSourceStatus: OperatorSourceStatus | null;
   operatorSourceStatusError: string;
   loadingOperatorSourceStatus: boolean;
@@ -2127,6 +2138,7 @@ function PageContent({
     return (
       <OperatorRunPage
         appRuntime={appRuntime}
+        operatorCameraIdentity={operatorCameraIdentity}
         measurement={measurement}
         onMeasurement={onMeasurement}
         onPreviewAffectingChange={(change) => scheduleRealCameraSetupRefresh(change)}
@@ -2267,6 +2279,7 @@ function PageContent({
 
 function OperatorRunPage({
   appRuntime,
+  operatorCameraIdentity,
   measurement,
   onMeasurement,
   onPreviewAffectingChange,
@@ -2306,6 +2319,7 @@ function OperatorRunPage({
   onOpenDeviceSetup
 }: {
   appRuntime: AppRuntime | null;
+  operatorCameraIdentity: CameraExposureIdentity | null;
   measurement: MeasurementDefinition;
   onMeasurement: (measurement: MeasurementDefinition) => void;
   onPreviewAffectingChange: (change: RealCameraSetupChange) => void;
@@ -2513,7 +2527,7 @@ function OperatorRunPage({
           {cameraPreviewError && !cameraOk && realHardwareAvailable ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
           {!simulatedMode && realHardwareAvailable ? (
             <ExposureControl
-              camera={null}
+              camera={operatorCameraIdentity}
               disabled={probing}
               language={language}
               onBusyChange={onExposureBusyChange}
@@ -2956,14 +2970,22 @@ function DeviceSetupWizard({
   const [savingSdkPaths, setSavingSdkPaths] = useState(false);
   const [exposureBusy, setExposureBusy] = useState(false);
   const [error, setError] = useState("");
-  const hardwareSetupOperationCoordinatorRef = useRef(
-    createHardwareSetupOperationCoordinator()
-  );
-  const wizardOpenRef = useRef(open);
   const loadingWizardRef = useRef(true);
   const selectedCameraKeyRef = useRef(selectedCameraKey);
-  wizardOpenRef.current = open;
-  selectedCameraKeyRef.current = selectedCameraKey;
+  const hardwareSetupSession = useMemo(
+    () =>
+      createHardwareSetupSession({
+        onBusyChange(owner, busy) {
+          if (owner === "loadingWizard") setWizardLoading(busy);
+          else if (owner === "testingCamera") setTestingCamera(busy);
+          else if (owner === "testingTemperature") setTestingTemperature(busy);
+          else if (owner === "testingBinding") setTestingBinding(busy);
+          else if (owner === "savingBinding") setSavingBinding(busy);
+          else if (owner === "savingSdkPaths") setSavingSdkPaths(busy);
+        }
+      }),
+    []
+  );
   const wizardHardwareOperationBusy =
     loadingWizard ||
     testingCamera ||
@@ -2978,14 +3000,8 @@ function DeviceSetupWizard({
     setLoadingWizard(loading);
   }
 
-  useEffect(() => {
-    hardwareSetupOperationCoordinatorRef.current.invalidate();
-    setTestingCamera(false);
-    setTestingTemperature(false);
-    setTestingBinding(false);
-    setSavingBinding(false);
-    setSavingSdkPaths(false);
-    setWizardLoading(true);
+  useLayoutEffect(() => {
+    hardwareSetupSession.commitOpen(open);
     if (!open) return;
     setActiveStep(0);
     setCameraTestResult(null);
@@ -3035,13 +3051,11 @@ function DeviceSetupWizard({
             : true;
 
   async function refreshWizardData() {
-    setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
-    setWizardLoading(true);
     setError("");
-    const refreshResult = await hardwareSetupOperationCoordinatorRef.current.run(
+    await hardwareSetupSession.refreshWizardData(
       async () => {
         const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
           getHardwareSetupEnvironment(),
@@ -3049,86 +3063,83 @@ function DeviceSetupWizard({
           listTemperatureSerialPorts()
         ]);
         return { environmentResult, cameraResult, portResult };
+      },
+      (refreshResult) => {
+        setCameraTestResult(null);
+        setTestResult(null);
+        setSaveResult(null);
+        setError("");
+        if (refreshResult.status === "rejected") {
+          setEnvironment(null);
+          selectedCameraKeyRef.current = "";
+          setCameras([]);
+          setSelectedCameraKey("");
+          setPorts([]);
+          setSelectedPort("");
+          setError(
+            refreshResult.reason instanceof Error
+              ? refreshResult.reason.message
+              : String(refreshResult.reason)
+          );
+          return;
+        }
+        const { environmentResult, cameraResult, portResult } = refreshResult.value;
+        if (environmentResult.status === "fulfilled") {
+          setEnvironment(environmentResult.value);
+          applyDetectedSdkPaths(environmentResult.value);
+        } else {
+          setEnvironment(null);
+          setError(environmentResult.reason instanceof Error ? environmentResult.reason.message : String(environmentResult.reason));
+        }
+        if (cameraResult.status === "fulfilled") {
+          const currentCameraKey = selectedCameraKeyRef.current;
+          const nextCameraKey =
+            currentCameraKey &&
+            cameraResult.value.some(
+              (camera) => hardwareCameraKey(camera) === currentCameraKey
+            )
+              ? currentCameraKey
+              : hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value));
+          selectedCameraKeyRef.current = nextCameraKey;
+          setCameras(cameraResult.value);
+          setSelectedCameraKey(nextCameraKey);
+        } else {
+          selectedCameraKeyRef.current = "";
+          setCameras([]);
+          setSelectedCameraKey("");
+          setError(cameraResult.reason instanceof Error ? cameraResult.reason.message : String(cameraResult.reason));
+        }
+        if (portResult.status === "fulfilled") {
+          setPorts(portResult.value);
+          setSelectedPort((current) => current || portResult.value[0]?.device || "");
+        } else {
+          setPorts([]);
+          setSelectedPort("");
+          setError(portResult.reason instanceof Error ? portResult.reason.message : String(portResult.reason));
+        }
       }
     );
-    if (!refreshResult.accepted || !wizardOpenRef.current) return;
-    setTestingCamera(false);
-    setCameraTestResult(null);
-    setTestResult(null);
-    setSaveResult(null);
-    setError("");
-    if (refreshResult.status === "rejected") {
-      setEnvironment(null);
-      selectedCameraKeyRef.current = "";
-      setCameras([]);
-      setSelectedCameraKey("");
-      setPorts([]);
-      setSelectedPort("");
-      setError(
-        refreshResult.reason instanceof Error
-          ? refreshResult.reason.message
-          : String(refreshResult.reason)
-      );
-      setWizardLoading(false);
-      return;
-    }
-    const { environmentResult, cameraResult, portResult } = refreshResult.value;
-    if (environmentResult.status === "fulfilled") {
-      setEnvironment(environmentResult.value);
-      applyDetectedSdkPaths(environmentResult.value);
-    } else {
-      setEnvironment(null);
-      setError(environmentResult.reason instanceof Error ? environmentResult.reason.message : String(environmentResult.reason));
-    }
-    if (cameraResult.status === "fulfilled") {
-      const currentCameraKey = selectedCameraKeyRef.current;
-      const nextCameraKey =
-        currentCameraKey &&
-        cameraResult.value.some(
-          (camera) => hardwareCameraKey(camera) === currentCameraKey
-        )
-          ? currentCameraKey
-          : hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value));
-      selectedCameraKeyRef.current = nextCameraKey;
-      setCameras(cameraResult.value);
-      setSelectedCameraKey(nextCameraKey);
-    } else {
-      selectedCameraKeyRef.current = "";
-      setCameras([]);
-      setSelectedCameraKey("");
-      setError(cameraResult.reason instanceof Error ? cameraResult.reason.message : String(cameraResult.reason));
-    }
-    if (portResult.status === "fulfilled") {
-      setPorts(portResult.value);
-      setSelectedPort((current) => current || portResult.value[0]?.device || "");
-    } else {
-      setPorts([]);
-      setSelectedPort("");
-      setError(portResult.reason instanceof Error ? portResult.reason.message : String(portResult.reason));
-    }
-    setWizardLoading(false);
   }
 
   async function refreshEnvironmentChecks() {
     if (exposureBusy) return;
-    setWizardLoading(true);
     setError("");
-    const environmentResult = await hardwareSetupOperationCoordinatorRef.current.run(
-      () => getHardwareSetupEnvironment()
+    await hardwareSetupSession.refreshEnvironmentChecks(
+      () => getHardwareSetupEnvironment(),
+      (environmentResult) => {
+        if (environmentResult.status === "fulfilled") {
+          setEnvironment(environmentResult.value);
+          applyDetectedSdkPaths(environmentResult.value);
+        } else {
+          setEnvironment(null);
+          setError(
+            environmentResult.reason instanceof Error
+              ? environmentResult.reason.message
+              : String(environmentResult.reason)
+          );
+        }
+      }
     );
-    if (!environmentResult.accepted || !wizardOpenRef.current) return;
-    setWizardLoading(false);
-    if (environmentResult.status === "fulfilled") {
-      setEnvironment(environmentResult.value);
-      applyDetectedSdkPaths(environmentResult.value);
-    } else {
-      setEnvironment(null);
-      setError(
-        environmentResult.reason instanceof Error
-          ? environmentResult.reason.message
-          : String(environmentResult.reason)
-      );
-    }
   }
 
   function applyDetectedSdkPaths(nextEnvironment: HardwareSetupEnvironment) {
@@ -3147,110 +3158,103 @@ function DeviceSetupWizard({
 
   async function validateAndSaveSdkPaths() {
     if (exposureBusy) return;
-    setSavingSdkPaths(true);
     setError("");
     setSdkPathResult(null);
-    const sdkPathResult = await hardwareSetupOperationCoordinatorRef.current.run(
+    await hardwareSetupSession.validateAndSaveSdkPaths(
       () =>
         saveHardwareSdkPaths({
           sdk_python_paths: [sdkPythonPath],
           sdk_library_path: sdkLibraryPath
-        })
+        }),
+      (sdkPathResult) => {
+        if (sdkPathResult.status === "fulfilled") {
+          setSdkPathResult(sdkPathResult.value);
+          setEnvironment(sdkPathResult.value.environment);
+          setSdkPythonPath(sdkPathResult.value.sdk_python_paths[0] ?? "");
+          setSdkLibraryPath(sdkPathResult.value.sdk_library_path);
+        } else {
+          setError(
+            sdkPathResult.reason instanceof Error
+              ? sdkPathResult.reason.message
+              : String(sdkPathResult.reason)
+          );
+        }
+      }
     );
-    if (!sdkPathResult.accepted || !wizardOpenRef.current) return;
-    setSavingSdkPaths(false);
-    if (sdkPathResult.status === "fulfilled") {
-      setSdkPathResult(sdkPathResult.value);
-      setEnvironment(sdkPathResult.value.environment);
-      setSdkPythonPath(sdkPathResult.value.sdk_python_paths[0] ?? "");
-      setSdkLibraryPath(sdkPathResult.value.sdk_library_path);
-    } else {
-      setError(
-        sdkPathResult.reason instanceof Error
-          ? sdkPathResult.reason.message
-          : String(sdkPathResult.reason)
-      );
-    }
   }
 
   async function scanHardwareCameras() {
     if (exposureBusy) return;
-    setTestingCamera(false);
-    setWizardLoading(true);
     setError("");
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
-    const cameraScanResult = await hardwareSetupOperationCoordinatorRef.current.run(
-      () => listHardwareCameras()
+    await hardwareSetupSession.scanHardwareCameras(
+      () => listHardwareCameras(),
+      (cameraScanResult) => {
+        if (cameraScanResult.status === "fulfilled") {
+          const nextCameras = cameraScanResult.value;
+          setCameraTestResult(null);
+          setTestResult(null);
+          setSaveResult(null);
+          setError("");
+          const currentCameraKey = selectedCameraKeyRef.current;
+          const nextCameraKey =
+            currentCameraKey &&
+            nextCameras.some(
+              (camera) => hardwareCameraKey(camera) === currentCameraKey
+            )
+              ? currentCameraKey
+              : hardwareCameraKey(selectDefaultHardwareCamera(nextCameras));
+          selectedCameraKeyRef.current = nextCameraKey;
+          setCameras(nextCameras);
+          setSelectedCameraKey(nextCameraKey);
+        } else {
+          setCameraTestResult(null);
+          setTestResult(null);
+          setSaveResult(null);
+          selectedCameraKeyRef.current = "";
+          setCameras([]);
+          setSelectedCameraKey("");
+          setError(
+            cameraScanResult.reason instanceof Error
+              ? cameraScanResult.reason.message
+              : String(cameraScanResult.reason)
+          );
+        }
+      }
     );
-    if (!cameraScanResult.accepted || !wizardOpenRef.current) return;
-    setWizardLoading(false);
-    if (cameraScanResult.status === "fulfilled") {
-      const nextCameras = cameraScanResult.value;
-      setTestingCamera(false);
-      setCameraTestResult(null);
-      setTestResult(null);
-      setSaveResult(null);
-      setError("");
-      const currentCameraKey = selectedCameraKeyRef.current;
-      const nextCameraKey =
-        currentCameraKey &&
-        nextCameras.some(
-          (camera) => hardwareCameraKey(camera) === currentCameraKey
-        )
-          ? currentCameraKey
-          : hardwareCameraKey(selectDefaultHardwareCamera(nextCameras));
-      selectedCameraKeyRef.current = nextCameraKey;
-      setCameras(nextCameras);
-      setSelectedCameraKey(nextCameraKey);
-    } else {
-      setTestingCamera(false);
-      setCameraTestResult(null);
-      setTestResult(null);
-      setSaveResult(null);
-      selectedCameraKeyRef.current = "";
-      setCameras([]);
-      setSelectedCameraKey("");
-      setError(
-        cameraScanResult.reason instanceof Error
-          ? cameraScanResult.reason.message
-          : String(cameraScanResult.reason)
-      );
-    }
   }
 
   async function refreshTemperaturePorts() {
     if (exposureBusy) return;
-    setWizardLoading(true);
     setError("");
     setTemperatureTestResult(null);
     setTestResult(null);
     setSaveResult(null);
-    const portRefreshResult = await hardwareSetupOperationCoordinatorRef.current.run(
-      () => listTemperatureSerialPorts()
+    await hardwareSetupSession.refreshTemperaturePorts(
+      () => listTemperatureSerialPorts(),
+      (portRefreshResult) => {
+        if (portRefreshResult.status === "fulfilled") {
+          setPorts(portRefreshResult.value);
+          setSelectedPort((current) => current || portRefreshResult.value[0]?.device || "");
+        } else {
+          setPorts([]);
+          setSelectedPort("");
+          setError(
+            portRefreshResult.reason instanceof Error
+              ? portRefreshResult.reason.message
+              : String(portRefreshResult.reason)
+          );
+        }
+      }
     );
-    if (!portRefreshResult.accepted || !wizardOpenRef.current) return;
-    setWizardLoading(false);
-    if (portRefreshResult.status === "fulfilled") {
-      setPorts(portRefreshResult.value);
-      setSelectedPort((current) => current || portRefreshResult.value[0]?.device || "");
-    } else {
-      setPorts([]);
-      setSelectedPort("");
-      setError(
-        portRefreshResult.reason instanceof Error
-          ? portRefreshResult.reason.message
-          : String(portRefreshResult.reason)
-      );
-    }
   }
 
   function selectHardwareCamera(cameraKey: string) {
     if (loadingWizardRef.current) return;
     if (wizardBusy) return;
-    hardwareSetupOperationCoordinatorRef.current.invalidate();
-    setTestingCamera(false);
+    hardwareSetupSession.invalidateOperations();
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
@@ -3266,28 +3270,26 @@ function DeviceSetupWizard({
       return;
     }
     const cameraKey = hardwareCameraKey(selectedCamera);
-    setTestingCamera(true);
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
     setError("");
-    const cameraTestOperationResult = await hardwareSetupOperationCoordinatorRef.current.run(
-      () => testHardwareCamera(selectedCamera)
+    await hardwareSetupSession.runCameraTest(
+      () => testHardwareCamera(selectedCamera),
+      (cameraTestOperationResult) => {
+        if (cameraKey !== selectedCameraKeyRef.current) return;
+        if (cameraTestOperationResult.status === "fulfilled") {
+          setCameraTestResult(cameraTestOperationResult.value);
+        } else {
+          setCameraTestResult(null);
+          setError(
+            cameraTestOperationResult.reason instanceof Error
+              ? cameraTestOperationResult.reason.message
+              : String(cameraTestOperationResult.reason)
+          );
+        }
+      }
     );
-    if (!cameraTestOperationResult.accepted || !wizardOpenRef.current) return;
-    if (cameraKey !== selectedCameraKeyRef.current) return;
-
-    setTestingCamera(false);
-    if (cameraTestOperationResult.status === "fulfilled") {
-      setCameraTestResult(cameraTestOperationResult.value);
-    } else {
-      setCameraTestResult(null);
-      setError(
-        cameraTestOperationResult.reason instanceof Error
-          ? cameraTestOperationResult.reason.message
-          : String(cameraTestOperationResult.reason)
-      );
-    }
   }
 
   async function runTemperatureTest() {
@@ -3296,28 +3298,27 @@ function DeviceSetupWizard({
       setError(t("Select serial port before testing"));
       return;
     }
-    setTestingTemperature(true);
     setError("");
-    const temperatureTestOperationResult = await hardwareSetupOperationCoordinatorRef.current.run(
+    await hardwareSetupSession.runTemperatureTest(
       () =>
         testHardwareTemperature({
           serial_port: selectedPort,
           baudrate: 19200,
           slave_address: 1
-        })
+        }),
+      (temperatureTestOperationResult) => {
+        if (temperatureTestOperationResult.status === "fulfilled") {
+          setTemperatureTestResult(temperatureTestOperationResult.value);
+        } else {
+          setTemperatureTestResult(null);
+          setError(
+            temperatureTestOperationResult.reason instanceof Error
+              ? temperatureTestOperationResult.reason.message
+              : String(temperatureTestOperationResult.reason)
+          );
+        }
+      }
     );
-    if (!temperatureTestOperationResult.accepted || !wizardOpenRef.current) return;
-    setTestingTemperature(false);
-    if (temperatureTestOperationResult.status === "fulfilled") {
-      setTemperatureTestResult(temperatureTestOperationResult.value);
-    } else {
-      setTemperatureTestResult(null);
-      setError(
-        temperatureTestOperationResult.reason instanceof Error
-          ? temperatureTestOperationResult.reason.message
-          : String(temperatureTestOperationResult.reason)
-      );
-    }
   }
 
   async function runBindingTest() {
@@ -3326,24 +3327,23 @@ function DeviceSetupWizard({
       setError(t("Select camera and serial port before testing"));
       return;
     }
-    setTestingBinding(true);
     setError("");
-    const bindingTestOperationResult = await hardwareSetupOperationCoordinatorRef.current.run(
-      () => testHardwareBinding(binding)
+    await hardwareSetupSession.runBindingTest(
+      () => testHardwareBinding(binding),
+      (bindingTestOperationResult) => {
+        if (bindingTestOperationResult.status === "fulfilled") {
+          setTestResult(bindingTestOperationResult.value);
+          if (bindingTestOperationResult.value.overall_status === "passed") setActiveStep(4);
+        } else {
+          setTestResult(null);
+          setError(
+            bindingTestOperationResult.reason instanceof Error
+              ? bindingTestOperationResult.reason.message
+              : String(bindingTestOperationResult.reason)
+          );
+        }
+      }
     );
-    if (!bindingTestOperationResult.accepted || !wizardOpenRef.current) return;
-    setTestingBinding(false);
-    if (bindingTestOperationResult.status === "fulfilled") {
-      setTestResult(bindingTestOperationResult.value);
-      if (bindingTestOperationResult.value.overall_status === "passed") setActiveStep(4);
-    } else {
-      setTestResult(null);
-      setError(
-        bindingTestOperationResult.reason instanceof Error
-          ? bindingTestOperationResult.reason.message
-          : String(bindingTestOperationResult.reason)
-      );
-    }
   }
 
   async function saveBinding(): Promise<boolean> {
@@ -3356,46 +3356,42 @@ function DeviceSetupWizard({
       setError(t("Run binding test before saving"));
       return false;
     }
-    setSavingBinding(true);
     setError("");
-    const saveBindingResult = await hardwareSetupOperationCoordinatorRef.current.run(
-      async (scope) => {
-        const freshTestResult = await testHardwareBinding(binding);
-        if (!scope.isCurrent()) return null;
-        if (freshTestResult.overall_status !== "passed") {
-          return { freshTestResult, savedBinding: null };
+    let saved = false;
+    await hardwareSetupSession.saveBinding(
+      {
+        recheck: () => testHardwareBinding(binding),
+        shouldPersist: (freshTestResult) =>
+          freshTestResult.overall_status === "passed",
+        persist: () => saveHardwareBinding(binding),
+        refresh: () => onSaved()
+      },
+      (saveBindingResult) => {
+        if (saveBindingResult.status === "rejected") {
+          setSaveResult(null);
+          setError(
+            saveBindingResult.reason instanceof Error
+              ? saveBindingResult.reason.message
+              : String(saveBindingResult.reason)
+          );
+          return;
         }
-        const savedBinding = await saveHardwareBinding(binding);
-        if (!scope.isCurrent()) return null;
-        await onSaved();
-        return { freshTestResult, savedBinding };
+        const { freshTestResult, savedBinding } = saveBindingResult.value;
+        setTestResult(freshTestResult);
+        if (savedBinding === null) {
+          setSaveResult(null);
+          setError(
+            [freshTestResult.camera.message, freshTestResult.temperature.message]
+              .filter(Boolean)
+              .join(" · ") || t("Binding test failed")
+          );
+          return;
+        }
+        setSaveResult(savedBinding);
+        saved = true;
       }
     );
-    if (!saveBindingResult.accepted || !wizardOpenRef.current) return false;
-    setSavingBinding(false);
-    if (saveBindingResult.status === "rejected") {
-      setSaveResult(null);
-      setError(
-        saveBindingResult.reason instanceof Error
-          ? saveBindingResult.reason.message
-          : String(saveBindingResult.reason)
-      );
-      return false;
-    }
-    if (saveBindingResult.value === null) return false;
-    const { freshTestResult, savedBinding } = saveBindingResult.value;
-    setTestResult(freshTestResult);
-    if (savedBinding === null) {
-      setSaveResult(null);
-      setError(
-        [freshTestResult.camera.message, freshTestResult.temperature.message]
-          .filter(Boolean)
-          .join(" · ") || t("Binding test failed")
-      );
-      return false;
-    }
-    setSaveResult(savedBinding);
-    return true;
+    return saved;
   }
 
   async function finishWizard() {

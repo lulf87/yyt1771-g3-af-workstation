@@ -7,6 +7,8 @@ import {
   type CameraExposureState
 } from "../../api/client";
 import {
+  cameraExposureIdentityKey,
+  createCameraExposureReadSession,
   createExposureBusyTracker,
   createExposureCommitCoordinator,
   scheduleExposureDraft,
@@ -31,19 +33,6 @@ type LoadedCapability = {
   value: CameraExposureState;
 };
 
-function cameraIdentityKey(camera: CameraExposureIdentity | null): string {
-  return camera
-    ? JSON.stringify([
-        camera.backend,
-        camera.transport,
-        camera.model,
-        camera.serial_number,
-        camera.ip,
-        camera.user_defined_name
-      ])
-    : "saved-camera";
-}
-
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
@@ -62,7 +51,8 @@ export function ExposureControl({
   language,
   onBusyChange
 }: ExposureControlProps) {
-  const cameraKey = cameraIdentityKey(camera);
+  const cameraKey = cameraExposureIdentityKey(camera);
+  const [exposureReadSession] = useState(() => createCameraExposureReadSession());
   const [loadedCapability, setLoadedCapability] = useState<LoadedCapability | null>(null);
   const capability =
     !runActive && loadedCapability?.cameraKey === cameraKey ? loadedCapability.value : null;
@@ -159,31 +149,34 @@ export function ExposureControl({
     setDraft("");
     setStatus("loading");
     const controller = new AbortController();
-    let acceptResult = true;
     const finishReadBusy = exposureBusyTrackerRef.current!.begin();
-    readCameraExposure(camera, controller.signal)
-      .then((next) => {
-        if (!acceptResult) return;
-        const actual =
-          typeof next.actual_us === "number" && Number.isFinite(next.actual_us)
-            ? next.actual_us
-            : null;
-        confirmedRef.current = actual;
-        setLoadedCapability({ cameraKey, value: next });
-        setDraft(actual === null ? "" : String(actual));
-        setStatus("idle");
-      })
-      .catch((reason) => {
-        if (!acceptResult) return;
-        setStatus("error");
-        setError(errorMessage(reason));
-      })
+    void exposureReadSession
+      .read(
+        camera,
+        (identity) => readCameraExposure(identity, controller.signal),
+        (result) => {
+          if (result.status === "rejected") {
+            setStatus("error");
+            setError(errorMessage(result.reason));
+            return;
+          }
+          const next = result.value;
+          const actual =
+            typeof next.actual_us === "number" && Number.isFinite(next.actual_us)
+              ? next.actual_us
+              : null;
+          confirmedRef.current = actual;
+          setLoadedCapability({ cameraKey, value: next });
+          setDraft(actual === null ? "" : String(actual));
+          setStatus("idle");
+        }
+      )
       .finally(finishReadBusy);
 
     return () => {
-      acceptResult = false;
+      exposureReadSession.invalidate();
     };
-  }, [cameraKey, disabled, runActive]);
+  }, [cameraKey, disabled, exposureReadSession, runActive]);
 
   const locked =
     disabled ||

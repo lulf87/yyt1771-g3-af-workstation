@@ -246,6 +246,28 @@ export type CameraExposureIdentity = Pick<
   "backend" | "transport" | "model" | "serial_number" | "ip" | "user_defined_name"
 >;
 
+export type HardwareProfile = {
+  camera: CameraExposureIdentity & Record<string, unknown>;
+  temp: Record<string, unknown>;
+  run: Record<string, unknown>;
+};
+
+export function hardwareProfileCameraIdentity(
+  profile: HardwareProfile | null
+): CameraExposureIdentity | null {
+  if (profile === null) return null;
+  const camera = profile.camera;
+  const identity: CameraExposureIdentity = {
+    backend: String(camera.backend ?? ""),
+    transport: String(camera.transport ?? ""),
+    model: String(camera.model ?? ""),
+    serial_number: String(camera.serial_number ?? ""),
+    ip: String(camera.ip ?? ""),
+    user_defined_name: String(camera.user_defined_name ?? "")
+  };
+  return identity.serial_number || identity.ip ? identity : null;
+}
+
 export type CameraExposureState = {
   supported: boolean;
   minimum_us: number | null;
@@ -1203,8 +1225,8 @@ export async function getAppRuntime(): Promise<AppRuntime> {
   return requestJson<AppRuntime>("/api/app/runtime");
 }
 
-export async function getHardwareProfile(): Promise<Record<string, unknown>> {
-  return requestJson<Record<string, unknown>>("/api/hardware/profile");
+export async function getHardwareProfile(): Promise<HardwareProfile> {
+  return requestJson<HardwareProfile>("/api/hardware/profile");
 }
 
 export async function getHardwareSetupEnvironment(): Promise<HardwareSetupEnvironment> {

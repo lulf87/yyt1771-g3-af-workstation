@@ -85,6 +85,8 @@ async function loadExposureControlModule() {
       "node",
       "--strict",
       "--skipLibCheck",
+      "--types",
+      "vite/client",
       "--lib",
       "ES2020,DOM",
       "--outDir",

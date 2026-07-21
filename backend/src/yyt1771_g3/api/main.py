@@ -129,6 +129,7 @@ _camera_preview_profile_key: str | None = None
 _camera_operation_lock = threading.Lock()
 _camera_operation_owner: str | None = None
 _CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS = 1.0
+_HARDWARE_CAMERA_OPERATION_TIMEOUT_SECONDS = 1.0
 _real_camera_stream_stop_lock = threading.Lock()
 _real_camera_stream_stop_events: dict[str, threading.Event] = {}
 
@@ -1323,7 +1324,12 @@ def save_hardware_sdk_paths_endpoint(request: HardwareSdkPathsRequest) -> dict[s
 @app.get("/api/hardware/cameras")
 def get_hardware_cameras() -> list[dict[str, Any]]:
     try:
-        return discover_hardware_cameras(_hardware_config())
+        config = _hardware_config()
+        with _camera_operation(
+            "hardware_camera_scan",
+            timeout=_HARDWARE_CAMERA_OPERATION_TIMEOUT_SECONDS,
+        ):
+            return discover_hardware_cameras(config)
     except CameraUnavailableError as exc:
         raise HTTPException(
             status_code=503,
@@ -1346,7 +1352,12 @@ def get_hardware_cameras() -> list[dict[str, Any]]:
 
 @app.post("/api/hardware/cameras/test")
 def check_hardware_camera(request: HardwareCameraBindingRequest) -> dict[str, Any]:
-    return _test_bound_camera(_hardware_config(), request)
+    config = _hardware_config()
+    with _camera_operation(
+        "hardware_camera_test",
+        timeout=_HARDWARE_CAMERA_OPERATION_TIMEOUT_SECONDS,
+    ):
+        return _test_bound_camera(config, request)
 
 
 @app.post("/api/hardware/temperature/test")
@@ -1357,7 +1368,11 @@ def check_hardware_temperature(request: HardwareTemperatureBindingRequest) -> di
 @app.post("/api/hardware/binding/test")
 def check_hardware_binding(request: HardwareBindingRequest) -> dict[str, Any]:
     config = _hardware_config()
-    camera_result = _test_bound_camera(config, request.camera)
+    with _camera_operation(
+        "hardware_binding_camera_test",
+        timeout=_HARDWARE_CAMERA_OPERATION_TIMEOUT_SECONDS,
+    ):
+        camera_result = _test_bound_camera(config, request.camera)
     temperature_result = _test_bound_temperature(config, request.temperature)
     failed = camera_result["status"] == "failed" or temperature_result["status"] == "failed"
     return {

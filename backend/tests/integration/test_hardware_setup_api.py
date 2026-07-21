@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +15,83 @@ def _write_test_pe(path: Path, *, machine: int = 0x8664) -> None:
     pe_bytes[0x80:0x84] = b"PE\x00\x00"
     pe_bytes[0x84:0x86] = machine.to_bytes(2, "little")
     path.write_bytes(pe_bytes)
+
+
+def _hardware_camera_binding_payload() -> dict[str, str]:
+    return {
+        "backend": "hik_gige_mvs",
+        "transport": "gige_vision",
+        "model": "MV-CA060-11GM",
+        "serial_number": "CAM-LOCK-001",
+        "ip": "192.168.3.211",
+        "user_defined_name": "Lock test camera",
+    }
+
+
+def _assert_hardware_request_waits_for_active_exposure(
+    monkeypatch,  # noqa: ANN001
+    api_main,  # noqa: ANN001
+    invoke_hardware,  # noqa: ANN001
+    camera_entry: threading.Event,
+) -> None:
+    from yyt1771_g3.camera.base import CameraExposureCapability
+    from yyt1771_g3.core.hardware_config import HardwareConfig
+
+    exposure_entered = threading.Event()
+    release_exposure = threading.Event()
+    hardware_loaded_config = threading.Event()
+    config_call_lock = threading.Lock()
+    config_call_count = 0
+
+    class BlockingExposureSource:
+        def read_exposure_capability(self) -> CameraExposureCapability:
+            exposure_entered.set()
+            if not release_exposure.wait(timeout=2.0):
+                raise TimeoutError("test did not release exposure authority")
+            return CameraExposureCapability(
+                supported=True,
+                minimum_us=100.0,
+                maximum_us=100000.0,
+                increment_us=1.0,
+                requested_us=10000.0,
+                actual_us=10000.0,
+            )
+
+    def load_config() -> HardwareConfig:
+        nonlocal config_call_count
+        with config_call_lock:
+            config_call_count += 1
+            if config_call_count >= 2:
+                hardware_loaded_config.set()
+        return HardwareConfig()
+
+    monkeypatch.setattr(api_main, "_hardware_config", load_config)
+    monkeypatch.setattr(api_main, "_get_preview_camera_source", lambda profile=None: BlockingExposureSource())
+
+    exposure_client = TestClient(api_main.app)
+    hardware_client = TestClient(api_main.app)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        exposure_future = executor.submit(
+            exposure_client.post,
+            "/api/camera/exposure/read",
+            json={},
+        )
+        assert exposure_entered.wait(timeout=1.0), "exposure request did not acquire camera authority"
+        hardware_future = executor.submit(invoke_hardware, hardware_client)
+        try:
+            assert hardware_loaded_config.wait(timeout=1.0), "hardware request did not reach its endpoint"
+            assert not camera_entry.wait(timeout=0.1), (
+                "hardware discovery/source opened while exposure still owned the camera authority"
+            )
+        finally:
+            release_exposure.set()
+
+        exposure_response = exposure_future.result(timeout=2.0)
+        hardware_response = hardware_future.result(timeout=2.0)
+
+    assert exposure_response.status_code == 200
+    assert hardware_response.status_code == 200
+    assert camera_entry.is_set(), "hardware camera work did not continue after exposure released authority"
 
 
 def test_hardware_setup_environment_reports_sdk_and_serial_checks(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -691,3 +770,146 @@ def test_hardware_temperature_test_endpoint_reports_modbus_failure(monkeypatch) 
     assert payload["error"] == "modbus response timeout"
     assert payload["temperature_celsius"] is None
     assert payload["serial_port"] == "/dev/cu.usbserial-11210"
+
+
+def test_hardware_camera_scan_waits_for_active_exposure_before_discovery(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    discovery_entered = threading.Event()
+
+    def discover(config):  # noqa: ANN001, ANN202
+        discovery_entered.set()
+        return []
+
+    monkeypatch.setattr(api_main, "discover_hardware_cameras", discover)
+
+    _assert_hardware_request_waits_for_active_exposure(
+        monkeypatch,
+        api_main,
+        lambda client: client.get("/api/hardware/cameras"),
+        discovery_entered,
+    )
+
+
+def test_hardware_camera_test_waits_for_active_exposure_before_opening_source(monkeypatch) -> None:  # noqa: ANN001
+    import numpy as np
+
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.camera.base import CameraFrame
+
+    source_opened = threading.Event()
+
+    class FakeCameraSource:
+        def preview_frame(self) -> CameraFrame:
+            return CameraFrame(
+                array=np.zeros((4, 6), dtype=np.uint8),
+                timestamp_ms=1779448000990,
+                camera_meta={"serial_number": "CAM-LOCK-001"},
+            )
+
+        def close(self) -> None:
+            return None
+
+    def build_source(profile):  # noqa: ANN001, ANN202
+        source_opened.set()
+        return FakeCameraSource()
+
+    monkeypatch.setattr(api_main, "_build_camera_source", build_source)
+
+    _assert_hardware_request_waits_for_active_exposure(
+        monkeypatch,
+        api_main,
+        lambda client: client.post(
+            "/api/hardware/cameras/test",
+            json=_hardware_camera_binding_payload(),
+        ),
+        source_opened,
+    )
+
+
+def test_hardware_binding_test_locks_only_camera_phase_behind_active_exposure(monkeypatch) -> None:  # noqa: ANN001
+    import numpy as np
+
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.camera.base import CameraFrame
+    from yyt1771_g3.temperature.base import TemperatureReading
+
+    source_opened = threading.Event()
+    temperature_read = threading.Event()
+
+    class FakeCameraSource:
+        def preview_frame(self) -> CameraFrame:
+            return CameraFrame(
+                array=np.zeros((4, 6), dtype=np.uint8),
+                timestamp_ms=1779448000991,
+                camera_meta={"serial_number": "CAM-LOCK-001"},
+            )
+
+        def close(self) -> None:
+            return None
+
+    class FakeTemperatureController:
+        def read_temperature(self) -> TemperatureReading:
+            temperature_read.set()
+            return TemperatureReading(
+                timestamp_ms=1779448000992,
+                celsius=25.0,
+                source="lu92xx_modbus_rtu",
+            )
+
+        def close(self) -> None:
+            return None
+
+    def build_source(profile):  # noqa: ANN001, ANN202
+        source_opened.set()
+        return FakeCameraSource()
+
+    monkeypatch.setattr(api_main, "_build_camera_source", build_source)
+    monkeypatch.setattr(api_main, "build_temperature_controller", lambda config: FakeTemperatureController())
+
+    _assert_hardware_request_waits_for_active_exposure(
+        monkeypatch,
+        api_main,
+        lambda client: client.post(
+            "/api/hardware/binding/test",
+            json={
+                "camera": _hardware_camera_binding_payload(),
+                "temperature": {
+                    "backend": "lu92xx_modbus_rtu",
+                    "serial_port": "COM3",
+                    "baudrate": 19200,
+                    "slave_address": 1,
+                },
+            },
+        ),
+        source_opened,
+    )
+    assert temperature_read.is_set(), "binding temperature phase did not run after camera authority released"
+
+
+def test_hardware_camera_scan_returns_structured_busy_after_finite_authority_wait(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import HardwareConfig
+
+    discovery_entered = threading.Event()
+    monkeypatch.setattr(api_main, "_hardware_config", lambda: HardwareConfig())
+    monkeypatch.setattr(
+        api_main,
+        "discover_hardware_cameras",
+        lambda config: discovery_entered.set() or [],
+    )
+    monkeypatch.setattr(api_main, "_HARDWARE_CAMERA_OPERATION_TIMEOUT_SECONDS", 0.02, raising=False)
+
+    with api_main._camera_operation("camera_exposure_read", timeout=0.1):
+        response = TestClient(api_main.app).get("/api/hardware/cameras")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "camera_status": "busy",
+        "message": "Real camera is busy with camera_exposure_read",
+        "details": {
+            "active_operation": "camera_exposure_read",
+            "requested_operation": "hardware_camera_scan",
+        },
+    }
+    assert not discovery_entered.is_set()

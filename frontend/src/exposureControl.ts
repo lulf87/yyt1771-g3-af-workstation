@@ -1,3 +1,55 @@
+import type { CameraExposureIdentity } from "./api/client.js";
+
+export type CameraExposureReadResult<T> =
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: unknown };
+
+export type CameraExposureReadSession = {
+  read<T>(
+    camera: CameraExposureIdentity | null,
+    execute: (camera: CameraExposureIdentity | null) => Promise<T>,
+    apply: (result: CameraExposureReadResult<T>) => void
+  ): Promise<boolean>;
+  invalidate(): void;
+};
+
+export function cameraExposureIdentityKey(
+  camera: CameraExposureIdentity | null
+): string {
+  return camera
+    ? JSON.stringify([
+        camera.backend,
+        camera.transport,
+        camera.model,
+        camera.serial_number,
+        camera.ip,
+        camera.user_defined_name
+      ])
+    : "saved-camera";
+}
+
+export function createCameraExposureReadSession(): CameraExposureReadSession {
+  let generation = 0;
+
+  return {
+    async read(camera, execute, apply) {
+      const requestGeneration = ++generation;
+      try {
+        const value = await execute(camera);
+        if (generation !== requestGeneration) return false;
+        apply({ status: "fulfilled", value });
+      } catch (reason) {
+        if (generation !== requestGeneration) return false;
+        apply({ status: "rejected", reason });
+      }
+      return true;
+    },
+    invalidate() {
+      generation += 1;
+    }
+  };
+}
+
 export type ExposureApplyResponse = { actual_us: number };
 
 export type ExposureCoordinatorOptions<
