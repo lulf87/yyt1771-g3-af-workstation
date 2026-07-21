@@ -7,9 +7,11 @@ import {
   type CameraExposureState
 } from "../../api/client";
 import {
+  createExposureBusyTracker,
   createExposureCommitCoordinator,
   scheduleExposureDraft,
   submitExposureDraft,
+  type ExposureBusyTracker,
   type ExposureCommitCoordinator
 } from "../../exposureControl";
 import { uiText, type UiLanguage } from "../../i18n";
@@ -19,6 +21,7 @@ export type ExposureControlProps = {
   disabled: boolean;
   runActive: boolean;
   language: UiLanguage;
+  onBusyChange: (busy: boolean) => void;
 };
 
 type ExposureStatus = "loading" | "idle" | "applying" | "saved" | "error";
@@ -56,7 +59,8 @@ export function ExposureControl({
   camera,
   disabled,
   runActive,
-  language
+  language,
+  onBusyChange
 }: ExposureControlProps) {
   const cameraKey = cameraIdentityKey(camera);
   const [loadedCapability, setLoadedCapability] = useState<LoadedCapability | null>(null);
@@ -70,17 +74,32 @@ export function ExposureControl({
   const lastRequestedRef = useRef<number | null>(null);
   const compensationPendingRef = useRef(false);
   const coordinatorRef = useRef<ExposureCommitCoordinator | null>(null);
+  const onBusyChangeRef = useRef(onBusyChange);
+  const exposureBusyTrackerRef = useRef<ExposureBusyTracker | null>(null);
+  if (exposureBusyTrackerRef.current === null) {
+    exposureBusyTrackerRef.current = createExposureBusyTracker((busy) => {
+      onBusyChangeRef.current(busy);
+    });
+  }
   const t = (text: string) => uiText(language, text);
 
   useEffect(() => {
-    if (runActive) {
-      coordinatorRef.current = null;
-      return;
-    }
+    onBusyChangeRef.current = onBusyChange;
+  }, [onBusyChange]);
 
+  useEffect(() => {
+    let finishWriteBusy: (() => void) | null = null;
     const coordinator = createExposureCommitCoordinator({
       delayMs: 200,
       apply: (value, signal) => updateCameraExposure(value, camera, signal),
+      onBusyChange: (busy) => {
+        if (busy && finishWriteBusy === null) {
+          finishWriteBusy = exposureBusyTrackerRef.current!.begin();
+        } else if (!busy && finishWriteBusy !== null) {
+          finishWriteBusy();
+          finishWriteBusy = null;
+        }
+      },
       onPending: (value) => {
         lastRequestedRef.current = value;
         setStatus("applying");
@@ -114,29 +133,37 @@ export function ExposureControl({
       coordinator.dispose();
       if (coordinatorRef.current === coordinator) coordinatorRef.current = null;
     };
-  }, [cameraKey, runActive]);
+  }, [cameraKey]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    confirmedRef.current = null;
-    latestIntentRef.current = null;
-    lastRequestedRef.current = null;
-    compensationPendingRef.current = false;
+    if (!disabled && !runActive) return;
+    coordinatorRef.current?.cancel();
+  }, [disabled, runActive]);
+
+  useEffect(() => {
     setError("");
 
     if (runActive) {
       setLoadedCapability(null);
       setDraft("");
       setStatus("idle");
-      return () => controller.abort();
+      return;
     }
+    if (disabled) return;
 
+    confirmedRef.current = null;
+    latestIntentRef.current = null;
+    lastRequestedRef.current = null;
+    compensationPendingRef.current = false;
     setLoadedCapability(null);
     setDraft("");
     setStatus("loading");
+    const controller = new AbortController();
+    let acceptResult = true;
+    const finishReadBusy = exposureBusyTrackerRef.current!.begin();
     readCameraExposure(camera, controller.signal)
       .then((next) => {
-        if (controller.signal.aborted) return;
+        if (!acceptResult) return;
         const actual =
           typeof next.actual_us === "number" && Number.isFinite(next.actual_us)
             ? next.actual_us
@@ -147,13 +174,16 @@ export function ExposureControl({
         setStatus("idle");
       })
       .catch((reason) => {
-        if (controller.signal.aborted) return;
+        if (!acceptResult) return;
         setStatus("error");
         setError(errorMessage(reason));
-      });
+      })
+      .finally(finishReadBusy);
 
-    return () => controller.abort();
-  }, [cameraKey, runActive]);
+    return () => {
+      acceptResult = false;
+    };
+  }, [cameraKey, disabled, runActive]);
 
   const locked =
     disabled ||

@@ -682,6 +682,7 @@ function App() {
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
+  const [exposureBusy, setExposureBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [previewingCamera, setPreviewingCamera] = useState(false);
   const [runningCamera, setRunningCamera] = useState(false);
@@ -876,7 +877,7 @@ function App() {
   useEffect(() => {
     if (uiMode === "operator" && !operatorPreviewAllowed) return;
     if (!shouldPollRealCameraPreview(pageForSetupEffects, setupSource, cameraPreviewState)) return;
-    if (runningCamera || probing) return;
+    if (runningCamera || probing || exposureBusy) return;
     let cancelled = false;
     let timer: number | null = null;
     const generation = cameraPreviewPollGenerationRef.current + 1;
@@ -910,6 +911,7 @@ function App() {
     measurement?.detector_config.setup_preview_fps,
     runningCamera,
     probing,
+    exposureBusy,
     uiMode,
     operatorPreviewAllowed
   ]);
@@ -1100,6 +1102,7 @@ function App() {
   }
 
   async function runOperatorRealCameraSetupProbe() {
+    if (exposureBusy) return;
     let currentMeasurement = measurementRef.current ? toOperatorActualUseMeasurement(measurementRef.current) : null;
     if (!currentMeasurement) return;
     if (!operatorRealHardwareAvailable) {
@@ -1152,6 +1155,7 @@ function App() {
   }
 
   async function runOperatorProbeCurrentFrame() {
+    if (exposureBusy) return;
     if (appRuntime?.runtime_source === "simulated_material") {
       await runProbe(frameIndex);
       return;
@@ -1316,6 +1320,7 @@ function App() {
   }
 
   function startOperatorRun() {
+    if (exposureBusy) return;
     if (appRuntime?.runtime_source === "simulated_material") {
       startOperatorOfflineRun();
       return;
@@ -1352,6 +1357,7 @@ function App() {
   }
 
   function startOperatorRealCameraRun() {
+    if (exposureBusy) return;
     if (!operatorRealHardwareAvailable) {
       setOperatorStartMessage(t("Real hardware unavailable"));
       setError("");
@@ -1406,6 +1412,7 @@ function App() {
     mode: RealCameraPreviewMode = cameraPreviewState?.mode ?? "live",
     options: { clearProbe?: boolean } = {}
   ): Promise<boolean> {
+    if (exposureBusy) return false;
     if (uiMode === "operator" && operatorDataSource === "real_camera" && !operatorRealHardwareAvailable) {
       setCameraPreview(null);
       setCameraPreviewUrl("");
@@ -1781,6 +1788,7 @@ function App() {
               temperatureError={temperatureError}
               serialPorts={serialPorts}
               probing={probing}
+              exposureBusy={exposureBusy}
               running={running}
               previewingCamera={previewingCamera}
               runningCamera={runningCamera}
@@ -1793,6 +1801,7 @@ function App() {
               onOperatorSettingsPatch={patchOperatorSettings}
               onOperatorSettingsConfirm={confirmCurrentOperatorSettings}
               onOperatorStartRun={startOperatorRun}
+              onExposureBusyChange={setExposureBusy}
               onImportRunExport={importOperatorRunExport}
               onImportedRun={setImportedRun}
               onProbe={runProbe}
@@ -1907,6 +1916,7 @@ function PageContent({
   temperatureError,
   serialPorts,
   probing,
+  exposureBusy,
   running,
   previewingCamera,
   runningCamera,
@@ -1919,6 +1929,7 @@ function PageContent({
   onOperatorSettingsPatch,
   onOperatorSettingsConfirm,
   onOperatorStartRun,
+  onExposureBusyChange,
   onImportRunExport,
   onImportedRun,
   onProbe,
@@ -1968,6 +1979,7 @@ function PageContent({
   temperatureError: SetupTemperatureError | null;
   serialPorts: SerialPortInfo[];
   probing: boolean;
+  exposureBusy: boolean;
   running: boolean;
   previewingCamera: boolean;
   runningCamera: boolean;
@@ -1980,6 +1992,7 @@ function PageContent({
   onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onOperatorSettingsConfirm: () => void;
   onOperatorStartRun: () => void;
+  onExposureBusyChange: (busy: boolean) => void;
   onImportRunExport: (file: File) => Promise<ImportedRunView>;
   onImportedRun: (view: ImportedRunView | null) => void;
   onProbe: (frameIndex?: number) => void;
@@ -2134,6 +2147,7 @@ function PageContent({
         operatorSourceStatusLastCheckedAt={operatorSourceStatusLastCheckedAt}
         probe={displayedProbe}
         probing={probing}
+        exposureBusy={exposureBusy}
         operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
         operatorStartMessage={operatorStartMessage}
         temperatureStatus={temperatureStatus}
@@ -2148,6 +2162,7 @@ function PageContent({
         onOperatorSettingsPatch={onOperatorSettingsPatch}
         onOperatorSettingsConfirm={onOperatorSettingsConfirm}
         onOperatorStartRun={onOperatorStartRun}
+        onExposureBusyChange={onExposureBusyChange}
         onProbeRealCameraSetup={onOperatorProbeCurrentFrame}
         onStopRun={onStopRun}
         onRefreshSerialPorts={onRefreshSerialPorts}
@@ -2272,6 +2287,7 @@ function OperatorRunPage({
   operatorSourceStatusLastCheckedAt,
   probe,
   probing,
+  exposureBusy,
   operatorSettings,
   operatorStartMessage,
   temperatureStatus,
@@ -2286,6 +2302,7 @@ function OperatorRunPage({
   onOperatorSettingsPatch,
   onOperatorSettingsConfirm,
   onOperatorStartRun,
+  onExposureBusyChange,
   onProbeRealCameraSetup,
   onStopRun,
   onRefreshSerialPorts,
@@ -2309,6 +2326,7 @@ function OperatorRunPage({
   operatorSourceStatusLastCheckedAt: number | null;
   probe: ProbeResponse | null;
   probing: boolean;
+  exposureBusy: boolean;
   operatorSettings: OperatorConfirmedSettings;
   operatorStartMessage: string;
   temperatureStatus: TemperatureStatusResponse | null;
@@ -2323,6 +2341,7 @@ function OperatorRunPage({
   onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onOperatorSettingsConfirm: () => void;
   onOperatorStartRun: () => void;
+  onExposureBusyChange: (busy: boolean) => void;
   onProbeRealCameraSetup: () => void;
   onStopRun: () => void;
   onRefreshSerialPorts: () => void;
@@ -2430,10 +2449,11 @@ function OperatorRunPage({
     .filter((region) => region.enabled)
     .every((region) => region.roi.width > 0 && region.roi.height > 0);
   const probeCurrentFrameDisabled =
-    probing || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
+    probing || exposureBusy || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
   const startDisabled =
     operatorRunActive ||
+    exposureBusy ||
     !sourceAvailable ||
     (!simulatedMode && measurement.measurement_id === REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID);
   const sourceBadgeLabel = simulatedMode
@@ -2498,8 +2518,9 @@ function OperatorRunPage({
           {!simulatedMode && realHardwareAvailable ? (
             <ExposureControl
               camera={null}
-              disabled={probing || cameraPreviewRefreshStatus !== "ok"}
+              disabled={probing}
               language={language}
+              onBusyChange={onExposureBusyChange}
               runActive={operatorRunActive}
             />
           ) : null}
@@ -2943,6 +2964,7 @@ function DeviceSetupWizard({
   const [testingBinding, setTestingBinding] = useState(false);
   const [savingBinding, setSavingBinding] = useState(false);
   const [savingSdkPaths, setSavingSdkPaths] = useState(false);
+  const [exposureBusy, setExposureBusy] = useState(false);
   const [error, setError] = useState("");
   const cameraTestCoordinatorRef = useRef(
     createHardwareCameraTestCoordinator<HardwareCameraTestResponse>()
@@ -2955,6 +2977,14 @@ function DeviceSetupWizard({
   const selectedCameraKeyRef = useRef(selectedCameraKey);
   wizardOpenRef.current = open;
   selectedCameraKeyRef.current = selectedCameraKey;
+  const wizardHardwareOperationBusy =
+    loadingWizard ||
+    testingCamera ||
+    testingTemperature ||
+    testingBinding ||
+    savingBinding ||
+    savingSdkPaths;
+  const wizardBusy = wizardHardwareOperationBusy || exposureBusy;
 
   function setWizardLoading(loading: boolean) {
     loadingWizardRef.current = loading;
@@ -3092,6 +3122,7 @@ function DeviceSetupWizard({
   }
 
   async function refreshEnvironmentChecks() {
+    if (exposureBusy) return;
     setWizardLoading(true);
     setError("");
     try {
@@ -3121,6 +3152,7 @@ function DeviceSetupWizard({
   }
 
   async function validateAndSaveSdkPaths() {
+    if (exposureBusy) return;
     setSavingSdkPaths(true);
     setError("");
     setSdkPathResult(null);
@@ -3141,6 +3173,7 @@ function DeviceSetupWizard({
   }
 
   async function scanHardwareCameras() {
+    if (exposureBusy) return;
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setWizardLoading(true);
@@ -3183,6 +3216,7 @@ function DeviceSetupWizard({
   }
 
   async function refreshTemperaturePorts() {
+    if (exposureBusy) return;
     setWizardLoading(true);
     setError("");
     setTemperatureTestResult(null);
@@ -3203,6 +3237,7 @@ function DeviceSetupWizard({
 
   function selectHardwareCamera(cameraKey: string) {
     if (loadingWizardRef.current) return;
+    if (wizardBusy) return;
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setCameraTestResult(null);
@@ -3214,6 +3249,7 @@ function DeviceSetupWizard({
 
   async function runCameraTest() {
     if (loadingWizardRef.current) return;
+    if (wizardBusy) return;
     if (!selectedCamera) {
       setError(t("Select camera before testing"));
       return;
@@ -3244,6 +3280,7 @@ function DeviceSetupWizard({
   }
 
   async function runTemperatureTest() {
+    if (wizardBusy) return;
     if (!selectedPort) {
       setError(t("Select serial port before testing"));
       return;
@@ -3267,6 +3304,7 @@ function DeviceSetupWizard({
   }
 
   async function runBindingTest() {
+    if (wizardBusy) return;
     if (!binding) {
       setError(t("Select camera and serial port before testing"));
       return;
@@ -3286,6 +3324,7 @@ function DeviceSetupWizard({
   }
 
   async function saveBinding(): Promise<boolean> {
+    if (wizardBusy) return false;
     if (!binding) {
       setError(t("Select camera and serial port before saving"));
       return false;
@@ -3322,6 +3361,7 @@ function DeviceSetupWizard({
   }
 
   async function finishWizard() {
+    if (wizardBusy) return;
     const saved = saveResult?.saved === true || await saveBinding();
     if (saved) onClose();
   }
@@ -3334,14 +3374,14 @@ function DeviceSetupWizard({
             <h2>{t("Device setup")}</h2>
             <p>{t("Camera and temperature controller binding")}</p>
           </div>
-          <button aria-label={t("Cancel")} className="iconButton" onClick={onClose} type="button">
+          <button aria-label={t("Cancel")} className="iconButton" disabled={wizardBusy} onClick={onClose} type="button">
             ×
           </button>
         </header>
         <ol className="wizardStepList">
           {HARDWARE_SETUP_STEPS.map((step, index) => (
             <li className={index === activeStep ? "active" : index < activeStep ? "complete" : ""} key={step}>
-              <button disabled={loadingWizard} onClick={() => setActiveStep(index)} type="button">
+              <button disabled={wizardBusy} onClick={() => setActiveStep(index)} type="button">
                 <span>{index + 1}</span>
                 {t(step)}
               </button>
@@ -3363,6 +3403,7 @@ function DeviceSetupWizard({
                 <label className="field">
                   <span>{t("MVS Python binding path")}</span>
                   <input
+                    disabled={wizardBusy}
                     onChange={(event) => setSdkPythonPath(event.target.value)}
                     placeholder={String.raw`C:\Program Files (x86)\MVS\Development\Samples\Python\MvImport`}
                     value={sdkPythonPath}
@@ -3371,6 +3412,7 @@ function DeviceSetupWizard({
                 <label className="field">
                   <span>{t("MVS x64 runtime DLL path")}</span>
                   <input
+                    disabled={wizardBusy}
                     onChange={(event) => setSdkLibraryPath(event.target.value)}
                     placeholder={String.raw`C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll`}
                     value={sdkLibraryPath}
@@ -3382,17 +3424,17 @@ function DeviceSetupWizard({
                   </div>
                 ) : null}
                 <div className="buttonPair">
-                  <button className="secondaryButton" disabled={loadingWizard || !environment} onClick={() => environment && applyDetectedSdkPaths(environment)} type="button">
+                  <button className="secondaryButton" disabled={wizardBusy || !environment} onClick={() => environment && applyDetectedSdkPaths(environment)} type="button">
                     <RefreshCcw size={16} aria-hidden="true" />
                     {t("Use auto-detected paths")}
                   </button>
-                  <button className="primaryButton" disabled={savingSdkPaths || !sdkPythonPath.trim() || !sdkLibraryPath.trim()} onClick={validateAndSaveSdkPaths} type="button">
+                  <button className="primaryButton" disabled={wizardBusy || !sdkPythonPath.trim() || !sdkLibraryPath.trim()} onClick={validateAndSaveSdkPaths} type="button">
                     <Settings size={16} aria-hidden="true" />
                     {savingSdkPaths ? t("Validating") : t("Validate and save paths")}
                   </button>
                 </div>
               </section>
-              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshEnvironmentChecks} type="button">
+              <button className="secondaryButton" disabled={wizardBusy} onClick={refreshEnvironmentChecks} type="button">
                 <RefreshCcw size={16} aria-hidden="true" />
                 {t("Refresh checks")}
               </button>
@@ -3406,7 +3448,7 @@ function DeviceSetupWizard({
                   <label className={camera.is_supported_model ? "wizardDeviceOption" : "wizardDeviceOption warning"} key={hardwareCameraKey(camera)}>
                     <input
                       checked={hardwareCameraKey(camera) === selectedCameraKey}
-                      disabled={loadingWizard || !camera.is_supported_model}
+                      disabled={wizardBusy || !camera.is_supported_model}
                       onChange={() => selectHardwareCamera(hardwareCameraKey(camera))}
                       type="radio"
                     />
@@ -3426,16 +3468,17 @@ function DeviceSetupWizard({
               {cameraTestResult?.status === "passed" && selectedCamera ? (
                 <ExposureControl
                   camera={selectedCamera}
-                  disabled={testingCamera || testingBinding || savingBinding}
+                  disabled={wizardHardwareOperationBusy}
                   language={language}
+                  onBusyChange={setExposureBusy}
                   runActive={false}
                 />
               ) : null}
-              <button className="primaryButton" disabled={loadingWizard || !selectedCamera || testingCamera} onClick={runCameraTest} type="button">
+              <button className="primaryButton" disabled={wizardBusy || !selectedCamera} onClick={runCameraTest} type="button">
                 <Camera size={16} aria-hidden="true" />
                 {testingCamera ? t("Testing") : t("Test camera")}
               </button>
-              <button className="secondaryButton" disabled={loadingWizard} onClick={scanHardwareCameras} type="button">
+              <button className="secondaryButton" disabled={wizardBusy} onClick={scanHardwareCameras} type="button">
                 <Camera size={16} aria-hidden="true" />
                 {t("Scan camera")}
               </button>
@@ -3446,7 +3489,7 @@ function DeviceSetupWizard({
               <h3>{t("Select temperature controller")}</h3>
               <label className="field">
                 <span>{t("Temperature serial port")}</span>
-                <select onChange={(event) => setSelectedPort(event.target.value)} value={selectedPort}>
+                <select disabled={wizardBusy} onChange={(event) => setSelectedPort(event.target.value)} value={selectedPort}>
                   <option value="">{t("Select serial port")}</option>
                   {ports.map((port) => (
                     <option key={port.device || port.name} value={port.device}>
@@ -3457,11 +3500,11 @@ function DeviceSetupWizard({
               </label>
               {!ports.length ? <div className="statusBlock">{t("No serial ports found")}</div> : null}
               {temperatureTestResult ? <HardwareTemperatureTestResult result={temperatureTestResult} /> : null}
-              <button className="primaryButton" disabled={!selectedPort || testingTemperature} onClick={runTemperatureTest} type="button">
+              <button className="primaryButton" disabled={wizardBusy || !selectedPort} onClick={runTemperatureTest} type="button">
                 <Usb size={16} aria-hidden="true" />
                 {testingTemperature ? t("Testing") : t("Test temperature")}
               </button>
-              <button className="secondaryButton" disabled={loadingWizard} onClick={refreshTemperaturePorts} type="button">
+              <button className="secondaryButton" disabled={wizardBusy} onClick={refreshTemperaturePorts} type="button">
                 <Usb size={16} aria-hidden="true" />
                 {t("Refresh ports")}
               </button>
@@ -3472,7 +3515,7 @@ function DeviceSetupWizard({
               <h3>{t("Test binding")}</h3>
               <HardwareBindingSummary camera={selectedCamera} serialPort={selectedPort} />
               {testResult ? <HardwareTestResult result={testResult} /> : null}
-              <button className="primaryButton" disabled={!binding || testingBinding} onClick={runBindingTest} type="button">
+              <button className="primaryButton" disabled={wizardBusy || !binding} onClick={runBindingTest} type="button">
                 <Activity size={16} aria-hidden="true" />
                 {testingBinding ? t("Testing") : t("Test binding")}
               </button>
@@ -3491,29 +3534,29 @@ function DeviceSetupWizard({
                 </div>
               ) : null}
               <div className="buttonPair">
-                <button className="primaryButton" disabled={!binding || testResult?.overall_status !== "passed" || savingBinding} onClick={saveBinding} type="button">
+                <button className="primaryButton" disabled={wizardBusy || !binding || testResult?.overall_status !== "passed"} onClick={saveBinding} type="button">
                   <Settings size={16} aria-hidden="true" />
                   {savingBinding ? t("Saving") : t("Save configuration")}
                 </button>
-                    <button
-                      className="secondaryButton"
-                      disabled={!binding || testResult?.overall_status !== "passed" || savingBinding}
-                      onClick={() => void finishWizard()}
-                      type="button"
-                    >
-                      {savingBinding ? t("Saving") : t("Finish")}
-                    </button>
+                <button
+                  className="secondaryButton"
+                  disabled={wizardBusy || !binding || testResult?.overall_status !== "passed"}
+                  onClick={() => void finishWizard()}
+                  type="button"
+                >
+                  {savingBinding ? t("Saving") : t("Finish")}
+                </button>
               </div>
             </section>
           ) : null}
         </div>
         <footer className="wizardFooter">
-          <button className="secondaryButton" disabled={loadingWizard || activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))} type="button">
+          <button className="secondaryButton" disabled={wizardBusy || activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))} type="button">
             {t("Back")}
           </button>
           <button
             className="secondaryButton"
-            disabled={loadingWizard || activeStep >= HARDWARE_SETUP_STEPS.length - 1 || !canAdvance}
+            disabled={wizardBusy || activeStep >= HARDWARE_SETUP_STEPS.length - 1 || !canAdvance}
             onClick={() => setActiveStep((step) => Math.min(HARDWARE_SETUP_STEPS.length - 1, step + 1))}
             type="button"
           >

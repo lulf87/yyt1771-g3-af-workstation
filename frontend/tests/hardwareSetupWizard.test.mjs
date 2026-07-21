@@ -108,8 +108,26 @@ test("device setup mounts the shared exposure control after a successful camera 
   );
   assert.match(
     wizard,
-    /<ExposureControl[\s\S]{0,350}disabled=\{testingCamera \|\| testingBinding \|\| savingBinding\}[\s\S]{0,200}runActive=\{false\}/
+    /<ExposureControl[\s\S]{0,420}onBusyChange=\{setExposureBusy\}[\s\S]{0,200}runActive=\{false\}/
   );
+});
+
+test("device setup exposure busy gates camera and wizard hardware operations", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(wizard, /const \[exposureBusy, setExposureBusy\] = useState\(false\);/);
+  assert.match(wizard, /const wizardBusy =[\s\S]{0,300}exposureBusy/);
+  assert.match(wizard, /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,180}if \(wizardBusy\) return;/);
+  assert.match(wizard, /async function runCameraTest\(\)[\s\S]{0,160}if \(wizardBusy\) return;/);
+  assert.match(wizard, /disabled=\{wizardBusy \|\| !camera\.is_supported_model\}/);
+  assert.match(wizard, /disabled=\{wizardBusy \|\| !selectedCamera\}/);
+  assert.match(wizard, /disabled=\{wizardBusy\}[\s\S]{0,100}onClick=\{scanHardwareCameras\}/);
+  assert.match(wizard, /disabled=\{wizardBusy \|\| activeStep === 0\}/);
+  assert.match(wizard, /disabled=\{wizardBusy \|\| activeStep >= HARDWARE_SETUP_STEPS\.length - 1/);
+  assert.match(wizard, /aria-label=\{t\("Cancel"\)\}[\s\S]{0,160}disabled=\{wizardBusy\}/);
 });
 
 test("selecting another camera synchronously clears the previous camera test before exposure can mount", () => {
@@ -201,15 +219,15 @@ test("camera refresh gates testing and invalidates requests again before applyin
   );
   assert.match(
     wizard,
-    /disabled=\{loadingWizard \|\| !camera\.is_supported_model\}/
+    /disabled=\{wizardBusy \|\| !camera\.is_supported_model\}/
   );
   assert.match(
     wizard,
-    /disabled=\{loadingWizard \|\| !selectedCamera \|\| testingCamera\}/
+    /disabled=\{wizardBusy \|\| !selectedCamera\}/
   );
   assert.match(
     wizard,
-    /disabled=\{loadingWizard \|\| activeStep >= HARDWARE_SETUP_STEPS\.length - 1 \|\| !canAdvance\}/
+    /disabled=\{wizardBusy \|\| activeStep >= HARDWARE_SETUP_STEPS\.length - 1 \|\| !canAdvance\}/
   );
 });
 
@@ -289,7 +307,9 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /onSuccess:[\s\S]{0,400}setDraft\(String\(actual/);
   assert.match(component, /onError:[\s\S]{0,300}confirmedRef\.current/);
   assert.match(component, /coordinator\.dispose\(\)/);
-  assert.match(component, /controller\.abort\(\)/);
+  assert.match(component, /let acceptResult = true;/);
+  assert.match(component, /acceptResult = false;/);
+  assert.doesNotMatch(component, /controller\.abort\(\)/);
   assert.doesNotMatch(
     component,
     /\[[^\]]*confirmed[^\]]*\]/,
@@ -380,5 +400,5 @@ test("device setup Finish saves before closing and stays open when save fails", 
   assert.match(wizard, /const saved = saveResult\?\.saved === true \|\| await saveBinding\(\);/);
   assert.match(wizard, /if \(saved\) onClose\(\);/);
   assert.match(wizard, /onClick=\{\(\) => void finishWizard\(\)\}/);
-  assert.match(wizard, /disabled=\{!binding \|\| testResult\?\.overall_status !== "passed" \|\| savingBinding\}/);
+  assert.match(wizard, /disabled=\{wizardBusy \|\| !binding \|\| testResult\?\.overall_status !== "passed"\}/);
 });

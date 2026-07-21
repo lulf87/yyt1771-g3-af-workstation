@@ -5,6 +5,7 @@ export type ExposureCoordinatorOptions<
 > = {
   delayMs: number;
   apply: (value: number, signal: AbortSignal) => Promise<T>;
+  onBusyChange?: (busy: boolean) => void;
   onPending?: (value: number) => void;
   onSuccess: (
     actualUs: number,
@@ -25,6 +26,30 @@ export type ExposureCommitCoordinator = {
   cancel(): void;
   dispose(): void;
 };
+
+export type ExposureBusyTracker = {
+  begin(): () => void;
+};
+
+export function createExposureBusyTracker(
+  onBusyChange: (busy: boolean) => void
+): ExposureBusyTracker {
+  let activeOperations = 0;
+
+  return {
+    begin() {
+      activeOperations += 1;
+      if (activeOperations === 1) onBusyChange(true);
+      let finished = false;
+      return () => {
+        if (finished) return;
+        finished = true;
+        activeOperations -= 1;
+        if (activeOperations === 0) onBusyChange(false);
+      };
+    }
+  };
+}
 
 export type ExposureDraftSubmission =
   | { kind: "rejected"; reason: "finite" | "range" }
@@ -140,6 +165,14 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
   let queued: { value: number; intentId: number } | null = null;
   let latestIntentId = 0;
   let disposed = false;
+  let busy = false;
+
+  function syncBusy(): void {
+    const nextBusy = timer !== null || active !== null || queued !== null;
+    if (nextBusy === busy) return;
+    busy = nextBusy;
+    options.onBusyChange?.(busy);
+  }
 
   function clearPendingTimer(): void {
     if (timer !== null) {
@@ -157,9 +190,11 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
     if (disposed) return;
     if (active !== null) {
       queued = { value, intentId };
+      syncBusy();
       return;
     }
     void apply(value, intentId);
+    syncBusy();
   }
 
   async function apply(value: number, intentId: number): Promise<void> {
@@ -167,9 +202,9 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
     const controller = new AbortController();
     const current = { controller, intentId };
     active = current;
-    options.onPending?.(value);
 
     try {
+      options.onPending?.(value);
       const response = await options.apply(value, controller.signal);
       if (disposed || controller.signal.aborted || active !== current) {
         return;
@@ -196,6 +231,7 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
         queued = null;
         enqueueOrApply(next.value, next.intentId);
       }
+      syncBusy();
     }
   }
 
@@ -211,6 +247,7 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
         timer = null;
         enqueueOrApply(value, intentId);
       }, options.delayMs);
+      syncBusy();
     },
     commit(value) {
       if (disposed) {
@@ -227,6 +264,7 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
       clearPendingTimer();
       queued = null;
       nextIntentId();
+      syncBusy();
     },
     dispose() {
       if (disposed) {
@@ -236,7 +274,7 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
       clearPendingTimer();
       queued = null;
       nextIntentId();
-      active?.controller.abort();
+      syncBusy();
     }
   };
 }

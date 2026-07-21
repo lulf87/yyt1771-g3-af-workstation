@@ -76,7 +76,7 @@ test("operator run page receives probe state and wires the current-frame probe b
   assert.match(operatorPage, /const operatorRunActive = runningCamera \|\| runningOffline;/);
   assert.match(
     operatorPage,
-    /const probeCurrentFrameDisabled =\s+probing \|\| operatorRunActive \|\| !hasMeasurementRoi \|\| !sourceAvailable;/
+    /const probeCurrentFrameDisabled =\s+probing \|\| exposureBusy \|\| operatorRunActive \|\| !hasMeasurementRoi \|\| !sourceAvailable;/
   );
   assert.match(operatorPage, /disabled=\{probeCurrentFrameDisabled\}/);
   assert.match(operatorPage, /onClick=\{onProbeRealCameraSetup\}/);

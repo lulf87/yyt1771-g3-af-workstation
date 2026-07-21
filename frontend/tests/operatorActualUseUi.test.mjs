@@ -126,8 +126,13 @@ test("operator real-camera preview mounts the shared exposure control and locks 
   );
   assert.match(
     operatorPage,
-    /<ExposureControl[\s\S]{0,300}disabled=\{probing \|\| cameraPreviewRefreshStatus !== "ok"\}/,
+    /<ExposureControl[\s\S]{0,300}disabled=\{probing\}/,
     "probing must lock exposure while the camera is owned by the probe operation"
+  );
+  assert.doesNotMatch(
+    operatorPage,
+    /<ExposureControl[\s\S]{0,300}disabled=\{[^}]*cameraPreviewRefreshStatus/,
+    "20 Hz preview refreshing must not repeatedly disable exposure"
   );
   assert.match(component, /disabled=\{disabled \|\| runActive/);
   assert.match(component, /if \(runActive\)/);
@@ -139,7 +144,61 @@ test("operator real-camera preview mounts the shared exposure control and locks 
   assert.match(component, /readCameraExposure\(camera, controller\.signal\)/);
   assert.match(
     component,
-    /useEffect\([\s\S]{0,900}readCameraExposure\(camera, controller\.signal\)[\s\S]{0,900}\[cameraKey, runActive/
+    /useEffect\([\s\S]{0,1200}readCameraExposure\(camera, controller\.signal\)[\s\S]{0,1200}\[cameraKey, disabled, runActive/
+  );
+});
+
+test("shared exposure control reports balanced read and write busy and cancels only unsent work when locked", () => {
+  const component = readFileSync(exposureControlPath, "utf8");
+
+  assert.match(component, /onBusyChange: \(busy: boolean\) => void;/);
+  assert.match(component, /createExposureBusyTracker/);
+  assert.match(component, /onBusyChange:\s*\(busy\)/);
+  assert.match(component, /exposureBusyTrackerRef\.current!?\.begin\(\)/);
+  assert.match(component, /readCameraExposure\(camera, controller\.signal\)[\s\S]{0,1000}finally/);
+  assert.match(component, /let acceptResult = true;/);
+  assert.match(component, /if \(!acceptResult\) return;/);
+  assert.match(component, /return \(\) => \{[\s\S]{0,100}acceptResult = false;/);
+  assert.doesNotMatch(
+    component,
+    /controller\.abort\(\)/,
+    "effect cleanup must not turn local fetch rejection into false transport settlement"
+  );
+  assert.match(
+    component,
+    /if \(!disabled && !runActive\) return;[\s\S]{0,160}coordinatorRef\.current\?\.cancel\(\)/
+  );
+  assert.doesNotMatch(
+    component,
+    /\[cameraKey, (?:disabled, )?runActive\][\s\S]{0,80}coordinator\.dispose\(\)/,
+    "disabled or run transitions must not dispose an already-sent exposure request"
+  );
+});
+
+test("operator exposure busy pauses preview polling and gates Probe and Run", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(app, /const \[exposureBusy, setExposureBusy\] = useState\(false\);/);
+  assert.match(
+    app,
+    /if \(runningCamera \|\| probing \|\| exposureBusy\) return;/
+  );
+  assert.match(app, /onExposureBusyChange=\{setExposureBusy\}/);
+  assert.match(app, /async function runOperatorProbeCurrentFrame\(\)[\s\S]{0,180}if \(exposureBusy\) return;/);
+  assert.match(app, /function startOperatorRun\(\)[\s\S]{0,180}if \(exposureBusy\) return;/);
+  assert.match(operatorPage, /onExposureBusyChange: \(busy: boolean\) => void;/);
+  assert.match(operatorPage, /onBusyChange=\{onExposureBusyChange\}/);
+  assert.match(
+    operatorPage,
+    /const probeCurrentFrameDisabled =\s+probing \|\| exposureBusy \|\| operatorRunActive/
+  );
+  assert.match(
+    operatorPage,
+    /const startDisabled =\s+operatorRunActive \|\|\s+exposureBusy \|\|/
   );
 });
 

@@ -687,7 +687,7 @@ test("exposure coordinator reports a current non-aborted failure exactly once", 
   assert.equal(pending[0].signal.aborted, false);
 });
 
-test("exposure coordinator dispose clears and aborts work, ignores late completion, and stays inert", async () => {
+test("exposure coordinator dispose clears unsent work without aborting active transport, ignores late completion, and stays inert", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();
   const pending = [];
@@ -696,7 +696,12 @@ test("exposure coordinator dispose clears and aborts work, ignores late completi
   const errors = [];
   const coordinator = createExposureCommitCoordinator({
     delayMs: 200,
-    apply: createPendingApply(pending),
+    apply: (value, signal) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("transport aborted")), {
+        once: true
+      });
+      pending.push({ value, signal, resolve, reject });
+    }),
     onPending: (value) => pendingValues.push(value),
     onSuccess: (actualUs) => successes.push(actualUs),
     onError: (error) => errors.push(error),
@@ -712,7 +717,7 @@ test("exposure coordinator dispose clears and aborts work, ignores late completi
   coordinator.dispose();
 
   assert.equal(scheduler.timers.size, 0);
-  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending[0].signal.aborted, false);
   scheduledCallback();
   coordinator.schedule(14000);
   coordinator.commit(15000);
@@ -842,4 +847,92 @@ test("exposure compensation waits behind the active apply without treating abort
     { actualUs: 11950, context: { isLatestIntent: false } },
     { actualUs: 10010, context: { isLatestIntent: true } }
   ]);
+});
+
+test("exposure coordinator stays busy from debounce through the final coalesced apply", async () => {
+  const { createExposureCommitCoordinator } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const busyChanges = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onBusyChange: (busy) => busyChanges.push(busy),
+    onSuccess: () => {},
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.schedule(10000);
+  assert.deepEqual(busyChanges, [true]);
+
+  scheduler.fireOnlyTimer();
+  coordinator.commit(11000);
+  coordinator.commit(12000);
+  assert.deepEqual(busyChanges, [true]);
+  assert.deepEqual(pending.map(({ value }) => value), [10000]);
+
+  pending[0].resolve({ actual_us: 10000 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(busyChanges, [true]);
+  assert.deepEqual(pending.map(({ value }) => value), [10000, 12000]);
+
+  pending[1].resolve({ actual_us: 12000 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(busyChanges, [true, false]);
+});
+
+test("exposure coordinator does not release active busy early when disposed", async () => {
+  const { createExposureCommitCoordinator } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const busyChanges = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: (value, signal) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("transport aborted")), {
+        once: true
+      });
+      pending.push({ value, signal, resolve, reject });
+    }),
+    onBusyChange: (busy) => busyChanges.push(busy),
+    onSuccess: () => assert.fail("disposed request must not report success"),
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.commit(10000);
+  coordinator.commit(11000);
+  coordinator.dispose();
+
+  assert.equal(pending[0].signal.aborted, false);
+  assert.deepEqual(busyChanges, [true]);
+  assert.deepEqual(pending.map(({ value }) => value), [10000]);
+
+  pending[0].resolve({ actual_us: 10000 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(busyChanges, [true, false]);
+  assert.deepEqual(pending.map(({ value }) => value), [10000]);
+});
+
+test("exposure busy tracker balances overlapping read and write lifetimes", async () => {
+  const { createExposureBusyTracker } = await loadExposureControlModule();
+  const busyChanges = [];
+  const tracker = createExposureBusyTracker((busy) => busyChanges.push(busy));
+
+  const finishRead = tracker.begin();
+  const finishWrite = tracker.begin();
+  assert.deepEqual(busyChanges, [true]);
+
+  finishRead();
+  finishRead();
+  assert.deepEqual(busyChanges, [true]);
+
+  finishWrite();
+  assert.deepEqual(busyChanges, [true, false]);
 });
