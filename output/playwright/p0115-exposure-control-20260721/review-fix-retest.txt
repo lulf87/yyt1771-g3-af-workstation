@@ -1,0 +1,42 @@
+P-0115 review-fix incremental browser retest
+Date: 2026-07-22
+Browser: Chromium 134.0.6998.35 (gstack browse)
+OS: macOS 26.1 (Build 25B78)
+Frontend: http://127.0.0.1:18026/
+Backend: http://127.0.0.1:18026/
+
+Case 1: initial exposure read owns Probe, Start, and Settings
+- Development fake exposure latency: 800 ms.
+- Gate observed about 150 ms after navigation.
+- Before forced click: Probe disabled=true, Start disabled=true, Settings disabled=true,
+  and the page displayed Loading exposure.
+- The test removed the two action buttons' DOM disabled attributes and invoked click()
+  to exercise the handlers defensively.
+- Network during the guarded interval contained POST /api/camera/exposure/read.
+- Network contained no /api/camera/setup-probe and no /api/real-camera-runs request.
+- Browser console errors: none.
+- Screenshot: review-fix-initial-gate.png.
+
+Case 2: temperature unavailable releases the unreadable exposure gate
+- The isolated ignored development profile kept DEV-EXPOSURE-001 but configured an
+  empty LU92XX serial port.
+- GET /api/operator/source-status returned real_hardware_available=false with
+  errors=["temperature serial port is not configured"].
+- After the status completed: Settings disabled=false, Loading exposure=false,
+  and no POST /api/camera/exposure/read was sent.
+- The page displayed Real hardware unavailable and kept Open device setup enabled.
+- Browser console errors: none.
+- Screenshot: review-fix-temperature-unavailable.png.
+
+Automated provenance evidence
+- The integration regression creates a real compact v2 run through
+  iter_real_camera_run_events(..., compact_stream=True), reads run_meta and
+  analysis_summary, creates the real ZIP through export_run_bundle(), then imports
+  that ZIP through import_run_export_bytes().
+- The development fake source remains operator_data_source=real_hardware for schema
+  compatibility, while both simulated flags are true, overall_kind is
+  development_fake, labels explicitly say development fake, and export validity is
+  forbidden for formal real-hardware use.
+
+Result: PASS for macOS Chromium development-fake incremental coverage.
+Outstanding: Windows 11 x64 packaged app + real Hik camera and real LU92XX verification.

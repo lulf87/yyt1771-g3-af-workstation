@@ -37,8 +37,19 @@ def development_fake_hardware_requested(
     environ: Mapping[str, str] | None = None,
 ) -> bool:
     environment = os.environ if environ is None else environ
-    if not _bool(environment.get(DEVELOPMENT_FAKE_HARDWARE_ENV), default=False):
+    serial_number = str(profile.get("serial_number", "") or "").strip().upper()
+    development_fake_profile = serial_number.startswith(DEVELOPMENT_FAKE_SERIAL_PREFIX)
+    fake_hardware_value = environment.get(DEVELOPMENT_FAKE_HARDWARE_ENV)
+    if fake_hardware_value is None or fake_hardware_value == "" or fake_hardware_value == "0":
+        if development_fake_profile:
+            raise CameraUnavailableError(
+                f'Development fake hardware profile requires {DEVELOPMENT_FAKE_HARDWARE_ENV}="1".'
+            )
         return False
+    if fake_hardware_value != "1":
+        raise CameraUnavailableError(
+            f'{DEVELOPMENT_FAKE_HARDWARE_ENV} must be exactly "1" to enable development fake hardware.'
+        )
     product_mode_value = environment.get(PRODUCT_MODE_ENV)
     if product_mode_value is None or not str(product_mode_value).strip():
         raise CameraUnavailableError(
@@ -47,8 +58,7 @@ def development_fake_hardware_requested(
     product_mode = str(product_mode_value).strip().lower()
     if product_mode != "development":
         raise CameraUnavailableError("Development fake hardware is disabled in production product mode.")
-    serial_number = str(profile.get("serial_number", "") or "").strip().upper()
-    if not serial_number.startswith(DEVELOPMENT_FAKE_SERIAL_PREFIX):
+    if not development_fake_profile:
         raise CameraUnavailableError(
             "Development fake hardware requires an explicit DEV-EXPOSURE profile.",
             details={"serial_number": serial_number},

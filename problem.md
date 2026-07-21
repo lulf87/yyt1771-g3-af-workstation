@@ -10965,6 +10965,9 @@ Hik MVS 相机打开时已经读取 `camera.exposure_us` 并设置 `ExposureTime
 - 开发专用确定性伪 Hik 相机仅在 `development` + `YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE=1` + `DEV-EXPOSURE-` 串号三重门生效；提供 `100–100000 μs` 量程、`100 μs` 步长、half-up 量化、800 ms 延迟与 55000 μs 一次性失败注入。一次性失败消耗改为进程内、按串号+量化值加锁登记，避免 source 回滚替换后重复失败。
 - Device Setup 关闭、正式 run 停止和页面初始化后都重读当前曝光；过期 fulfilled/rejected/settlement 不得覆盖新相机状态或提前释放 preview gate。
 - 真实浏览器发现并修复了四个同源竞态：Device Setup 关闭后 Operator 陈旧值、关闭过渡期 preview 抢占相机、跨 source 的 fail-once 重复失败、run 期间 Settings 绕过。最后一次 clean reload 又定位并修复了初始曝光读取与 preview 并发导致的 409；初始 gate 只在真实相机曝光控件可挂载时生效，不会锁死硬件不可用页的 Device Setup。
+- 2026-07-22 审查修复：开发伪硬件 v2 run 的 meta、summary、ZIP 导出和导入来源统一标记为 camera/temperature simulated，`overall_kind=development_fake`，并带明确双语开发伪硬件标签；保留既有 `operator_data_source` 值，避免破坏旧 UI/import。该类 real-runtime 导出同时强制 `source_validity.status=forbidden`，不能呈现为正式真实硬件结果；正常真实 Hik + LU92XX 来源标记保持不变。
+- 开发伪硬件开关改为只接受精确字符串 `1`；`true/yes/on` 在 builder、discovery、temperature 和 API 入口均明确拒绝。未表达伪硬件意图的普通 simulated/offline profile 继续可用。
+- 初始曝光门与 ExposureControl 的实际可读条件统一，包含温控可用性、相机 identity 和 Device Setup 状态；温控 unavailable/error 不再留下无法结算的门。Probe、Start 的 DOM disabled 和处理器共享 `operatorCameraActionLocked`，初始 read 期间程序化调用也不会触发 API。
 
 #### Tests run
 
@@ -10977,14 +10980,17 @@ npm run build
 # PASS
 
 PYTHONPATH=backend/src pytest -q backend/tests/unit/test_development_fake_camera.py
-# 6 passed
+# 18 passed
+
+PYTHONPATH=backend/src pytest -q backend/tests/unit/test_development_fake_camera.py backend/tests/unit/test_source_provenance.py backend/tests/integration/test_real_camera_run_service.py -k development_fake
+# 20 passed, 32 deselected
 
 PYTHONPATH=backend/src pytest -q backend/tests
-# 322 passed, 12 skipped
+# 336 passed, 12 skipped
 
 cd frontend
 npm test
-# 242 passed
+# 245 passed
 
 npm run build
 # PASS (TypeScript + Vite production build)
@@ -11007,6 +11013,21 @@ git diff --check
 - Actual: 上述开发伪硬件流程通过。关闭过渡读取耗时 816.6 ms，首个 preview 在 close 后 +888.0 ms 启动；最终 clean reload 中 exposure/read 从 227.2 ms 开始、耗时 840.6 ms，首个 preview 在 1071.4 ms 启动（比 read 完成晚 3.6 ms）。console 无错误，完成请求无 4xx/5xx。首次 55000 μs 的 422 是预期失败注入；早期缺少 registry 环境变量的 500 与主动停服期间 `ERR_CONNECTION_REFUSED` 已单独保留在证据中。UI 在 busy 时禁止切换相机，因此未绕过安全锁伪造身份竞态；过期 fulfilled/rejected/settlement 由可执行自动测试覆盖。
 - Result: PASS (macOS Chromium + development-only deterministic fake hardware)
 - Evidence: `output/playwright/p0115-exposure-control-20260721/environment.txt`, `steps-and-assertions.txt`, `network-summary.txt`, `console-summary.txt`, `screenshots.txt`, `run-snapshot.txt` 及同目录 PNG；`output/runs/run-real_camera-20260721T192346553539Z/run_meta.json` 和 `output/runs/run-real_camera-20260721T193022948373Z/run_meta.json`。
+
+#### Review-fix incremental browser retest
+
+- Retest date: 2026-07-22
+- Browser: Chromium 134.0.6998.35 (gstack browse)
+- OS: macOS 26.1 (Build 25B78)
+- Frontend URL: `http://127.0.0.1:18026/`
+- Backend URL: `http://127.0.0.1:18026/`
+- Dataset: none; development-only deterministic fake hardware；dataset registry 仍通过外部 local config 加载
+- Page: Operator Live Test / Device setup entry
+- Steps: 在 800 ms 初始曝光读取期间确认 Probe、Start 与顶栏 Settings 均锁定；随后移除 Probe/Start 的 DOM `disabled` 并程序化 click，审计 network；再用温控串口为空的开发 profile 重启，等待 `/api/operator/source-status` 返回 `temperature serial port is not configured` 后检查页面、Settings 和 network。
+- Expected: 初始读取期间即使程序化触发也不得发送 Probe/Run API；温控 unavailable/error 时 ExposureControl 不挂载、不读取，Device Setup 可用，页面不得永久锁死。
+- Actual: 初始 gate 于页面加载后约 150 ms 生效，Probe/Start/Settings 均为 disabled；程序化 click 后 network 仅有启动读取请求，无 setup-probe 或 real-camera-run 请求。温控串口缺失时 source-status 为 unavailable，Settings enabled、无 `Loading exposure`、无 exposure-read 请求；两次流程 console 均无错误。
+- Result: PASS (macOS Chromium + development-only deterministic fake hardware)
+- Evidence: `output/playwright/p0115-exposure-control-20260721/review-fix-retest.txt`, `review-fix-initial-gate.png`, `review-fix-temperature-unavailable.png`
 
 #### Remaining browser/hardware verification
 

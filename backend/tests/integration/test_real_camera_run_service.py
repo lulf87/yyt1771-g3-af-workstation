@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from zipfile import ZipFile
 
 import numpy as np
 import pytest
@@ -18,6 +20,8 @@ from yyt1771_g3.core.models import (
     RotatedROI,
 )
 from yyt1771_g3.services import real_camera_run_service as real_service
+from yyt1771_g3.services.export_service import export_run_bundle
+from yyt1771_g3.services.import_service import import_run_export_bytes
 from yyt1771_g3.services.real_camera_run_service import _attach_temperature, iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.storage.run_store import RunStore
 from yyt1771_g3.temperature.base import TemperatureReading
@@ -330,6 +334,64 @@ def test_operator_real_camera_stream_uses_compact_v2_completion(tmp_path: Path) 
     assert run_store.read_analysis_summary(complete["run_id"]).counts["region_results"] == 3
     assert not run_store.run_manifest_path(complete["run_id"]).exists()
     assert not run_store.analysis_result_path(complete["run_id"]).exists()
+
+
+def test_development_fake_v2_provenance_survives_summary_export_and_import(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE", "1")
+    monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "development")
+    monkeypatch.setenv("YYT1771_G3_RUNTIME_SOURCE", "real_hardware")
+    run_store = RunStore(tmp_path / "runs")
+
+    events = list(
+        iter_real_camera_run_events(
+            run_store,
+            camera_source=FakeCameraSource(),
+            temperature_controller=FakeTemperatureController(),
+            measurement=_real_camera_measurement(max_frames=1),
+            max_frames=1,
+            target_fps=10.0,
+            camera_profile={
+                "backend": "hik_gige_mvs",
+                "model": "MV-DEV-EXPOSURE",
+                "serial_number": "DEV-EXPOSURE-001",
+            },
+            temperature_backend="lu92xx_modbus_rtu",
+            compact_stream=True,
+        )
+    )
+    run_id = events[-1]["run_id"]
+    meta = run_store.read_run_meta(run_id)
+    summary = run_store.read_analysis_summary(run_id)
+
+    for payload in (meta.provenance, summary.provenance):
+        assert payload["camera_is_simulated"] is True
+        assert payload["temperature_is_simulated"] is True
+        assert payload["overall_kind"] == "development_fake"
+        assert payload["display_label_en"] == (
+            "Development fake camera + development fake temperature controller"
+        )
+    assert meta.operator_data_source == "real_hardware"
+    assert summary.operator_data_source == "real_hardware"
+
+    bundle_path = export_run_bundle(run_store, run_id)
+    with ZipFile(bundle_path) as archive:
+        export_payload = json.loads(archive.read("run_export.json"))
+    assert export_payload["source_notice"]["en"] == (
+        "Simulated data for debugging only; it does not represent a real test result."
+    )
+    assert export_payload["source_validity"]["status"] == "forbidden"
+    imported = import_run_export_bytes(filename=bundle_path.name, content=bundle_path.read_bytes())
+    exported_source = imported.provenance["imported_from_provenance"]
+    assert imported.operator_data_source == "real_hardware"
+    assert imported.provenance["camera_is_simulated"] is True
+    assert imported.provenance["temperature_is_simulated"] is True
+    assert exported_source["overall_kind"] == "development_fake"
+    assert exported_source["display_label_en"] == (
+        "Development fake camera + development fake temperature controller"
+    )
 
 
 def test_real_camera_run_closes_resources_once_when_initialization_fails(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001

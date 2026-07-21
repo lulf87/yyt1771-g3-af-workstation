@@ -22,6 +22,26 @@ def test_camera_runtime_provenance_marks_real_hardware_when_backends_are_real() 
     assert provenance["display_label_zh"] == "真实相机 + 真实温控"
 
 
+def test_camera_runtime_provenance_marks_development_fake_hardware_explicitly() -> None:
+    provenance = camera_runtime_provenance(
+        camera_profile={
+            "backend": "hik_gige_mvs",
+            "model": "MV-DEV-EXPOSURE",
+            "serial_number": "DEV-EXPOSURE-001",
+        },
+        temperature_backend="lu92xx_modbus_rtu",
+        development_fake_hardware=True,
+    )
+
+    assert provenance["camera_is_simulated"] is True
+    assert provenance["temperature_is_simulated"] is True
+    assert provenance["camera_backend_kind"] == "development_fake"
+    assert provenance["temperature_backend_kind"] == "development_fake"
+    assert provenance["overall_kind"] == "development_fake"
+    assert provenance["display_label_en"] == "Development fake camera + development fake temperature controller"
+    assert provenance["display_label_zh"] == "开发伪相机 + 开发伪温控"
+
+
 def test_camera_runtime_provenance_detects_simulated_dataset_camera_markers() -> None:
     provenance = camera_runtime_provenance(
         camera_profile={"backend": "hik_gige_mvs"},

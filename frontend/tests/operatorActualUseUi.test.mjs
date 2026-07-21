@@ -123,7 +123,7 @@ test("operator real-camera preview mounts the shared exposure control and locks 
 
   assert.match(
     operatorPage,
-    /!simulatedMode[\s\S]{0,300}<ExposureControl[\s\S]{0,250}camera=\{operatorCameraIdentity\}/
+    /operatorExposureControlCanRead \? \([\s\S]{0,160}<ExposureControl[\s\S]{0,250}camera=\{operatorCameraIdentity\}/
   );
   assert.match(mainSource, /const \[hardwareProfile, setHardwareProfile\] = useState/);
   assert.doesNotMatch(mainSource, /setHardwareProfile\(await getHardwareProfile\(\)\)/);
@@ -277,8 +277,8 @@ test("operator exposure busy pauses preview polling and gates Probe and Run", ()
     /onExposureBusyChange=\{cameraBusyOwnerRegistry\.setOwnerBusy\}/
   );
   assert.doesNotMatch(app, /onExposureBusyChange=\{setExposureBusy\}/);
-  assert.match(app, /async function runOperatorProbeCurrentFrame\(\)[\s\S]{0,180}if \(exposureBusy\) return;/);
-  assert.match(app, /function startOperatorRun\(\)[\s\S]{0,180}if \(exposureBusy\) return;/);
+  assert.match(app, /async function runOperatorProbeCurrentFrame\(\)[\s\S]{0,180}runOperatorCameraAction\(operatorCameraActionLocked/);
+  assert.match(app, /function startOperatorRun\(\)[\s\S]{0,180}runOperatorCameraAction\(operatorCameraActionLocked/);
   assert.match(
     operatorPage,
     /onExposureBusyChange: \(owner: CameraBusyOwnerToken, busy: boolean\) => void;/
@@ -286,11 +286,11 @@ test("operator exposure busy pauses preview polling and gates Probe and Run", ()
   assert.match(operatorPage, /onBusyChange=\{onExposureBusyChange\}/);
   assert.match(
     operatorPage,
-    /const probeCurrentFrameDisabled =\s+probing \|\| exposureBusy \|\| operatorRunActive/
+    /const probeCurrentFrameDisabled =\s+probing \|\| operatorCameraActionLocked \|\| operatorRunActive/
   );
   assert.match(
     operatorPage,
-    /const startDisabled =\s+operatorRunActive \|\|\s+exposureBusy \|\|/
+    /const startDisabled =\s+operatorRunActive \|\|\s+operatorCameraActionLocked \|\|/
   );
 });
 
@@ -304,7 +304,7 @@ test("formal runs lock every Device Setup entry and defensively guard the handle
 
   assert.match(
     app,
-    /const cameraUnavailable =[\s\S]{0,120}exposureBusy \|\| runningCamera \|\| running \|\| operatorExposureReadPending;/,
+    /const operatorCameraActionLocked = exposureBusy \|\| operatorExposureReadPending;[\s\S]{0,100}const cameraUnavailable =\s+operatorCameraActionLocked \|\| runningCamera \|\| running;/,
     "one App-level camera lock must cover exposure operations and both run modes"
   );
   assert.match(
@@ -339,12 +339,12 @@ test("initial real-camera exposure read gates preview and Device Setup without b
 
   assert.match(
     app,
-    /const operatorExposureReadPending =[\s\S]{0,240}operatorSourceStatus\?\.real_hardware_available === true[\s\S]{0,120}operatorExposureReactivationPending;/,
+    /const operatorExposureControlState =[\s\S]{0,400}temperatureUnavailable: operatorTemperatureHardwareUnavailable[\s\S]{0,180}const operatorExposureReadPending = isOperatorExposureReadPending\([\s\S]{0,120}operatorExposureReactivationPending/,
     "the startup gate must apply only when the real-camera exposure control can mount"
   );
   assert.match(
     app,
-    /const cameraUnavailable =[\s\S]{0,160}operatorExposureReadPending/,
+    /const operatorCameraActionLocked = exposureBusy \|\| operatorExposureReadPending;[\s\S]{0,100}const cameraUnavailable =\s+operatorCameraActionLocked/,
     "Device Setup must not race the initial accepted exposure read"
   );
   assert.match(

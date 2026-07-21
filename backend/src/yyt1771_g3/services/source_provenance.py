@@ -74,6 +74,7 @@ def camera_runtime_provenance(
     camera_meta: dict[str, Any] | None = None,
     temperature_backend: str | None = None,
     temperature_source: str | None = None,
+    development_fake_hardware: bool = False,
 ) -> dict[str, Any]:
     profile = _mapping(camera_profile)
     meta = camera_meta or {}
@@ -114,7 +115,14 @@ def camera_runtime_provenance(
     temp_backend = _first_text(temperature_backend, temperature_source)
     temp_is_simulated = _temperature_is_simulated(temp_backend, temperature_source)
     temp_kind = _temperature_backend_kind(temp_backend, temp_is_simulated=temp_is_simulated)
-    overall_kind = _overall_runtime_kind(camera_is_simulated, temp_is_simulated)
+    if development_fake_hardware:
+        camera_is_simulated = True
+        camera_backend_kind = "development_fake"
+        temp_is_simulated = True
+        temp_kind = "development_fake"
+        overall_kind = "development_fake"
+    else:
+        overall_kind = _overall_runtime_kind(camera_is_simulated, temp_is_simulated)
     return _provenance(
         acquisition_source="camera_runtime",
         camera_backend=camera_backend,
@@ -127,8 +135,16 @@ def camera_runtime_provenance(
         temperature_backend_kind=temp_kind,
         temperature_is_simulated=temp_is_simulated,
         overall_kind=overall_kind,
-        display_label_zh=_runtime_label_zh(overall_kind, camera_is_simulated, temp_is_simulated),
-        display_label_en=_runtime_label_en(overall_kind, camera_is_simulated, temp_is_simulated),
+        display_label_zh=(
+            "开发伪相机 + 开发伪温控"
+            if development_fake_hardware
+            else _runtime_label_zh(overall_kind, camera_is_simulated, temp_is_simulated)
+        ),
+        display_label_en=(
+            "Development fake camera + development fake temperature controller"
+            if development_fake_hardware
+            else _runtime_label_en(overall_kind, camera_is_simulated, temp_is_simulated)
+        ),
     )
 
 

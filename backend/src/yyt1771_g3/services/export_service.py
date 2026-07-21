@@ -638,7 +638,10 @@ def _source_notice(manifest: RunManifest) -> dict[str, str] | None:
 def _source_validity(manifest: RunManifest) -> dict[str, str] | None:
     provenance = manifest.provenance or {}
     overall_kind = str(provenance.get("overall_kind") or "")
-    if manifest.operator_data_source == "real_camera" and overall_kind != "real_hardware":
+    if (
+        manifest.operator_data_source in {"real_camera", "real_hardware"}
+        and overall_kind != "real_hardware"
+    ):
         return {
             "status": "forbidden",
             "reason_zh": "真实相机模式的来源不是完整真实硬件，不能作为真实测试结果导出。",

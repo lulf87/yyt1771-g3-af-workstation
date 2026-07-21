@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from yyt1771_g3.camera.base import CameraSource
+from yyt1771_g3.camera.simulated_source import development_fake_hardware_requested
 from yyt1771_g3.core.enums import TemperatureSyncStatus
 from yyt1771_g3.core.image_io import save_preview_png
 from yyt1771_g3.core.models import (
@@ -557,6 +558,7 @@ def _iter_real_camera_run_events_multi(
         provenance = camera_runtime_provenance(
             camera_profile=camera_profile or {},
             temperature_backend=temperature_backend,
+            development_fake_hardware=development_fake_hardware_requested(camera_profile or {}),
         )
         initialize_v2_run(
             run_store,

@@ -142,6 +142,11 @@ import {
 import { createHardwareProfileRefreshSession } from "./hardwareProfileRefreshSession";
 import { createHardwareSetupSession } from "./hardwareSetupSession";
 import {
+  operatorExposureControlCanRead as canReadOperatorExposureControl,
+  operatorExposureReadPending as isOperatorExposureReadPending,
+  runOperatorCameraAction
+} from "./operatorCameraGate";
+import {
   displayPointToMeasurement,
   fitSourceToDisplay,
   measurementPointToDisplay,
@@ -724,14 +729,23 @@ function App() {
     temperatureStatus?.temperature_status === "unavailable" ||
     Boolean(temperatureStatus?.reading.error);
   const operatorRealHardwareAvailable = operatorSourceRealHardwareAvailable && !operatorTemperatureHardwareUnavailable;
-  const operatorExposureReadPending =
-    uiMode === "operator" &&
-    page === "operatorRun" &&
-    operatorDataSource === "real_camera" &&
-    operatorSourceStatus?.real_hardware_available === true &&
-    operatorExposureReactivationPending;
+  const operatorExposureControlState = {
+    operatorMode: uiMode === "operator",
+    operatorRunPage: page === "operatorRun",
+    realCameraSource: operatorDataSource === "real_camera",
+    sourceRealHardwareAvailable: operatorSourceRealHardwareAvailable,
+    cameraIdentityAvailable: operatorCameraIdentity !== null,
+    deviceSetupOpen,
+    temperatureUnavailable: operatorTemperatureHardwareUnavailable
+  };
+  const operatorExposureControlCanRead = canReadOperatorExposureControl(operatorExposureControlState);
+  const operatorExposureReadPending = isOperatorExposureReadPending(
+    operatorExposureControlState,
+    operatorExposureReactivationPending
+  );
+  const operatorCameraActionLocked = exposureBusy || operatorExposureReadPending;
   const cameraUnavailable =
-    exposureBusy || runningCamera || running || operatorExposureReadPending;
+    operatorCameraActionLocked || runningCamera || running;
   const operatorPreviewAllowed =
     uiMode === "operator" &&
     page === "operatorRun" &&
@@ -1206,17 +1220,18 @@ function App() {
   }
 
   async function runOperatorProbeCurrentFrame() {
-    if (exposureBusy) return;
-    if (appRuntime?.runtime_source === "simulated_material") {
-      await runProbe(frameIndex);
-      return;
-    }
-    if (!operatorRealHardwareAvailable) {
-      setOperatorStartMessage(t("Real hardware unavailable"));
-      setProbe(null);
-      return;
-    }
-    await runOperatorRealCameraSetupProbe();
+    await runOperatorCameraAction(operatorCameraActionLocked, async () => {
+      if (appRuntime?.runtime_source === "simulated_material") {
+        await runProbe(frameIndex);
+        return;
+      }
+      if (!operatorRealHardwareAvailable) {
+        setOperatorStartMessage(t("Real hardware unavailable"));
+        setProbe(null);
+        return;
+      }
+      await runOperatorRealCameraSetupProbe();
+    });
   }
 
   async function startLiveOfflineRun(measurementOverride?: MeasurementDefinition) {
@@ -1371,12 +1386,13 @@ function App() {
   }
 
   function startOperatorRun() {
-    if (exposureBusy) return;
-    if (appRuntime?.runtime_source === "simulated_material") {
-      startOperatorOfflineRun();
-      return;
-    }
-    startOperatorRealCameraRun();
+    runOperatorCameraAction(operatorCameraActionLocked, () => {
+      if (appRuntime?.runtime_source === "simulated_material") {
+        startOperatorOfflineRun();
+        return;
+      }
+      startOperatorRealCameraRun();
+    });
   }
 
   function startOperatorOfflineRun() {
@@ -1843,6 +1859,8 @@ function App() {
               deviceSetupOpen={deviceSetupOpen}
               cameraUnavailable={cameraUnavailable}
               exposureBusy={exposureBusy}
+              operatorCameraActionLocked={operatorCameraActionLocked}
+              operatorExposureControlCanRead={operatorExposureControlCanRead}
               running={running}
               previewingCamera={previewingCamera}
               runningCamera={runningCamera}
@@ -1977,6 +1995,8 @@ function PageContent({
   deviceSetupOpen,
   cameraUnavailable,
   exposureBusy,
+  operatorCameraActionLocked,
+  operatorExposureControlCanRead,
   running,
   previewingCamera,
   runningCamera,
@@ -2044,6 +2064,8 @@ function PageContent({
   deviceSetupOpen: boolean;
   cameraUnavailable: boolean;
   exposureBusy: boolean;
+  operatorCameraActionLocked: boolean;
+  operatorExposureControlCanRead: boolean;
   running: boolean;
   previewingCamera: boolean;
   runningCamera: boolean;
@@ -2216,6 +2238,8 @@ function PageContent({
         deviceSetupOpen={deviceSetupOpen}
         cameraUnavailable={cameraUnavailable}
         exposureBusy={exposureBusy}
+        operatorCameraActionLocked={operatorCameraActionLocked}
+        operatorExposureControlCanRead={operatorExposureControlCanRead}
         operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
         operatorStartMessage={operatorStartMessage}
         temperatureStatus={temperatureStatus}
@@ -2360,6 +2384,8 @@ function OperatorRunPage({
   deviceSetupOpen,
   cameraUnavailable,
   exposureBusy,
+  operatorCameraActionLocked,
+  operatorExposureControlCanRead,
   operatorSettings,
   operatorStartMessage,
   temperatureStatus,
@@ -2403,6 +2429,8 @@ function OperatorRunPage({
   deviceSetupOpen: boolean;
   cameraUnavailable: boolean;
   exposureBusy: boolean;
+  operatorCameraActionLocked: boolean;
+  operatorExposureControlCanRead: boolean;
   operatorSettings: OperatorConfirmedSettings;
   operatorStartMessage: string;
   temperatureStatus: TemperatureStatusResponse | null;
@@ -2526,11 +2554,11 @@ function OperatorRunPage({
     .filter((region) => region.enabled)
     .every((region) => region.roi.width > 0 && region.roi.height > 0);
   const probeCurrentFrameDisabled =
-    probing || exposureBusy || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
+    probing || operatorCameraActionLocked || operatorRunActive || !hasMeasurementRoi || !sourceAvailable;
   const setupProbeSummary = setupProbeDetection ? operatorProbeSummary(setupProbeDetection, language) : "";
   const startDisabled =
     operatorRunActive ||
-    exposureBusy ||
+    operatorCameraActionLocked ||
     !sourceAvailable ||
     (!simulatedMode && measurement.measurement_id === REAL_CAMERA_BOOTSTRAP_MEASUREMENT_ID);
   const sourceBadgeLabel = simulatedMode
@@ -2593,7 +2621,7 @@ function OperatorRunPage({
         <div className="controlStack operatorCameraStatus">
           <h3>{t("Camera")}</h3>
           {cameraPreviewError && !cameraOk && realHardwareAvailable ? <div className="inlineError">{cameraPreviewError.message}</div> : null}
-          {!simulatedMode && realHardwareAvailable ? (
+          {operatorExposureControlCanRead ? (
             <ExposureControl
               camera={operatorCameraIdentity}
               disabled={probing || deviceSetupOpen}

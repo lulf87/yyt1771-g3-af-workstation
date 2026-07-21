@@ -37,7 +37,8 @@ def test_development_fake_hardware_requires_environment_profile_and_development_
 
     profile = _explicit_profile()
     assert gate(profile, environ={FAKE_ENV: "1", PRODUCT_MODE_ENV: "development"}) is True
-    assert gate(profile, environ={PRODUCT_MODE_ENV: "development"}) is False
+    with pytest.raises(CameraUnavailableError, match='requires YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE="1"'):
+        gate(profile, environ={PRODUCT_MODE_ENV: "development"})
 
     with pytest.raises(CameraUnavailableError, match="requires an explicit development product mode"):
         gate(profile, environ={FAKE_ENV: "1"})
@@ -50,6 +51,111 @@ def test_development_fake_hardware_requires_environment_profile_and_development_
 
     with pytest.raises(CameraUnavailableError, match="disabled in production"):
         gate(profile, environ={FAKE_ENV: "1", PRODUCT_MODE_ENV: "production"})
+
+
+@pytest.mark.parametrize("alias", ["true", "yes", "on"])
+def test_development_fake_hardware_rejects_truthy_aliases_explicitly(alias: str) -> None:
+    with pytest.raises(CameraUnavailableError, match='must be exactly "1"'):
+        simulated_source.development_fake_hardware_requested(
+            _explicit_profile(),
+            environ={FAKE_ENV: alias, PRODUCT_MODE_ENV: "development"},
+        )
+
+
+@pytest.mark.parametrize("layer", ["builder", "discovery", "temperature", "api"])
+def test_development_fake_alias_is_rejected_at_every_hardware_entry_point(
+    layer: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.services.hardware_setup_service import discover_hardware_cameras
+
+    monkeypatch.setenv(FAKE_ENV, "true")
+    monkeypatch.setenv(PRODUCT_MODE_ENV, "development")
+    config = HardwareConfig(
+        camera=CameraConfig(**_explicit_profile()),
+        temp=TempConfig(
+            backend="lu92xx_modbus_rtu",
+            serial=SerialPortConfig(port="DEV-LU92XX-001"),
+        ),
+    )
+
+    if layer == "builder":
+        operation = lambda: api_main._build_camera_source(config.camera.to_profile())
+    elif layer == "discovery":
+        operation = lambda: discover_hardware_cameras(config)
+    elif layer == "temperature":
+        operation = lambda: api_main.build_temperature_controller(config)
+    else:
+        monkeypatch.setattr(api_main, "_hardware_config", lambda: config)
+        response = TestClient(api_main.app).get("/api/hardware/cameras")
+        assert response.status_code == 503
+        assert 'must be exactly "1"' in response.json()["detail"]["message"]
+        return
+
+    with pytest.raises(CameraUnavailableError, match='must be exactly "1"'):
+        operation()
+
+
+@pytest.mark.parametrize("layer", ["builder", "discovery", "temperature", "api"])
+def test_development_fake_profile_without_switch_is_rejected_at_every_hardware_entry_point(
+    layer: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.services.hardware_setup_service import discover_hardware_cameras
+
+    monkeypatch.delenv(FAKE_ENV, raising=False)
+    monkeypatch.setenv(PRODUCT_MODE_ENV, "development")
+    config = HardwareConfig(
+        camera=CameraConfig(**_explicit_profile()),
+        temp=TempConfig(
+            backend="lu92xx_modbus_rtu",
+            serial=SerialPortConfig(port="DEV-LU92XX-001"),
+        ),
+    )
+
+    if layer == "builder":
+        operation = lambda: api_main._build_camera_source(config.camera.to_profile())
+    elif layer == "discovery":
+        operation = lambda: discover_hardware_cameras(config)
+    elif layer == "temperature":
+        operation = lambda: api_main.build_temperature_controller(config)
+    else:
+        monkeypatch.setattr(api_main, "_hardware_config", lambda: config)
+        response = TestClient(api_main.app).get("/api/hardware/cameras")
+        assert response.status_code == 503
+        assert 'requires YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE="1"' in response.json()["detail"]["message"]
+        return
+
+    with pytest.raises(
+        CameraUnavailableError,
+        match='requires YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE="1"',
+    ):
+        operation()
+
+
+def test_ordinary_simulated_hardware_still_works_without_fake_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.temperature.simulated import SimulatedTemperatureController
+
+    monkeypatch.delenv(FAKE_ENV, raising=False)
+    monkeypatch.setenv(PRODUCT_MODE_ENV, "development")
+    profile = {
+        "backend": "simulated",
+        "serial_number": "SIM-G3",
+        "simulated_dataset_id": "golden_a_20260522_dev_lab",
+    }
+    config = HardwareConfig(
+        camera=CameraConfig(**profile),
+        temp=TempConfig(backend="simulated_temperature"),
+    )
+
+    assert simulated_source.development_fake_hardware_requested(profile) is False
+    assert isinstance(api_main._build_camera_source(profile), simulated_source.SimulatedCameraSource)
+    assert isinstance(api_main.build_temperature_controller(config), SimulatedTemperatureController)
 
 
 def test_development_fake_exposure_is_quantized_and_can_fail_exactly_once(
