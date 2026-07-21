@@ -241,6 +241,23 @@ export type HardwareCameraDevice = {
   is_selected: boolean;
 };
 
+export type CameraExposureIdentity = Pick<
+  HardwareCameraDevice,
+  "backend" | "transport" | "model" | "serial_number" | "ip" | "user_defined_name"
+>;
+
+export type CameraExposureState = {
+  supported: boolean;
+  minimum_us: number | null;
+  maximum_us: number | null;
+  increment_us: number | null;
+  requested_us: number | null;
+  actual_us: number | null;
+  saved: boolean;
+  editable: boolean;
+  lock_reason: string;
+};
+
 export type HardwareTemperatureBinding = {
   backend: "lu92xx_modbus_rtu" | string;
   serial_port: string;
@@ -1207,6 +1224,31 @@ export async function saveHardwareSdkPaths(request: {
 
 export async function listHardwareCameras(): Promise<HardwareCameraDevice[]> {
   return requestJson<HardwareCameraDevice[]>("/api/hardware/cameras");
+}
+
+export async function readCameraExposure(
+  camera: CameraExposureIdentity | null,
+  signal?: AbortSignal
+): Promise<CameraExposureState> {
+  return requestJson<CameraExposureState>("/api/camera/exposure/read", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ camera }),
+    signal
+  });
+}
+
+export async function updateCameraExposure(
+  exposureUs: number,
+  camera: CameraExposureIdentity | null,
+  signal?: AbortSignal
+): Promise<CameraExposureState> {
+  return requestJson<CameraExposureState>("/api/camera/exposure", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ camera, exposure_us: exposureUs }),
+    signal
+  });
 }
 
 export async function testHardwareCamera(camera: HardwareCameraDevice): Promise<HardwareCameraTestResponse> {

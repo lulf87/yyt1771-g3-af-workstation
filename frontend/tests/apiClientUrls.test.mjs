@@ -599,6 +599,144 @@ test("hardware setup APIs use dedicated environment, camera, test, and save endp
   }
 });
 
+test("camera exposure read posts a null camera, forwards its signal, and parses the complete state", async () => {
+  const { readCameraExposure } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const exposureState = {
+    supported: true,
+    minimum_us: 100,
+    maximum_us: 100000,
+    increment_us: 1,
+    requested_us: 10000,
+    actual_us: 9999.5,
+    saved: true,
+    editable: true,
+    lock_reason: ""
+  };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return Response.json(exposureState);
+  };
+
+  try {
+    const result = await readCameraExposure(null, controller.signal);
+
+    assert.deepEqual(result, exposureState);
+    assert.equal(calls.length, 1);
+    assert.equal(new URL(calls[0].url, "http://localhost").pathname, "/api/camera/exposure/read");
+    assert.equal(calls[0].init.method, "POST");
+    assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
+    assert.deepEqual(JSON.parse(calls[0].init.body), { camera: null });
+    assert.equal(calls[0].init.signal, controller.signal);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("camera exposure update serializes the selected identity and requested value exactly", async () => {
+  const { updateCameraExposure } = await loadApiClientModule();
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const camera = {
+    backend: "hik_gige_mvs",
+    transport: "gige_vision",
+    model: "MV-CA060-11GM",
+    serial_number: "00J67378626",
+    ip: "192.168.3.211",
+    user_defined_name: "Line 1"
+  };
+  const exposureState = {
+    supported: true,
+    minimum_us: 100,
+    maximum_us: 100000,
+    increment_us: 1,
+    requested_us: 12345,
+    actual_us: 12344.5,
+    saved: true,
+    editable: true,
+    lock_reason: ""
+  };
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return Response.json(exposureState);
+  };
+
+  try {
+    const result = await updateCameraExposure(12345, camera, controller.signal);
+
+    assert.deepEqual(result, exposureState);
+    assert.equal(calls.length, 1);
+    assert.equal(new URL(calls[0].url, "http://localhost").pathname, "/api/camera/exposure");
+    assert.equal(calls[0].init.method, "PUT");
+    assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json" });
+    assert.deepEqual(JSON.parse(calls[0].init.body), { camera, exposure_us: 12345 });
+    assert.equal(calls[0].init.signal, controller.signal);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("camera exposure client preserves structured 409, 422, and 500 backend errors", async () => {
+  const { ApiError, updateCameraExposure } = await loadApiClientModule();
+  const originalFetch = globalThis.fetch;
+  const scenarios = [
+    {
+      status: 409,
+      detail: {
+        camera_status: "busy",
+        message: "Real camera is busy with real_camera_run",
+        details: {
+          active_operation: "real_camera_run",
+          requested_operation: "camera_exposure_update"
+        }
+      }
+    },
+    {
+      status: 422,
+      detail: {
+        message: "apply failed",
+        stage: "apply",
+        details: { requested_us: 12000 }
+      }
+    },
+    {
+      status: 500,
+      detail: {
+        message: "post-commit verification failed",
+        stage: "verify",
+        details: { actual_us: 11999.5 }
+      }
+    }
+  ];
+
+  try {
+    for (const scenario of scenarios) {
+      const body = JSON.stringify({ detail: scenario.detail });
+      globalThis.fetch = async () => new Response(body, {
+        status: scenario.status,
+        headers: { "Content-Type": "application/json" }
+      });
+
+      await assert.rejects(
+        () => updateCameraExposure(12000, null),
+        (error) => {
+          assert.ok(error instanceof ApiError);
+          assert.equal(error.status, scenario.status);
+          assert.equal(error.message, scenario.detail.message);
+          assert.deepEqual(error.detail, scenario.detail);
+          assert.equal(error.body, body);
+          return true;
+        }
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("real camera setup probe posts measurement definition and optional frozen frame", async () => {
   const { probeRealCameraSetupFrame } = await loadApiClientModule();
   const measurement = {
