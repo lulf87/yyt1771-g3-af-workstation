@@ -14,6 +14,16 @@ class CameraFrame:
     camera_meta: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class CameraExposureCapability:
+    supported: bool
+    minimum_us: float | None = None
+    maximum_us: float | None = None
+    increment_us: float | None = None
+    requested_us: float | None = None
+    actual_us: float | None = None
+
+
 class CameraUnavailableError(RuntimeError):
     def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
@@ -25,4 +35,12 @@ class CameraSource(Protocol):
         ...
 
     def close(self) -> None:
+        ...
+
+
+class ExposureCapableCameraSource(Protocol):
+    def read_exposure_capability(self) -> CameraExposureCapability:
+        ...
+
+    def set_exposure_us(self, value: float) -> float:
         ...

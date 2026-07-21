@@ -219,6 +219,9 @@ class _FakeIntValue:
 class _FakeFloatValue:
     def __init__(self) -> None:
         self.fCurValue = 0.0
+        self.fMin = 0.0
+        self.fMax = 0.0
+        self.fInc = 0.0
 
 
 class _FakeFrameInfo:
@@ -310,12 +313,20 @@ class _FakeOfficialCamera:
 
     def MV_CC_SetFloatValue(self, key: str, value: float) -> int:
         self.configured[key] = value
-        if key == "AcquisitionFrameRate":
+        if key == "ExposureTime":
+            self.sdk.exposure_us = value
+        elif key == "AcquisitionFrameRate":
             self.sdk.resulting_fps = value
         return 0
 
     def MV_CC_GetFloatValue(self, key: str, value: _FakeFloatValue) -> int:
-        value.fCurValue = self.sdk.resulting_fps if key == "ResultingFrameRate" else 0.0
+        if key == "ExposureTime":
+            value.fCurValue = self.sdk.exposure_us
+            value.fMin = 100.0
+            value.fMax = 100000.0
+            value.fInc = 1.0
+        elif key == "ResultingFrameRate":
+            value.fCurValue = self.sdk.resulting_fps
         return 0
 
     def MV_CC_GetIntValue(self, key: str, value: _FakeIntValue) -> int:
@@ -368,10 +379,39 @@ class _FakeOfficialSdk:
 
     def __init__(self) -> None:
         self.created: list[_FakeOfficialCamera] = []
+        self.exposure_us = 10000.0
         self.resulting_fps = 0.0
         camera_class = type("FakeOfficialCameraBound", (_FakeOfficialCamera,), {})
         camera_class._sdk = self
         self.MvCamera = camera_class
+
+
+def test_hik_exposure_capability_and_set_use_camera_reported_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_sdk = _FakeOfficialSdk()
+    fake_sdk.exposure_us = 10000.0
+    monkeypatch.setattr("importlib.import_module", lambda name: fake_sdk)
+    source = HikMvsCameraSource(profile={"serial_number": "DEV-001", "exposure_us": 10000.0})
+
+    initial = source.read_exposure_capability()
+    actual = source.set_exposure_us(12345.0)
+    updated = source.read_exposure_capability()
+
+    assert initial.supported is True
+    assert (initial.minimum_us, initial.maximum_us, initial.increment_us) == (100.0, 100000.0, 1.0)
+    assert actual == 12345.0
+    assert updated.actual_us == 12345.0
+    assert fake_sdk.created[0].configured["ExposureAuto"] == "Off"
+
+
+def test_hik_exposure_rejects_nonfinite_and_out_of_range_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_sdk = _FakeOfficialSdk()
+    monkeypatch.setattr("importlib.import_module", lambda name: fake_sdk)
+    source = HikMvsCameraSource(profile={"serial_number": "DEV-001"})
+
+    with pytest.raises(ValueError, match="finite"):
+        source.set_exposure_us(float("nan"))
+    with pytest.raises(ValueError, match="100.0.*100000.0"):
+        source.set_exposure_us(100001.0)
 
 
 def test_hik_preview_uses_official_mvs_sdk_flow(monkeypatch: pytest.MonkeyPatch) -> None:

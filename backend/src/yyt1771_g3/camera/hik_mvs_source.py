@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import importlib
+import math
 import os
 from pathlib import Path
 import sys
@@ -10,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from yyt1771_g3.camera.base import CameraFrame, CameraUnavailableError
+from yyt1771_g3.camera.base import CameraExposureCapability, CameraFrame, CameraUnavailableError
 from yyt1771_g3.core.timebase import now_ms
 
 
@@ -52,6 +53,25 @@ class HikMvsCameraSource:
             **frame.camera_meta,
         }
         return CameraFrame(array=frame.array, timestamp_ms=frame.timestamp_ms, camera_meta=meta)
+
+    def read_exposure_capability(self) -> CameraExposureCapability:
+        session = self._session or self._create_session()
+        self._session = session
+        reader = getattr(session, "read_exposure_capability", None)
+        if not callable(reader):
+            return CameraExposureCapability(
+                supported=False,
+                requested_us=_finite_float(self.profile.get("exposure_us")),
+            )
+        return reader()
+
+    def set_exposure_us(self, value: float) -> float:
+        session = self._session or self._create_session()
+        self._session = session
+        setter = getattr(session, "set_exposure_us", None)
+        if not callable(setter):
+            raise RuntimeError("Hik camera source does not expose runtime exposure control.")
+        return float(setter(value))
 
     def close(self) -> None:
         if self._session is not None and hasattr(self._session, "close"):
@@ -142,6 +162,50 @@ class _OfficialMvsCameraSession:
             camera_meta=self._frame_meta(frame_info),
         )
 
+    def read_exposure_capability(self) -> CameraExposureCapability:
+        if not self._opened:
+            self._open()
+        values = self._read_float_values("ExposureTime")
+        if values is None:
+            return CameraExposureCapability(
+                supported=False,
+                requested_us=_finite_float(self.profile.get("exposure_us")),
+            )
+        minimum, maximum, increment, actual = values
+        return CameraExposureCapability(
+            supported=True,
+            minimum_us=minimum,
+            maximum_us=maximum,
+            increment_us=increment,
+            requested_us=_finite_float(self.profile.get("exposure_us")),
+            actual_us=actual,
+        )
+
+    def set_exposure_us(self, value: float) -> float:
+        capability = self.read_exposure_capability()
+        requested = float(value)
+        if not math.isfinite(requested):
+            raise ValueError("Exposure must be finite.")
+        if capability.minimum_us is None or capability.maximum_us is None:
+            raise ValueError("Hik camera did not report an exposure range.")
+        if requested < capability.minimum_us or requested > capability.maximum_us:
+            raise ValueError(
+                f"Exposure must be between {capability.minimum_us} and {capability.maximum_us} microseconds."
+            )
+        if capability.increment_us is not None and capability.increment_us > 0:
+            steps = (requested - capability.minimum_us) / capability.increment_us
+            if abs(steps - round(steps)) > 1e-6:
+                raise ValueError(
+                    f"Exposure must follow the camera increment of {capability.increment_us} microseconds."
+                )
+        self._disable_automatic_exposure()
+        self._configure_float("ExposureTime", requested)
+        actual = self._read_float("ExposureTime")
+        if actual is None or not math.isfinite(actual):
+            raise RuntimeError("Hik camera did not return the applied exposure value.")
+        self.profile["exposure_us"] = actual
+        return actual
+
     def close(self) -> None:
         for method_name in ["MV_CC_StopGrabbing", "MV_CC_CloseDevice", "MV_CC_DestroyHandle"]:
             method = getattr(self.camera, method_name, None)
@@ -166,6 +230,7 @@ class _OfficialMvsCameraSession:
         self._configure_network_transport(descriptor)
         self._configure_trigger_mode()
         self._configure_pixel_format()
+        self._disable_automatic_exposure()
         self._configure_float("ExposureTime", float(self.profile.get("exposure_us", 10000) or 10000))
         self._configure_float("Gain", float(self.profile.get("gain_db", 0.0) or 0.0))
         self._configure_device_roi()
@@ -250,6 +315,15 @@ class _OfficialMvsCameraSession:
         if callable(setter):
             self._sdk_call(setter(key, float(value)), f"set {key}")
 
+    def _disable_automatic_exposure(self) -> None:
+        string_setter = getattr(self.camera, "MV_CC_SetEnumValueByString", None)
+        if callable(string_setter):
+            self._sdk_call(string_setter("ExposureAuto", "Off"), "disable automatic exposure")
+            return
+        enum_setter = getattr(self.camera, "MV_CC_SetEnumValue", None)
+        if callable(enum_setter):
+            self._sdk_call(enum_setter("ExposureAuto", 0), "disable automatic exposure")
+
     def _configure_device_roi(self) -> None:
         roi = self.profile.get("device_roi")
         if not isinstance(roi, dict):
@@ -304,6 +378,25 @@ class _OfficialMvsCameraSession:
         if int(getter(key, value)) != 0:
             return None
         return float(getattr(value, "fCurValue", 0.0))
+
+    def _read_float_values(self, key: str) -> tuple[float, float, float | None, float] | None:
+        getter = getattr(self.camera, "MV_CC_GetFloatValue", None)
+        value_type = getattr(self.sdk, "MVCC_FLOATVALUE", None)
+        if not callable(getter) or value_type is None:
+            return None
+        value = value_type()
+        if int(getter(key, value)) != 0:
+            return None
+        increment = next(
+            (float(getattr(value, name)) for name in ("fInc", "fIncrement", "fIncValue") if hasattr(value, name)),
+            None,
+        )
+        return (
+            float(value.fMin),
+            float(value.fMax),
+            increment if increment and increment > 0 else None,
+            float(value.fCurValue),
+        )
 
     def _frame_to_array(self, frame_info: Any) -> np.ndarray:
         width = int(getattr(frame_info, "nWidth", 0))
@@ -553,6 +646,14 @@ def _positive_int_or_none(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def timestamp_ms() -> int:
