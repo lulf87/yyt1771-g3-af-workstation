@@ -1,4 +1,5 @@
 export type CurveKey = "distance_time" | "temperature_time" | "temperature_distance";
+import type { AfasDataDomain } from "./afasInteraction.js";
 import { formalCurvePoints, validateStrictlyIncreasingTemperature } from "./temperatureCurve.js";
 
 export type CurvePointInput = {
@@ -355,6 +356,8 @@ export type AnalysisAfasModel = {
   yAxisLabel: string;
   xRange: { min: number; max: number };
   yRange: { min: number; max: number };
+  dataDomain: AfasDataDomain | null;
+  interactionDomain: AfasDataDomain | null;
   summary: AnalysisAfasSummary;
   constructionNote: string | null;
   emptyState: TrendEmptyState | null;
@@ -1031,6 +1034,48 @@ function formatRunTrendTick(value: number, range: { min: number; max: number }):
   return formatTick(value);
 }
 
+export function buildAfasDataDomain(analysis: AnalysisCurveSource): AfasDataDomain | null {
+  const formalPoints = formalCurvePoints(
+    analysis.afas_preprocessing,
+    analysis.temperature_distance
+  ).flatMap((point) => {
+    const temperature = readFiniteNumber(point.x);
+    const distance = readFiniteNumber(point.y);
+    return temperature === null || distance === null ? [] : [{ temperature, distance }];
+  });
+  if (formalPoints.length < 2) return null;
+
+  const temperatures = formalPoints.map((point) => point.temperature);
+  const distances = formalPoints.map((point) => point.distance);
+  return {
+    temperatureMin: Math.min(...temperatures),
+    temperatureMax: Math.max(...temperatures),
+    distanceMin: Math.min(...distances),
+    distanceMax: Math.max(...distances),
+    availableTemperatures: [...new Set(temperatures)].sort((left, right) => left - right)
+  };
+}
+
+export function intersectAfasDomainWithXRange(
+  domain: AfasDataDomain,
+  xRange: { min: number; max: number }
+): AfasDataDomain | null {
+  const xMin = Math.min(xRange.min, xRange.max);
+  const xMax = Math.max(xRange.min, xRange.max);
+  const temperatureMin = Math.max(domain.temperatureMin, xMin);
+  const temperatureMax = Math.min(domain.temperatureMax, xMax);
+  if (temperatureMin > temperatureMax) return null;
+  return {
+    temperatureMin,
+    temperatureMax,
+    distanceMin: domain.distanceMin,
+    distanceMax: domain.distanceMax,
+    availableTemperatures: domain.availableTemperatures.filter(
+      (temperature) => temperature >= temperatureMin && temperature <= temperatureMax
+    )
+  };
+}
+
 export function buildAnalysisAfasModel(
   analysis: AnalysisCurveSource,
   options: AnalysisAfasModelOptions
@@ -1065,6 +1110,10 @@ export function buildAnalysisAfasModel(
     xValues.length ? Math.min(...xValues) : 0,
     xValues.length ? Math.max(...xValues) : 1
   );
+  const dataDomain = buildAfasDataDomain(analysis);
+  const interactionDomain = dataDomain
+    ? intersectAfasDomainWithXRange(dataDomain, xRange)
+    : null;
   const visibleRawData = layers.raw ? rawData.filter((point) => valueInRange(point.temperature, xRange)) : [];
   const visibleOutlierData = layers.raw ? outlierData.filter((point) => valueInRange(point.temperature, xRange)) : [];
   const visibleSmoothedData = smoothedData.filter((point) => valueInRange(point.temperature, xRange));
@@ -1122,6 +1171,8 @@ export function buildAnalysisAfasModel(
     yAxisLabel: "Distance (px)",
     xRange,
     yRange,
+    dataDomain,
+    interactionDomain,
     summary: buildAnalysisAfasSummary(analysis, rawData.length, smoothedData.length),
     constructionNote: buildAnalysisAfasConstructionNote(analysis),
     emptyState: hasPoints ? null : buildAnalysisEmptyState(analysis),

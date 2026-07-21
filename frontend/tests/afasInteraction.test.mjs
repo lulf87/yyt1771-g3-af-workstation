@@ -55,13 +55,104 @@ test("AFAS range body drag preserves its sampled width and clamps to data", asyn
 
 test("AFAS tangent translation and slope rotation preserve authoritative line parameters", async () => {
   const { rotateAfasTangent, translateAfasTangent } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 0,
+    temperatureMax: 10,
+    distanceMin: 0,
+    distanceMax: 30,
+    availableTemperatures: [0, 2, 4, 10]
+  };
 
   assert.deepEqual(
-    translateAfasTangent(2, 10, { temperature: 2, distance: 14 }, { temperature: 3, distance: 19 }),
+    translateAfasTangent(2, 10, { temperature: 2, distance: 14 }, { temperature: 3, distance: 19 }, domain),
     { slope: 2, intercept: 13 }
   );
   assert.deepEqual(
-    rotateAfasTangent({ temperature: 2, distance: 14 }, { temperature: 4, distance: 20 }, 2),
+    rotateAfasTangent({ temperature: 2, distance: 14 }, { temperature: 4, distance: 20 }, 2, domain),
     { slope: 3, intercept: 8 }
   );
+});
+
+test("AFAS plot and data points clamp to all four interaction bounds", async () => {
+  const { clampAfasDataPoint, clampAfasPlotPoint } = await loadInteractionModule();
+  const plot = { left: 80, right: 860, top: 40, bottom: 460 };
+  const domain = {
+    temperatureMin: 20,
+    temperatureMax: 50,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 50]
+  };
+
+  assert.deepEqual(clampAfasPlotPoint({ x: -10, y: 900 }, plot), { x: 80, y: 460 });
+  assert.deepEqual(clampAfasPlotPoint({ x: 900, y: -10 }, plot), { x: 860, y: 40 });
+  assert.deepEqual(
+    clampAfasDataPoint({ temperature: -10, distance: 900 }, domain),
+    { temperature: 20, distance: 160 }
+  );
+  assert.deepEqual(
+    clampAfasDataPoint({ temperature: 900, distance: -10 }, domain),
+    { temperature: 50, distance: 100 }
+  );
+});
+
+test("AFAS tangent translation remains intersecting after an out-of-domain drag", async () => {
+  const {
+    tangentInterceptBounds,
+    tangentIntersectsDomain,
+    translateAfasTangent
+  } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 20,
+    temperatureMax: 50,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 50]
+  };
+
+  assert.deepEqual(tangentInterceptBounds(2, domain), [0, 120]);
+  const tangent = translateAfasTangent(
+    2,
+    40,
+    { temperature: 30, distance: 100 },
+    { temperature: 30, distance: 500 },
+    domain
+  );
+
+  assert.deepEqual(tangent, { slope: 2, intercept: 100 });
+  assert.equal(tangentIntersectsDomain(tangent.slope, tangent.intercept, domain), true);
+});
+
+test("AFAS tangent endpoint rotation clamps both left and right drags to finite domain segments", async () => {
+  const { clampTangentControlPoints, rotateAfasTangent } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 20,
+    temperatureMax: 50,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 50]
+  };
+  const rotations = [
+    rotateAfasTangent(
+      { temperature: 50, distance: 130 },
+      { temperature: -100, distance: 500 },
+      2,
+      domain
+    ),
+    rotateAfasTangent(
+      { temperature: 20, distance: 130 },
+      { temperature: 100, distance: -500 },
+      2,
+      domain
+    )
+  ];
+
+  for (const tangent of rotations) {
+    assert.equal(Number.isFinite(tangent.slope), true);
+    assert.equal(Number.isFinite(tangent.intercept), true);
+    const points = clampTangentControlPoints(tangent.slope, tangent.intercept, domain);
+    assert.equal(points.length, 2);
+    assert.ok(points.every((point) => point.temperature >= 20 && point.temperature <= 50));
+    assert.ok(points.every((point) => point.distance >= 100 && point.distance <= 160));
+  }
 });

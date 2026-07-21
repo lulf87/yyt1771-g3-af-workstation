@@ -187,6 +187,58 @@ function sampleAnalysisWithYAxisStress() {
   };
 }
 
+function sampleAnalysisWithFormalInteractionDomain() {
+  return {
+    ...sampleAnalysis(),
+    temperature_distance: [
+      { x: -999, y: -5000, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+      { x: 9999, y: 5000, frame_index: 2, sync_status: "TEMP_SYNC_OK" }
+    ],
+    afas_preprocessing: {
+      smoothed_temperature_points: [
+        { temperature_celsius: 20, distance_px: 100, representative_frame_index: 10 },
+        { temperature_celsius: 30, distance_px: 120, representative_frame_index: 20 },
+        { temperature_celsius: 40, distance_px: 140, representative_frame_index: 30 },
+        { temperature_celsius: 48, distance_px: 160, representative_frame_index: 40 }
+      ]
+    },
+    afas_analysis: {}
+  };
+}
+
+test("analysis AFAS interaction domains use only formal points and preserve unsnapped zoom edges", async () => {
+  const { buildAnalysisAfasModel } = await loadCurveModule();
+  const analysis = sampleAnalysisWithFormalInteractionDomain();
+
+  const full = buildAnalysisAfasModel(analysis, {
+    width: 980,
+    height: 540
+  });
+  const zoomed = buildAnalysisAfasModel(analysis, {
+    width: 980,
+    height: 540,
+    xDomain: [22, 44]
+  });
+
+  assert.deepEqual(full.dataDomain, {
+    temperatureMin: 20,
+    temperatureMax: 48,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 48]
+  });
+  assert.deepEqual(full.interactionDomain, full.dataDomain);
+  assert.deepEqual(zoomed.xRange, { min: 22, max: 44 });
+  assert.deepEqual(zoomed.dataDomain, full.dataDomain);
+  assert.deepEqual(zoomed.interactionDomain, {
+    temperatureMin: 22,
+    temperatureMax: 44,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [30, 40]
+  });
+});
+
 test("analysis AFAS model separates review layers and extends baselines to AS and AF", async () => {
   const { buildAnalysisAfasModel } = await loadCurveModule();
 
