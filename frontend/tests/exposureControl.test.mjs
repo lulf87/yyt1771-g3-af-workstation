@@ -345,6 +345,134 @@ test("a new slider schedule invalidates the old active value before numeric resu
   await Promise.resolve();
 });
 
+for (const invalidDraft of [
+  { label: "empty", value: "" },
+  { label: "non-finite", value: "NaN" },
+  { label: "out-of-range", value: "1001" }
+]) {
+  for (const phase of ["scheduled", "in-flight"]) {
+    test(`${invalidDraft.label} numeric submission compensates a ${phase} slider intent exactly once`, async () => {
+      const {
+        createExposureCommitCoordinator,
+        scheduleExposureDraft,
+        submitExposureDraft
+      } = await loadExposureControlModule();
+      const scheduler = createScheduler();
+      const pending = [];
+      let latestIntentUs = null;
+      let lastRequestedUs = null;
+      const coordinator = createExposureCommitCoordinator({
+        delayMs: 200,
+        apply: createPendingApply(pending),
+        onPending: (value) => {
+          lastRequestedUs = value;
+        },
+        onSuccess: () => {},
+        onError: (error) => assert.fail(error),
+        setTimer: scheduler.setTimer,
+        clearTimer: scheduler.clearTimer
+      });
+
+      scheduleExposureDraft({
+        value: 200,
+        coordinator,
+        onIntent: (intent) => {
+          latestIntentUs = intent.latestIntentUs;
+          lastRequestedUs = intent.lastRequestedUs;
+        }
+      });
+      if (phase === "in-flight") {
+        scheduler.fireOnlyTimer();
+        assert.equal(lastRequestedUs, 200);
+      }
+
+      const result = submitExposureDraft({
+        draft: invalidDraft.value,
+        minimumUs: 10,
+        maximumUs: 1000,
+        confirmedUs: 100,
+        latestIntentUs,
+        lastRequestedUs,
+        compensationPending: false,
+        coordinator
+      });
+
+      assert.deepEqual(result, {
+        kind: "compensating",
+        reason: invalidDraft.label === "out-of-range" ? "range" : "finite",
+        value: 100
+      });
+      assert.equal(scheduler.timers.size, 0);
+      if (phase === "in-flight") {
+        assert.equal(pending[0].signal.aborted, true);
+      }
+      const compensation = pending.at(-1);
+      assert.equal(compensation.value, 100);
+      assert.equal(compensation.signal.aborted, false);
+      const applyCount = pending.length;
+
+      const blurResult = submitExposureDraft({
+        draft: invalidDraft.value,
+        minimumUs: 10,
+        maximumUs: 1000,
+        confirmedUs: 100,
+        latestIntentUs: 100,
+        lastRequestedUs: 100,
+        compensationPending: true,
+        coordinator
+      });
+      assert.deepEqual(blurResult, {
+        kind: "compensation_pending",
+        reason: invalidDraft.label === "out-of-range" ? "range" : "finite",
+        value: 100
+      });
+      assert.equal(pending.length, applyCount);
+
+      compensation.resolve({ actual_us: 100 });
+      if (phase === "in-flight") pending[0].resolve({ actual_us: 200 });
+      await Promise.resolve();
+    });
+  }
+}
+
+test("invalid numeric submission without a confirmed value cancels the old intent without applying", async () => {
+  const {
+    createExposureCommitCoordinator,
+    scheduleExposureDraft,
+    submitExposureDraft
+  } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onSuccess: () => {},
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  scheduleExposureDraft({
+    value: 200,
+    coordinator,
+    onIntent: () => {}
+  });
+  const result = submitExposureDraft({
+    draft: "",
+    minimumUs: 10,
+    maximumUs: 1000,
+    confirmedUs: null,
+    latestIntentUs: 200,
+    lastRequestedUs: null,
+    compensationPending: false,
+    coordinator
+  });
+
+  assert.deepEqual(result, { kind: "cancelled", reason: "finite" });
+  assert.equal(scheduler.timers.size, 0);
+  assert.equal(pending.length, 0);
+});
+
 test("exposure coordinator aborts the older request when a newer apply starts", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();

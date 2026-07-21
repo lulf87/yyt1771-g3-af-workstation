@@ -18,11 +18,18 @@ export type ExposureCoordinatorOptions<
 export type ExposureCommitCoordinator = {
   schedule(value: number): void;
   commit(value: number): void;
+  cancel(): void;
   dispose(): void;
 };
 
 export type ExposureDraftSubmission =
   | { kind: "rejected"; reason: "finite" | "range" }
+  | { kind: "cancelled"; reason: "finite" | "range" }
+  | {
+      kind: "compensating" | "compensation_pending";
+      reason: "finite" | "range";
+      value: number;
+    }
   | { kind: "unchanged"; value: number }
   | { kind: "pending"; value: number }
   | { kind: "submitted"; value: number };
@@ -52,6 +59,7 @@ export function submitExposureDraft({
   confirmedUs,
   latestIntentUs,
   lastRequestedUs,
+  compensationPending,
   coordinator
 }: {
   draft: string;
@@ -60,20 +68,50 @@ export function submitExposureDraft({
   confirmedUs: number | null;
   latestIntentUs: number | null;
   lastRequestedUs: number | null;
-  coordinator: Pick<ExposureCommitCoordinator, "commit">;
+  compensationPending: boolean;
+  coordinator: Pick<ExposureCommitCoordinator, "cancel" | "commit">;
 }): ExposureDraftSubmission {
+  let value = Number.NaN;
+  let rejectionReason: "finite" | "range" | null = null;
   if (!draft.trim()) {
-    return { kind: "rejected", reason: "finite" };
+    rejectionReason = "finite";
+  } else {
+    value = Number(draft);
+    if (!Number.isFinite(value)) {
+      rejectionReason = "finite";
+    } else if (
+      (minimumUs !== null && value < minimumUs) ||
+      (maximumUs !== null && value > maximumUs)
+    ) {
+      rejectionReason = "range";
+    }
   }
-  const value = Number(draft);
-  if (!Number.isFinite(value)) {
-    return { kind: "rejected", reason: "finite" };
-  }
-  if (
-    (minimumUs !== null && value < minimumUs) ||
-    (maximumUs !== null && value > maximumUs)
-  ) {
-    return { kind: "rejected", reason: "range" };
+
+  if (rejectionReason !== null) {
+    if (
+      compensationPending &&
+      confirmedUs !== null &&
+      Number.isFinite(confirmedUs)
+    ) {
+      return {
+        kind: "compensation_pending",
+        reason: rejectionReason,
+        value: confirmedUs
+      };
+    }
+    if (latestIntentUs !== null) {
+      coordinator.cancel();
+      if (confirmedUs !== null && Number.isFinite(confirmedUs)) {
+        coordinator.commit(confirmedUs);
+        return {
+          kind: "compensating",
+          reason: rejectionReason,
+          value: confirmedUs
+        };
+      }
+      return { kind: "cancelled", reason: rejectionReason };
+    }
+    return { kind: "rejected", reason: rejectionReason };
   }
   if (lastRequestedUs === value) {
     return { kind: "pending", value };
@@ -153,6 +191,13 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
       }
       clearPendingTimer();
       void apply(value);
+    },
+    cancel() {
+      if (disposed) {
+        return;
+      }
+      clearPendingTimer();
+      invalidateActiveRequest();
     },
     dispose() {
       if (disposed) {

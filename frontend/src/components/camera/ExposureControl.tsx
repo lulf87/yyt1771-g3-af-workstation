@@ -68,6 +68,7 @@ export function ExposureControl({
   const confirmedRef = useRef<number | null>(null);
   const latestIntentRef = useRef<number | null>(null);
   const lastRequestedRef = useRef<number | null>(null);
+  const compensationPendingRef = useRef(false);
   const coordinatorRef = useRef<ExposureCommitCoordinator | null>(null);
   const t = (text: string) => uiText(language, text);
 
@@ -89,6 +90,7 @@ export function ExposureControl({
         confirmedRef.current = actual;
         latestIntentRef.current = null;
         lastRequestedRef.current = null;
+        compensationPendingRef.current = false;
         setLoadedCapability({ cameraKey, value: response });
         setDraft(String(actual));
         setStatus("saved");
@@ -97,6 +99,7 @@ export function ExposureControl({
       onError: (reason) => {
         latestIntentRef.current = null;
         lastRequestedRef.current = null;
+        compensationPendingRef.current = false;
         setDraft(confirmedRef.current === null ? "" : String(confirmedRef.current));
         setStatus("error");
         setError(errorMessage(reason));
@@ -117,6 +120,7 @@ export function ExposureControl({
     confirmedRef.current = null;
     latestIntentRef.current = null;
     lastRequestedRef.current = null;
+    compensationPendingRef.current = false;
     setError("");
 
     if (runActive) {
@@ -174,9 +178,26 @@ export function ExposureControl({
       confirmedUs: confirmedRef.current,
       latestIntentUs: latestIntentRef.current,
       lastRequestedUs: lastRequestedRef.current,
+      compensationPending: compensationPendingRef.current,
       coordinator
     });
-    if (result.kind === "rejected") {
+    if (
+      result.kind === "rejected" ||
+      result.kind === "cancelled" ||
+      result.kind === "compensating" ||
+      result.kind === "compensation_pending"
+    ) {
+      if (result.kind === "compensating") {
+        compensationPendingRef.current = true;
+        latestIntentRef.current = result.value;
+      } else if (result.kind === "compensation_pending") {
+        compensationPendingRef.current = true;
+        latestIntentRef.current = result.value;
+      } else {
+        compensationPendingRef.current = false;
+        latestIntentRef.current = null;
+        lastRequestedRef.current = null;
+      }
       rejectDraft(
         t(
           result.reason === "range"
@@ -187,12 +208,14 @@ export function ExposureControl({
       return;
     }
     if (result.kind === "unchanged") {
+      compensationPendingRef.current = false;
       setDraft(String(result.value));
       setStatus("idle");
       setError("");
       return;
     }
     if (result.kind === "submitted") {
+      compensationPendingRef.current = false;
       latestIntentRef.current = result.value;
     }
   }
@@ -246,6 +269,7 @@ export function ExposureControl({
                     value,
                     coordinator,
                     onIntent: (intent) => {
+                      compensationPendingRef.current = false;
                       latestIntentRef.current = intent.latestIntentUs;
                       lastRequestedRef.current = intent.lastRequestedUs;
                     }

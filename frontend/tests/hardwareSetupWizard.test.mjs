@@ -133,6 +133,28 @@ test("selecting another camera synchronously clears the previous camera test bef
   );
 });
 
+test("camera test requests use an identity generation guard invalidated by selection and refresh lifecycle", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(mainSource, /createHardwareCameraTestCoordinator/);
+  assert.match(wizard, /cameraTestCoordinatorRef\.current\.run\(/);
+  assert.match(
+    wizard,
+    /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,220}cameraTestCoordinatorRef\.current\.invalidate\(\)/
+  );
+  assert.match(
+    wizard,
+    /async function scanHardwareCameras\(\)[\s\S]{0,220}cameraTestCoordinatorRef\.current\.invalidate\(\)/
+  );
+  assert.match(
+    wizard,
+    /useEffect\(\(\) => \{[\s\S]{0,180}cameraTestCoordinatorRef\.current\.invalidate\(\)[\s\S]{0,220}if \(!open\) return;/
+  );
+});
+
 test("shared exposure control validates camera bounds and restores the last confirmed value", () => {
   assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
   const component = readFileSync(exposureControlPath, "utf8");
@@ -147,6 +169,14 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /onBlur=\{commitDraft\}/);
   assert.match(component, /event\.key === "Enter"[\s\S]{0,120}commitDraft\(\)/);
   assert.match(component, /submitExposureDraft\(/);
+  assert.match(component, /const compensationPendingRef = useRef\(false\)/);
+  assert.match(
+    component,
+    /compensationPending:\s*compensationPendingRef\.current/
+  );
+  assert.match(component, /result\.kind === "compensating"/);
+  assert.match(component, /result\.kind === "compensation_pending"/);
+  assert.match(component, /result\.kind === "cancelled"/);
   assert.match(exposureLogicSource, /if \(!draft\.trim\(\)\)/);
   assert.match(exposureLogicSource, /Number\.isFinite\(/);
   assert.match(component, /capability\.minimum_us/);

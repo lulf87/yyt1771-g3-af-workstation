@@ -131,6 +131,7 @@ import {
   provenanceNeedsSimulatedWarning
 } from "./components/operator/SourceProvenanceBadge";
 import { ExposureControl } from "./components/camera/ExposureControl";
+import { createHardwareCameraTestCoordinator } from "./hardwareCameraTestCoordinator";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -2933,8 +2934,13 @@ function DeviceSetupWizard({
   const [savingBinding, setSavingBinding] = useState(false);
   const [savingSdkPaths, setSavingSdkPaths] = useState(false);
   const [error, setError] = useState("");
+  const cameraTestCoordinatorRef = useRef(
+    createHardwareCameraTestCoordinator<HardwareCameraTestResponse>()
+  );
 
   useEffect(() => {
+    cameraTestCoordinatorRef.current.invalidate();
+    setTestingCamera(false);
     if (!open) return;
     setActiveStep(0);
     setCameraTestResult(null);
@@ -2984,6 +2990,8 @@ function DeviceSetupWizard({
             : true;
 
   async function refreshWizardData() {
+    cameraTestCoordinatorRef.current.invalidate();
+    setTestingCamera(false);
     setLoadingWizard(true);
     setError("");
     const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
@@ -3070,6 +3078,8 @@ function DeviceSetupWizard({
   }
 
   async function scanHardwareCameras() {
+    cameraTestCoordinatorRef.current.invalidate();
+    setTestingCamera(false);
     setLoadingWizard(true);
     setError("");
     setCameraTestResult(null);
@@ -3111,6 +3121,8 @@ function DeviceSetupWizard({
   }
 
   function selectHardwareCamera(cameraKey: string) {
+    cameraTestCoordinatorRef.current.invalidate();
+    setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
@@ -3122,15 +3134,28 @@ function DeviceSetupWizard({
       setError(t("Select camera before testing"));
       return;
     }
+    const cameraKey = hardwareCameraKey(selectedCamera);
     setTestingCamera(true);
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
     setError("");
-    try {
-      setCameraTestResult(await testHardwareCamera(selectedCamera));
-    } catch (err) {
+    const result = await cameraTestCoordinatorRef.current.run(
+      cameraKey,
+      () => testHardwareCamera(selectedCamera)
+    );
+    if (!result.accepted) return;
+
+    setTestingCamera(false);
+    if (result.status === "fulfilled") {
+      setCameraTestResult(result.value);
+    } else {
       setCameraTestResult(null);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTestingCamera(false);
+      setError(
+        result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason)
+      );
     }
   }
 
