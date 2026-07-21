@@ -155,6 +155,64 @@ test("camera test requests use an identity generation guard invalidated by selec
   );
 });
 
+test("camera refresh gates testing and invalidates requests again before applying a refreshed selection", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+  const refresh = sourceSlice(
+    "async function refreshWizardData()",
+    "async function refreshEnvironmentChecks()"
+  );
+  const scan = sourceSlice(
+    "async function scanHardwareCameras()",
+    "async function refreshTemperaturePorts()"
+  );
+  const runCameraTest = sourceSlice(
+    "async function runCameraTest()",
+    "async function runTemperatureTest()"
+  );
+
+  assert.ok(
+    (refresh.match(/cameraTestCoordinatorRef\.current\.invalidate\(\)/g) ?? []).length >= 2,
+    "full refresh must invalidate camera tests at start and settlement"
+  );
+  assert.ok(
+    (scan.match(/cameraTestCoordinatorRef\.current\.invalidate\(\)/g) ?? []).length >= 2,
+    "camera scan must invalidate camera tests at start and settlement"
+  );
+  assert.match(runCameraTest, /if \(loadingWizardRef\.current\) return;/);
+  assert.match(
+    wizard,
+    /const \[loadingWizard, setLoadingWizard\] = useState\(true\)/
+  );
+  assert.match(
+    wizard,
+    /useEffect\(\(\) => \{[\s\S]{0,180}setWizardLoading\(true\);[\s\S]{0,120}if \(!open\) return;/
+  );
+  assert.match(
+    wizard,
+    /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,160}if \(loadingWizardRef\.current\) return;/
+  );
+  assert.match(wizard, /selectedCameraKeyRef/);
+  assert.match(
+    runCameraTest,
+    /isHardwareCameraTestResultCurrent\(result, selectedCameraKeyRef\.current\)/
+  );
+  assert.match(
+    wizard,
+    /disabled=\{loadingWizard \|\| !camera\.is_supported_model\}/
+  );
+  assert.match(
+    wizard,
+    /disabled=\{loadingWizard \|\| !selectedCamera \|\| testingCamera\}/
+  );
+  assert.match(
+    wizard,
+    /disabled=\{loadingWizard \|\| activeStep >= HARDWARE_SETUP_STEPS\.length - 1 \|\| !canAdvance\}/
+  );
+});
+
 test("shared exposure control validates camera bounds and restores the last confirmed value", () => {
   assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
   const component = readFileSync(exposureControlPath, "utf8");

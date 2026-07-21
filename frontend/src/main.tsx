@@ -131,7 +131,10 @@ import {
   provenanceNeedsSimulatedWarning
 } from "./components/operator/SourceProvenanceBadge";
 import { ExposureControl } from "./components/camera/ExposureControl";
-import { createHardwareCameraTestCoordinator } from "./hardwareCameraTestCoordinator";
+import {
+  createHardwareCameraTestCoordinator,
+  isHardwareCameraTestResultCurrent
+} from "./hardwareCameraTestCoordinator";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -2927,7 +2930,7 @@ function DeviceSetupWizard({
   const [sdkPathResult, setSdkPathResult] = useState<HardwareSdkPathsSaveResponse | null>(null);
   const [sdkPythonPath, setSdkPythonPath] = useState("");
   const [sdkLibraryPath, setSdkLibraryPath] = useState("");
-  const [loadingWizard, setLoadingWizard] = useState(false);
+  const [loadingWizard, setLoadingWizard] = useState(true);
   const [testingCamera, setTestingCamera] = useState(false);
   const [testingTemperature, setTestingTemperature] = useState(false);
   const [testingBinding, setTestingBinding] = useState(false);
@@ -2937,10 +2940,19 @@ function DeviceSetupWizard({
   const cameraTestCoordinatorRef = useRef(
     createHardwareCameraTestCoordinator<HardwareCameraTestResponse>()
   );
+  const loadingWizardRef = useRef(true);
+  const selectedCameraKeyRef = useRef(selectedCameraKey);
+  selectedCameraKeyRef.current = selectedCameraKey;
+
+  function setWizardLoading(loading: boolean) {
+    loadingWizardRef.current = loading;
+    setLoadingWizard(loading);
+  }
 
   useEffect(() => {
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
+    setWizardLoading(true);
     if (!open) return;
     setActiveStep(0);
     setCameraTestResult(null);
@@ -2992,13 +3004,22 @@ function DeviceSetupWizard({
   async function refreshWizardData() {
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
-    setLoadingWizard(true);
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+    setWizardLoading(true);
     setError("");
     const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
       getHardwareSetupEnvironment(),
       listHardwareCameras(),
       listTemperatureSerialPorts()
     ]);
+    cameraTestCoordinatorRef.current.invalidate();
+    setTestingCamera(false);
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+    setError("");
     if (environmentResult.status === "fulfilled") {
       setEnvironment(environmentResult.value);
       applyDetectedSdkPaths(environmentResult.value);
@@ -3007,12 +3028,19 @@ function DeviceSetupWizard({
       setError(environmentResult.reason instanceof Error ? environmentResult.reason.message : String(environmentResult.reason));
     }
     if (cameraResult.status === "fulfilled") {
+      const currentCameraKey = selectedCameraKeyRef.current;
+      const nextCameraKey =
+        currentCameraKey &&
+        cameraResult.value.some(
+          (camera) => hardwareCameraKey(camera) === currentCameraKey
+        )
+          ? currentCameraKey
+          : hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value));
+      selectedCameraKeyRef.current = nextCameraKey;
       setCameras(cameraResult.value);
-      setSelectedCameraKey((current) => {
-        if (current && cameraResult.value.some((camera) => hardwareCameraKey(camera) === current)) return current;
-        return hardwareCameraKey(selectDefaultHardwareCamera(cameraResult.value));
-      });
+      setSelectedCameraKey(nextCameraKey);
     } else {
+      selectedCameraKeyRef.current = "";
       setCameras([]);
       setSelectedCameraKey("");
       setError(cameraResult.reason instanceof Error ? cameraResult.reason.message : String(cameraResult.reason));
@@ -3025,11 +3053,11 @@ function DeviceSetupWizard({
       setSelectedPort("");
       setError(portResult.reason instanceof Error ? portResult.reason.message : String(portResult.reason));
     }
-    setLoadingWizard(false);
+    setWizardLoading(false);
   }
 
   async function refreshEnvironmentChecks() {
-    setLoadingWizard(true);
+    setWizardLoading(true);
     setError("");
     try {
       const nextEnvironment = await getHardwareSetupEnvironment();
@@ -3039,7 +3067,7 @@ function DeviceSetupWizard({
       setEnvironment(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingWizard(false);
+      setWizardLoading(false);
     }
   }
 
@@ -3080,29 +3108,47 @@ function DeviceSetupWizard({
   async function scanHardwareCameras() {
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
-    setLoadingWizard(true);
+    setWizardLoading(true);
     setError("");
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
     try {
       const nextCameras = await listHardwareCameras();
+      cameraTestCoordinatorRef.current.invalidate();
+      setTestingCamera(false);
+      setCameraTestResult(null);
+      setTestResult(null);
+      setSaveResult(null);
+      setError("");
+      const currentCameraKey = selectedCameraKeyRef.current;
+      const nextCameraKey =
+        currentCameraKey &&
+        nextCameras.some(
+          (camera) => hardwareCameraKey(camera) === currentCameraKey
+        )
+          ? currentCameraKey
+          : hardwareCameraKey(selectDefaultHardwareCamera(nextCameras));
+      selectedCameraKeyRef.current = nextCameraKey;
       setCameras(nextCameras);
-      setSelectedCameraKey((current) => {
-        if (current && nextCameras.some((camera) => hardwareCameraKey(camera) === current)) return current;
-        return hardwareCameraKey(selectDefaultHardwareCamera(nextCameras));
-      });
+      setSelectedCameraKey(nextCameraKey);
     } catch (err) {
+      cameraTestCoordinatorRef.current.invalidate();
+      setTestingCamera(false);
+      setCameraTestResult(null);
+      setTestResult(null);
+      setSaveResult(null);
+      selectedCameraKeyRef.current = "";
       setCameras([]);
       setSelectedCameraKey("");
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingWizard(false);
+      setWizardLoading(false);
     }
   }
 
   async function refreshTemperaturePorts() {
-    setLoadingWizard(true);
+    setWizardLoading(true);
     setError("");
     setTemperatureTestResult(null);
     setTestResult(null);
@@ -3116,20 +3162,23 @@ function DeviceSetupWizard({
       setSelectedPort("");
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingWizard(false);
+      setWizardLoading(false);
     }
   }
 
   function selectHardwareCamera(cameraKey: string) {
+    if (loadingWizardRef.current) return;
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
+    selectedCameraKeyRef.current = cameraKey;
     setSelectedCameraKey(cameraKey);
   }
 
   async function runCameraTest() {
+    if (loadingWizardRef.current) return;
     if (!selectedCamera) {
       setError(t("Select camera before testing"));
       return;
@@ -3144,7 +3193,7 @@ function DeviceSetupWizard({
       cameraKey,
       () => testHardwareCamera(selectedCamera)
     );
-    if (!result.accepted) return;
+    if (!isHardwareCameraTestResultCurrent(result, selectedCameraKeyRef.current)) return;
 
     setTestingCamera(false);
     if (result.status === "fulfilled") {
@@ -3257,7 +3306,7 @@ function DeviceSetupWizard({
         <ol className="wizardStepList">
           {HARDWARE_SETUP_STEPS.map((step, index) => (
             <li className={index === activeStep ? "active" : index < activeStep ? "complete" : ""} key={step}>
-              <button onClick={() => setActiveStep(index)} type="button">
+              <button disabled={loadingWizard} onClick={() => setActiveStep(index)} type="button">
                 <span>{index + 1}</span>
                 {t(step)}
               </button>
@@ -3322,7 +3371,7 @@ function DeviceSetupWizard({
                   <label className={camera.is_supported_model ? "wizardDeviceOption" : "wizardDeviceOption warning"} key={hardwareCameraKey(camera)}>
                     <input
                       checked={hardwareCameraKey(camera) === selectedCameraKey}
-                      disabled={!camera.is_supported_model}
+                      disabled={loadingWizard || !camera.is_supported_model}
                       onChange={() => selectHardwareCamera(hardwareCameraKey(camera))}
                       type="radio"
                     />
@@ -3347,7 +3396,7 @@ function DeviceSetupWizard({
                   runActive={false}
                 />
               ) : null}
-              <button className="primaryButton" disabled={!selectedCamera || testingCamera} onClick={runCameraTest} type="button">
+              <button className="primaryButton" disabled={loadingWizard || !selectedCamera || testingCamera} onClick={runCameraTest} type="button">
                 <Camera size={16} aria-hidden="true" />
                 {testingCamera ? t("Testing") : t("Test camera")}
               </button>
@@ -3424,12 +3473,12 @@ function DeviceSetupWizard({
           ) : null}
         </div>
         <footer className="wizardFooter">
-          <button className="secondaryButton" disabled={activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))} type="button">
+          <button className="secondaryButton" disabled={loadingWizard || activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))} type="button">
             {t("Back")}
           </button>
           <button
             className="secondaryButton"
-            disabled={activeStep >= HARDWARE_SETUP_STEPS.length - 1 || !canAdvance}
+            disabled={loadingWizard || activeStep >= HARDWARE_SETUP_STEPS.length - 1 || !canAdvance}
             onClick={() => setActiveStep((step) => Math.min(HARDWARE_SETUP_STEPS.length - 1, step + 1))}
             type="button"
           >

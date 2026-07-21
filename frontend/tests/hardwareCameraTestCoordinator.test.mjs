@@ -103,3 +103,65 @@ test("the current camera rejection is accepted without throwing", async () => {
     }
   );
 });
+
+for (const lateOutcome of ["fulfilled", "rejected"]) {
+  test(`refresh selecting camera B cannot let camera A ${lateOutcome} result end B testing`, async () => {
+    const {
+      createHardwareCameraTestCoordinator,
+      isHardwareCameraTestResultCurrent
+    } = await loadCoordinatorModule();
+    const coordinator = createHardwareCameraTestCoordinator();
+    const cameraA = deferred();
+    const cameraB = deferred();
+    let selectedCameraKey = "camera-A";
+    let testingCamera = false;
+    let cameraTestResult = null;
+    let cameraError = null;
+
+    coordinator.invalidate();
+    testingCamera = true;
+    const pendingA = coordinator.run("camera-A", () => cameraA.promise);
+
+    selectedCameraKey = "camera-B";
+    coordinator.invalidate();
+    testingCamera = false;
+
+    testingCamera = true;
+    const pendingB = coordinator.run("camera-B", () => cameraB.promise);
+
+    if (lateOutcome === "fulfilled") {
+      cameraA.resolve({ status: "passed", serial: "camera-A" });
+    } else {
+      cameraA.reject(new Error("camera A unavailable"));
+    }
+    const resultA = await pendingA;
+    if (isHardwareCameraTestResultCurrent(resultA, selectedCameraKey)) {
+      testingCamera = false;
+      if (resultA.status === "fulfilled") cameraTestResult = resultA.value;
+      else cameraError = resultA.reason;
+    }
+
+    assert.equal(testingCamera, true);
+    assert.equal(cameraTestResult, null);
+    assert.equal(cameraError, null);
+
+    cameraB.resolve({ status: "passed", serial: "camera-B" });
+    const resultB = await pendingB;
+    assert.equal(
+      isHardwareCameraTestResultCurrent(resultB, selectedCameraKey),
+      true
+    );
+    if (isHardwareCameraTestResultCurrent(resultB, selectedCameraKey)) {
+      testingCamera = false;
+      if (resultB.status === "fulfilled") cameraTestResult = resultB.value;
+      else cameraError = resultB.reason;
+    }
+
+    assert.equal(testingCamera, false);
+    assert.deepEqual(cameraTestResult, {
+      status: "passed",
+      serial: "camera-B"
+    });
+    assert.equal(cameraError, null);
+  });
+}
