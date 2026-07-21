@@ -16,6 +16,10 @@ import {
   type ExposureBusyTracker,
   type ExposureCommitCoordinator
 } from "../../exposureControl";
+import {
+  createCameraBusyOwnerToken,
+  type CameraBusyOwnerToken
+} from "../../cameraOperationOwnership";
 import { uiText, type UiLanguage } from "../../i18n";
 
 export type ExposureControlProps = {
@@ -23,7 +27,7 @@ export type ExposureControlProps = {
   disabled: boolean;
   runActive: boolean;
   language: UiLanguage;
-  onBusyChange: (busy: boolean) => void;
+  onBusyChange: (owner: CameraBusyOwnerToken, busy: boolean) => void;
 };
 
 type ExposureStatus = "loading" | "idle" | "applying" | "saved" | "error";
@@ -52,6 +56,7 @@ export function ExposureControl({
   onBusyChange
 }: ExposureControlProps) {
   const cameraKey = cameraExposureIdentityKey(camera);
+  const [busyOwner] = useState(() => createCameraBusyOwnerToken());
   const [exposureReadSession] = useState(() => createCameraExposureReadSession());
   const [loadedCapability, setLoadedCapability] = useState<LoadedCapability | null>(null);
   const capability =
@@ -68,7 +73,7 @@ export function ExposureControl({
   const exposureBusyTrackerRef = useRef<ExposureBusyTracker | null>(null);
   if (exposureBusyTrackerRef.current === null) {
     exposureBusyTrackerRef.current = createExposureBusyTracker((busy) => {
-      onBusyChangeRef.current(busy);
+      onBusyChangeRef.current(busyOwner, busy);
     });
   }
   const t = (text: string) => uiText(language, text);

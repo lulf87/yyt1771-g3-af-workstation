@@ -10,6 +10,11 @@ const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
 const stylesSource = readFileSync(resolve(rootDir, "src/styles.css"), "utf8");
 const i18nSource = readFileSync(resolve(rootDir, "src/i18n.ts"), "utf8");
 const exposureControlPath = resolve(rootDir, "src/components/camera/ExposureControl.tsx");
+const cameraOwnershipPath = resolve(rootDir, "src/cameraOperationOwnership.ts");
+const hardwareProfileRefreshSessionPath = resolve(
+  rootDir,
+  "src/hardwareProfileRefreshSession.ts"
+);
 const outDir = resolve(rootDir, ".tmp-operator-actual-use-test-build");
 
 after(() => {
@@ -121,7 +126,7 @@ test("operator real-camera preview mounts the shared exposure control and locks 
     /!simulatedMode[\s\S]{0,300}<ExposureControl[\s\S]{0,250}camera=\{operatorCameraIdentity\}/
   );
   assert.match(mainSource, /const \[hardwareProfile, setHardwareProfile\] = useState/);
-  assert.match(mainSource, /setHardwareProfile\(await getHardwareProfile\(\)\)/);
+  assert.doesNotMatch(mainSource, /setHardwareProfile\(await getHardwareProfile\(\)\)/);
   assert.match(mainSource, /hardwareProfileCameraIdentity\(hardwareProfile\)/);
   assert.match(
     operatorPage,
@@ -155,9 +160,13 @@ test("operator real-camera preview mounts the shared exposure control and locks 
 test("shared exposure control reports balanced read and write busy and cancels only unsent work when locked", () => {
   const component = readFileSync(exposureControlPath, "utf8");
 
-  assert.match(component, /onBusyChange: \(busy: boolean\) => void;/);
+  assert.ok(existsSync(cameraOwnershipPath), "camera owner registry must exist");
+  assert.match(component, /type CameraBusyOwnerToken/);
+  assert.match(component, /onBusyChange: \(owner: CameraBusyOwnerToken, busy: boolean\) => void;/);
+  assert.match(component, /const \[busyOwner\] = useState\(\(\) => createCameraBusyOwnerToken\(\)\);/);
+  assert.doesNotMatch(component, /useId\(/);
   assert.match(component, /createExposureBusyTracker/);
-  assert.match(component, /onBusyChange:\s*\(busy\)/);
+  assert.match(component, /onBusyChangeRef\.current\(busyOwner, busy\)/);
   assert.match(component, /exposureBusyTrackerRef\.current!?\.begin\(\)/);
   assert.match(
     component,
@@ -193,12 +202,23 @@ test("operator exposure busy pauses preview polling and gates Probe and Run", ()
   assert.match(app, /const \[exposureBusy, setExposureBusy\] = useState\(false\);/);
   assert.match(
     app,
+    /const \[cameraBusyOwnerRegistry\] = useState\(\(\) =>\s*createCameraBusyOwnerRegistry\(setExposureBusy\)\s*\);/
+  );
+  assert.match(
+    app,
     /if \(runningCamera \|\| probing \|\| exposureBusy\) return;/
   );
-  assert.match(app, /onExposureBusyChange=\{setExposureBusy\}/);
+  assert.match(
+    app,
+    /onExposureBusyChange=\{cameraBusyOwnerRegistry\.setOwnerBusy\}/
+  );
+  assert.doesNotMatch(app, /onExposureBusyChange=\{setExposureBusy\}/);
   assert.match(app, /async function runOperatorProbeCurrentFrame\(\)[\s\S]{0,180}if \(exposureBusy\) return;/);
   assert.match(app, /function startOperatorRun\(\)[\s\S]{0,180}if \(exposureBusy\) return;/);
-  assert.match(operatorPage, /onExposureBusyChange: \(busy: boolean\) => void;/);
+  assert.match(
+    operatorPage,
+    /onExposureBusyChange: \(owner: CameraBusyOwnerToken, busy: boolean\) => void;/
+  );
   assert.match(operatorPage, /onBusyChange=\{onExposureBusyChange\}/);
   assert.match(
     operatorPage,
@@ -208,6 +228,25 @@ test("operator exposure busy pauses preview polling and gates Probe and Run", ()
     operatorPage,
     /const startDisabled =\s+operatorRunActive \|\|\s+exposureBusy \|\|/
   );
+});
+
+test("hardware profile refresh uses one last-write-wins session for startup and saved binding refreshes", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+
+  assert.ok(
+    existsSync(hardwareProfileRefreshSessionPath),
+    "hardware profile refresh session must exist"
+  );
+  assert.match(mainSource, /import \{ createHardwareProfileRefreshSession \} from "\.\/hardwareProfileRefreshSession";/);
+  assert.match(
+    app,
+    /const \[hardwareProfileRefreshSession\] = useState\(\(\) =>\s*createHardwareProfileRefreshSession\(\)\s*\);/
+  );
+  assert.match(
+    app,
+    /async function refreshHardwareProfile\(\)[\s\S]{0,600}hardwareProfileRefreshSession\.refresh\([\s\S]{0,180}\(\) => getHardwareProfile\(\)[\s\S]{0,260}result\.status === "fulfilled"[\s\S]{0,160}setHardwareProfile\(result\.value\)/
+  );
+  assert.doesNotMatch(app, /setHardwareProfile\(await getHardwareProfile\(\)\)/);
 });
 
 test("shared exposure control presents capability, lock, apply, save, unsupported, and error states", () => {

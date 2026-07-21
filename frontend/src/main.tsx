@@ -134,6 +134,12 @@ import {
   provenanceNeedsSimulatedWarning
 } from "./components/operator/SourceProvenanceBadge";
 import { ExposureControl } from "./components/camera/ExposureControl";
+import {
+  createCameraBusyOwnerRegistry,
+  runWhenCameraIdle,
+  type CameraBusyOwnerToken
+} from "./cameraOperationOwnership";
+import { createHardwareProfileRefreshSession } from "./hardwareProfileRefreshSession";
 import { createHardwareSetupSession } from "./hardwareSetupSession";
 import {
   displayPointToMeasurement,
@@ -667,6 +673,9 @@ function App() {
   const [loadingOperatorSourceStatus, setLoadingOperatorSourceStatus] = useState(false);
   const [operatorSourceStatusLastCheckedAt, setOperatorSourceStatusLastCheckedAt] = useState<number | null>(null);
   const [hardwareProfile, setHardwareProfile] = useState<HardwareProfile | null>(null);
+  const [hardwareProfileRefreshSession] = useState(() =>
+    createHardwareProfileRefreshSession()
+  );
   const [importedRun, setImportedRun] = useState<ImportedRunView | null>(null);
   const [frameIndex, setFrameIndex] = useState(1);
   const [probe, setProbe] = useState<ProbeResponse | null>(null);
@@ -683,6 +692,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
   const [exposureBusy, setExposureBusy] = useState(false);
+  const [cameraBusyOwnerRegistry] = useState(() =>
+    createCameraBusyOwnerRegistry(setExposureBusy)
+  );
   const [running, setRunning] = useState(false);
   const [previewingCamera, setPreviewingCamera] = useState(false);
   const [runningCamera, setRunningCamera] = useState(false);
@@ -721,9 +733,7 @@ function App() {
   useEffect(() => {
     void refreshAppRuntime();
     void refreshDatasets();
-    void refreshHardwareProfile().catch((err: unknown) => {
-      setError(err instanceof Error ? err.message : String(err));
-    });
+    void refreshHardwareProfile();
   }, []);
 
   useEffect(() => {
@@ -1026,7 +1036,20 @@ function App() {
   }
 
   async function refreshHardwareProfile() {
-    setHardwareProfile(await getHardwareProfile());
+    await hardwareProfileRefreshSession.refresh(
+      () => getHardwareProfile(),
+      (result) => {
+        if (result.status === "fulfilled") {
+          setHardwareProfile(result.value);
+        } else {
+          setError(
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+          );
+        }
+      }
+    );
   }
 
   async function refreshAppRuntime() {
@@ -1060,6 +1083,10 @@ function App() {
     await refreshHardwareProfile();
     await refreshOperatorSourceStatus({ reason: "saved" });
     await refreshSerialPorts();
+  }
+
+  function openDeviceSetup() {
+    runWhenCameraIdle(cameraBusyOwnerRegistry, () => setDeviceSetupOpen(true));
   }
 
   async function runProbe(targetFrame = frameIndex) {
@@ -1745,7 +1772,7 @@ function App() {
             ))}
           </select>
         </label>
-        {appRuntime?.runtime_source !== "simulated_material" ? <button className="iconButton" onClick={() => setDeviceSetupOpen(true)} type="button" title={t("Device setup")}>
+        {appRuntime?.runtime_source !== "simulated_material" ? <button className="iconButton" disabled={exposureBusy} onClick={openDeviceSetup} type="button" title={t("Device setup")}>
           <Settings size={17} aria-hidden="true" />
         </button> : null}
         <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
@@ -1806,7 +1833,7 @@ function App() {
               onOperatorSettingsPatch={patchOperatorSettings}
               onOperatorSettingsConfirm={confirmCurrentOperatorSettings}
               onOperatorStartRun={startOperatorRun}
-              onExposureBusyChange={setExposureBusy}
+              onExposureBusyChange={cameraBusyOwnerRegistry.setOwnerBusy}
               onImportRunExport={importOperatorRunExport}
               onImportedRun={setImportedRun}
               onProbe={runProbe}
@@ -1822,15 +1849,17 @@ function App() {
               onReadCurrentTemperature={readCurrentTemperature}
               onRefreshSerialPorts={refreshSerialPorts}
               onRefreshOperatorSourceStatus={() => void refreshOperatorSourceStatus({ reason: "manual" })}
-              onOpenDeviceSetup={() => setDeviceSetupOpen(true)}
+              onOpenDeviceSetup={openDeviceSetup}
               page={page}
             />
           ) : null}
         </section>
       </section>
       {appRuntime?.runtime_source !== "simulated_material" ? <DeviceSetupWizard
+        exposureBusy={exposureBusy}
         open={deviceSetupOpen}
         onClose={() => setDeviceSetupOpen(false)}
+        onExposureBusyChange={cameraBusyOwnerRegistry.setOwnerBusy}
         onSaved={handleDeviceSetupSaved}
       /> : null}
     </main>
@@ -1999,7 +2028,7 @@ function PageContent({
   onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onOperatorSettingsConfirm: () => void;
   onOperatorStartRun: () => void;
-  onExposureBusyChange: (busy: boolean) => void;
+  onExposureBusyChange: (owner: CameraBusyOwnerToken, busy: boolean) => void;
   onImportRunExport: (file: File) => Promise<ImportedRunView>;
   onImportedRun: (view: ImportedRunView | null) => void;
   onProbe: (frameIndex?: number) => void;
@@ -2351,7 +2380,7 @@ function OperatorRunPage({
   onOperatorSettingsPatch: (patch: Partial<Pick<OperatorConfirmedSettings, "targetTemperatureC" | "temperaturePowerPercent" | "serialPort">>) => void;
   onOperatorSettingsConfirm: () => void;
   onOperatorStartRun: () => void;
-  onExposureBusyChange: (busy: boolean) => void;
+  onExposureBusyChange: (owner: CameraBusyOwnerToken, busy: boolean) => void;
   onProbeRealCameraSetup: () => void;
   onStopRun: () => void;
   onRefreshSerialPorts: () => void;
@@ -2498,6 +2527,7 @@ function OperatorRunPage({
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
+            openDeviceSetupDisabled={exposureBusy}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
             onRecheck={onRefreshOperatorSourceStatus}
@@ -2599,6 +2629,7 @@ function OperatorRunPage({
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
+            openDeviceSetupDisabled={exposureBusy}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
             onRecheck={onRefreshOperatorSourceStatus}
@@ -2939,12 +2970,16 @@ const HARDWARE_SETUP_STEPS = [
 ] as const;
 
 function DeviceSetupWizard({
+  exposureBusy,
   open,
   onClose,
+  onExposureBusyChange,
   onSaved
 }: {
+  exposureBusy: boolean;
   open: boolean;
   onClose: () => void;
+  onExposureBusyChange: (owner: CameraBusyOwnerToken, busy: boolean) => void;
   onSaved: () => Promise<void>;
 }) {
   const language = useUiLanguage();
@@ -2968,7 +3003,6 @@ function DeviceSetupWizard({
   const [testingBinding, setTestingBinding] = useState(false);
   const [savingBinding, setSavingBinding] = useState(false);
   const [savingSdkPaths, setSavingSdkPaths] = useState(false);
-  const [exposureBusy, setExposureBusy] = useState(false);
   const [error, setError] = useState("");
   const loadingWizardRef = useRef(true);
   const selectedCameraKeyRef = useRef(selectedCameraKey);
@@ -3504,7 +3538,7 @@ function DeviceSetupWizard({
                   camera={selectedCamera}
                   disabled={wizardHardwareOperationBusy}
                   language={language}
-                  onBusyChange={setExposureBusy}
+                  onBusyChange={onExposureBusyChange}
                   runActive={false}
                 />
               ) : null}
@@ -3764,6 +3798,7 @@ function selectDefaultHardwareCamera(cameras: HardwareCameraDevice[]): HardwareC
 function RealHardwareUnavailableCard({
   loading,
   lastCheckedAt,
+  openDeviceSetupDisabled,
   sourceStatus,
   statusError,
   onRecheck,
@@ -3771,6 +3806,7 @@ function RealHardwareUnavailableCard({
 }: {
   loading: boolean;
   lastCheckedAt: number | null;
+  openDeviceSetupDisabled: boolean;
   sourceStatus: OperatorSourceStatus | null;
   statusError: string;
   onRecheck?: () => void;
@@ -3803,7 +3839,7 @@ function RealHardwareUnavailableCard({
           </button>
         ) : null}
         {onOpenDeviceSetup ? (
-          <button className="secondaryButton" onClick={onOpenDeviceSetup} type="button">
+          <button className="secondaryButton" disabled={openDeviceSetupDisabled} onClick={onOpenDeviceSetup} type="button">
             <Settings size={16} aria-hidden="true" />
             {t("Open device setup")}
           </button>

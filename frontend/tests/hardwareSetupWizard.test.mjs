@@ -18,10 +18,29 @@ function sourceSlice(startMarker, endMarker) {
 }
 
 test("top bar exposes a device setup entry and renders the wizard modal", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+
   assert.match(mainSource, /const \[deviceSetupOpen, setDeviceSetupOpen\] = useState\(false\);/);
   assert.match(mainSource, /title=\{t\("Device setup"\)\}/);
-  assert.match(mainSource, /setDeviceSetupOpen\(true\)/);
+  assert.match(
+    app,
+    /function openDeviceSetup\(\)[\s\S]{0,220}runWhenCameraIdle\(cameraBusyOwnerRegistry, \(\) => setDeviceSetupOpen\(true\)\)/
+  );
+  assert.equal(
+    app.match(/setDeviceSetupOpen\(true\)/g)?.length,
+    1,
+    "all setup entry points must use the guarded openDeviceSetup function"
+  );
+  assert.match(
+    app,
+    /<button className="iconButton" disabled=\{exposureBusy\} onClick=\{openDeviceSetup\}[\s\S]{0,120}title=\{t\("Device setup"\)\}/
+  );
+  assert.match(app, /onOpenDeviceSetup=\{openDeviceSetup\}/);
   assert.match(mainSource, /<DeviceSetupWizard/);
+  assert.match(
+    app,
+    /<DeviceSetupWizard[\s\S]{0,220}exposureBusy=\{exposureBusy\}[\s\S]{0,220}onExposureBusyChange=\{cameraBusyOwnerRegistry\.setOwnerBusy\}/
+  );
   assert.match(mainSource, /onSaved=\{handleDeviceSetupSaved\}/);
 });
 
@@ -32,6 +51,7 @@ test("hardware unavailable card prompts operators to open device setup", () => {
   );
 
   assert.match(card, /onOpenDeviceSetup\?: \(\) => void;/);
+  assert.match(card, /openDeviceSetupDisabled: boolean;/);
   assert.match(card, /onRecheck\?: \(\) => void;/);
   assert.match(card, /Device binding incomplete guidance/);
   assert.match(card, /Real camera is unavailable\. Check the device connection or open device setup\./);
@@ -39,7 +59,10 @@ test("hardware unavailable card prompts operators to open device setup", () => {
   assert.match(card, /Rechecking/);
   assert.match(card, /Open device setup/);
   assert.match(card, /onClick=\{onRecheck\}/);
-  assert.match(card, /onClick=\{onOpenDeviceSetup\}/);
+  assert.match(
+    card,
+    /disabled=\{openDeviceSetupDisabled\} onClick=\{onOpenDeviceSetup\}/
+  );
   assert.doesNotMatch(card, /loading \? t\("Checking real hardware"\)/);
 });
 
@@ -108,7 +131,7 @@ test("device setup mounts the shared exposure control after a successful camera 
   );
   assert.match(
     wizard,
-    /<ExposureControl[\s\S]{0,420}onBusyChange=\{setExposureBusy\}[\s\S]{0,200}runActive=\{false\}/
+    /<ExposureControl[\s\S]{0,420}onBusyChange=\{onExposureBusyChange\}[\s\S]{0,200}runActive=\{false\}/
   );
 });
 
@@ -118,8 +141,18 @@ test("device setup exposure busy gates camera and wizard hardware operations", (
     "function HardwareCheckList("
   );
 
-  assert.match(wizard, /const \[exposureBusy, setExposureBusy\] = useState\(false\);/);
+  assert.match(wizard, /exposureBusy: boolean;/);
+  assert.match(
+    wizard,
+    /onExposureBusyChange: \(owner: CameraBusyOwnerToken, busy: boolean\) => void;/
+  );
+  assert.doesNotMatch(wizard, /const \[exposureBusy, setExposureBusy\] = useState\(false\);/);
   assert.match(wizard, /const wizardBusy =[\s\S]{0,300}exposureBusy/);
+  assert.match(
+    wizard,
+    /<ExposureControl[\s\S]{0,240}disabled=\{wizardHardwareOperationBusy\}[\s\S]{0,240}onBusyChange=\{onExposureBusyChange\}/,
+    "the wizard exposure control must not disable itself through aggregate exposure busy"
+  );
   assert.match(wizard, /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,180}if \(wizardBusy\) return;/);
   assert.match(wizard, /async function runCameraTest\(\)[\s\S]{0,160}if \(wizardBusy\) return;/);
   assert.match(wizard, /disabled=\{wizardBusy \|\| !camera\.is_supported_model\}/);
@@ -128,6 +161,23 @@ test("device setup exposure busy gates camera and wizard hardware operations", (
   assert.match(wizard, /disabled=\{wizardBusy \|\| activeStep === 0\}/);
   assert.match(wizard, /disabled=\{wizardBusy \|\| activeStep >= HARDWARE_SETUP_STEPS\.length - 1/);
   assert.match(wizard, /aria-label=\{t\("Cancel"\)\}[\s\S]{0,160}disabled=\{wizardBusy\}/);
+});
+
+test("every Device Setup entry is visibly disabled and defensively guarded while exposure owns the camera", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(
+    app,
+    /function openDeviceSetup\(\)[\s\S]{0,220}runWhenCameraIdle\(cameraBusyOwnerRegistry, \(\) => setDeviceSetupOpen\(true\)\)/
+  );
+  assert.match(
+    operatorPage,
+    /<RealHardwareUnavailableCard[\s\S]{0,260}openDeviceSetupDisabled=\{exposureBusy\}[\s\S]{0,260}onOpenDeviceSetup=\{onOpenDeviceSetup\}/g
+  );
 });
 
 test("selecting another camera synchronously clears the previous camera test before exposure can mount", () => {
