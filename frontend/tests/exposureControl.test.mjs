@@ -232,7 +232,7 @@ test("numeric submission equal to the confirmed value replaces a scheduled slide
   await Promise.resolve();
 });
 
-test("numeric submission equal to the confirmed value aborts an in-flight slider intent without blur duplication", async () => {
+test("numeric submission equal to the confirmed value queues behind an in-flight slider intent without blur duplication", async () => {
   const {
     createExposureCommitCoordinator,
     submitExposureDraft
@@ -266,10 +266,9 @@ test("numeric submission equal to the confirmed value aborts an in-flight slider
     coordinator
   });
   assert.deepEqual(enterResult, { kind: "submitted", value: 100 });
-  assert.equal(pending[0].signal.aborted, true);
-  assert.equal(pending.length, 2);
-  assert.equal(pending[1].value, 100);
-  assert.equal(lastRequestedUs, 100);
+  assert.equal(pending[0].signal.aborted, false);
+  assert.equal(pending.length, 1);
+  assert.equal(lastRequestedUs, 200);
 
   const blurResult = submitExposureDraft({
     draft: "100",
@@ -280,15 +279,20 @@ test("numeric submission equal to the confirmed value aborts an in-flight slider
     lastRequestedUs,
     coordinator
   });
-  assert.deepEqual(blurResult, { kind: "pending", value: 100 });
-  assert.equal(pending.length, 2);
+  assert.deepEqual(blurResult, { kind: "submitted", value: 100 });
+  assert.equal(pending.length, 1);
 
-  pending[1].resolve({ actual_us: 100 });
   pending[0].resolve({ actual_us: 200 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(pending.length, 2);
+  assert.equal(pending[1].value, 100);
+  assert.equal(lastRequestedUs, 100);
+  pending[1].resolve({ actual_us: 100 });
   await Promise.resolve();
 });
 
-test("a new slider schedule invalidates the old active value before numeric resubmission", async () => {
+test("a new slider schedule supersedes queued intent without aborting the active value", async () => {
   const {
     createExposureCommitCoordinator,
     scheduleExposureDraft,
@@ -321,7 +325,7 @@ test("a new slider schedule invalidates the old active value before numeric resu
       lastRequestedUs = intent.lastRequestedUs;
     }
   });
-  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending[0].signal.aborted, false);
   assert.equal(latestIntentUs, 300);
   assert.equal(lastRequestedUs, null);
   assert.equal(scheduler.timers.size, 1);
@@ -338,10 +342,13 @@ test("a new slider schedule invalidates the old active value before numeric resu
 
   assert.deepEqual(result, { kind: "submitted", value: 200 });
   assert.equal(scheduler.timers.size, 0);
+  assert.equal(pending.length, 1);
+  pending[0].resolve({ actual_us: 200 });
+  await Promise.resolve();
+  await Promise.resolve();
   assert.equal(pending.length, 2);
   assert.equal(pending[1].value, 200);
   pending[1].resolve({ actual_us: 200 });
-  pending[0].resolve({ actual_us: 200 });
   await Promise.resolve();
 });
 
@@ -404,7 +411,11 @@ for (const invalidDraft of [
       });
       assert.equal(scheduler.timers.size, 0);
       if (phase === "in-flight") {
-        assert.equal(pending[0].signal.aborted, true);
+        assert.equal(pending[0].signal.aborted, false);
+        assert.equal(pending.length, 1);
+        pending[0].resolve({ actual_us: 200 });
+        await Promise.resolve();
+        await Promise.resolve();
       }
       const compensation = pending.at(-1);
       assert.equal(compensation.value, 100);
@@ -429,7 +440,6 @@ for (const invalidDraft of [
       assert.equal(pending.length, applyCount);
 
       compensation.resolve({ actual_us: 100 });
-      if (phase === "in-flight") pending[0].resolve({ actual_us: 200 });
       await Promise.resolve();
     });
   }
@@ -473,7 +483,7 @@ test("invalid numeric submission without a confirmed value cancels the old inten
   assert.equal(pending.length, 0);
 });
 
-test("exposure coordinator aborts the older request when a newer apply starts", async () => {
+test("exposure coordinator queues a newer request without aborting the active request", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();
   const pending = [];
@@ -489,14 +499,18 @@ test("exposure coordinator aborts the older request when a newer apply starts", 
   coordinator.commit(12000);
   coordinator.commit(13000);
 
-  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].signal.aborted, false);
+  pending[0].resolve({ actual_us: 12000 });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(pending.length, 2);
   assert.equal(pending[1].signal.aborted, false);
   pending[1].resolve({ actual_us: 13000 });
-  pending[0].resolve({ actual_us: 12000 });
   await Promise.resolve();
 });
 
-test("exposure coordinator ignores an older response that resolves after the latest request", async () => {
+test("exposure coordinator reports intermediate and latest responses in serialized order", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();
   const pending = [];
@@ -505,7 +519,7 @@ test("exposure coordinator ignores an older response that resolves after the lat
   const coordinator = createExposureCommitCoordinator({
     delayMs: 200,
     apply: createPendingApply(pending),
-    onSuccess: (actualUs) => successes.push(actualUs),
+    onSuccess: (actualUs, _response, context) => successes.push({ actualUs, context }),
     onError: (error) => errors.push(error),
     setTimer: scheduler.setTimer,
     clearTimer: scheduler.clearTimer
@@ -513,12 +527,16 @@ test("exposure coordinator ignores an older response that resolves after the lat
 
   coordinator.commit(12000);
   coordinator.commit(13000);
-  pending[1].resolve({ actual_us: 12999.5 });
-  await Promise.resolve();
   pending[0].resolve({ actual_us: 12000 });
   await Promise.resolve();
+  await Promise.resolve();
+  pending[1].resolve({ actual_us: 12999.5 });
+  await Promise.resolve();
 
-  assert.deepEqual(successes, [12999.5]);
+  assert.deepEqual(successes, [
+    { actualUs: 12000, context: { isLatestIntent: false } },
+    { actualUs: 12999.5, context: { isLatestIntent: true } }
+  ]);
   assert.deepEqual(errors, []);
 });
 
@@ -548,7 +566,7 @@ test("exposure coordinator ignores an older rejection after a newer request star
   assert.deepEqual(errors, []);
 });
 
-test("exposure coordinator ignores an active success as soon as a newer value is scheduled", async () => {
+test("exposure coordinator reports active success as intermediate when a newer value is scheduled", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();
   const pending = [];
@@ -559,7 +577,7 @@ test("exposure coordinator ignores an active success as soon as a newer value is
     delayMs: 200,
     apply: createPendingApply(pending),
     onPending: (value) => pendingValues.push(value),
-    onSuccess: (actualUs) => successes.push(actualUs),
+    onSuccess: (actualUs, _response, context) => successes.push({ actualUs, context }),
     onError: (error) => errors.push(error),
     setTimer: scheduler.setTimer,
     clearTimer: scheduler.clearTimer
@@ -572,16 +590,21 @@ test("exposure coordinator ignores an active success as soon as a newer value is
 
   pending[0].resolve({ actual_us: 12000 });
   await Promise.resolve();
-  assert.deepEqual(successes, []);
+  assert.deepEqual(successes, [
+    { actualUs: 12000, context: { isLatestIntent: false } }
+  ]);
   assert.deepEqual(errors, []);
-  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending[0].signal.aborted, false);
 
   scheduler.fireOnlyTimer();
   assert.equal(pending[1].value, 13000);
   assert.deepEqual(pendingValues, [12000, 13000]);
   pending[1].resolve({ actual_us: 13000 });
   await Promise.resolve();
-  assert.deepEqual(successes, [13000]);
+  assert.deepEqual(successes, [
+    { actualUs: 12000, context: { isLatestIntent: false } },
+    { actualUs: 13000, context: { isLatestIntent: true } }
+  ]);
 });
 
 test("exposure coordinator ignores an active failure as soon as a newer value is scheduled", async () => {
@@ -606,7 +629,7 @@ test("exposure coordinator ignores an active failure as soon as a newer value is
 
   assert.deepEqual(successes, []);
   assert.deepEqual(errors, []);
-  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending[0].signal.aborted, false);
   assert.equal(pending.length, 1);
 
   scheduler.fireOnlyTimer();
@@ -700,4 +723,123 @@ test("exposure coordinator dispose clears and aborts work, ignores late completi
   await Promise.resolve();
   assert.deepEqual(successes, []);
   assert.deepEqual(errors, []);
+});
+
+test("exposure coordinator keeps one apply in flight, coalesces A-B-C to A-C, and rolls final failure back to A", async () => {
+  const { createExposureCommitCoordinator } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const successes = [];
+  const errors = [];
+  let activeApplies = 0;
+  let maximumActiveApplies = 0;
+  let confirmedUs = 9000;
+  let visibleDraftUs = 9000;
+
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: (value, signal) => new Promise((resolve, reject) => {
+      activeApplies += 1;
+      maximumActiveApplies = Math.max(maximumActiveApplies, activeApplies);
+      pending.push({
+        value,
+        signal,
+        resolve(response) {
+          activeApplies -= 1;
+          resolve(response);
+        },
+        reject(error) {
+          activeApplies -= 1;
+          reject(error);
+        }
+      });
+    }),
+    onSuccess: (actualUs, response, context) => {
+      confirmedUs = actualUs;
+      if (context.isLatestIntent) visibleDraftUs = actualUs;
+      successes.push({ actualUs, response, context });
+    },
+    onError: (error) => {
+      visibleDraftUs = confirmedUs;
+      errors.push(error);
+    },
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.commit(10000);
+  visibleDraftUs = 11000;
+  coordinator.commit(11000);
+  visibleDraftUs = 12000;
+  coordinator.commit(12000);
+
+  assert.deepEqual(pending.map(({ value }) => value), [10000]);
+  assert.equal(pending[0].signal.aborted, false);
+  assert.equal(maximumActiveApplies, 1);
+
+  const intermediateResponse = { actual_us: 10025, requested_us: 10000 };
+  pending[0].resolve(intermediateResponse);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(pending.map(({ value }) => value), [10000, 12000]);
+  assert.equal(maximumActiveApplies, 1);
+  assert.equal(confirmedUs, 10025);
+  assert.equal(visibleDraftUs, 12000);
+  assert.deepEqual(successes, [
+    {
+      actualUs: 10025,
+      response: intermediateResponse,
+      context: { isLatestIntent: false }
+    }
+  ]);
+
+  const finalError = new Error("final exposure failed");
+  pending[1].reject(finalError);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(visibleDraftUs, 10025);
+  assert.deepEqual(errors, [finalError]);
+  assert.equal(maximumActiveApplies, 1);
+});
+
+test("exposure compensation waits behind the active apply without treating abort as server cancellation", async () => {
+  const { createExposureCommitCoordinator } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const successes = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onSuccess: (actualUs, _response, context) => successes.push({ actualUs, context }),
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.commit(12000);
+  coordinator.cancel();
+  coordinator.commit(10000);
+
+  assert.deepEqual(pending.map(({ value }) => value), [12000]);
+  assert.equal(pending[0].signal.aborted, false);
+
+  pending[0].resolve({ actual_us: 11950 });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(pending.map(({ value }) => value), [12000, 10000]);
+  assert.deepEqual(successes, [
+    { actualUs: 11950, context: { isLatestIntent: false } }
+  ]);
+
+  pending[1].resolve({ actual_us: 10010 });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(successes, [
+    { actualUs: 11950, context: { isLatestIntent: false } },
+    { actualUs: 10010, context: { isLatestIntent: true } }
+  ]);
 });

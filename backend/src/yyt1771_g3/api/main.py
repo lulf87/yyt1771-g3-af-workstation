@@ -128,6 +128,7 @@ _camera_preview_source: CameraSource | None = None
 _camera_preview_profile_key: str | None = None
 _camera_operation_lock = threading.Lock()
 _camera_operation_owner: str | None = None
+_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS = 1.0
 _real_camera_stream_stop_lock = threading.Lock()
 _real_camera_stream_stop_events: dict[str, threading.Event] = {}
 
@@ -1124,7 +1125,10 @@ def release_real_camera_preview() -> dict[str, str]:
 @app.post("/api/camera/exposure/read")
 def read_camera_exposure(request: CameraExposureRequest) -> dict[str, Any]:
     profile = _camera_profile_for_exposure_request(request.camera)
-    with _camera_operation("camera_exposure_read", blocking=False):
+    with _camera_operation(
+        "camera_exposure_read",
+        timeout=_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS,
+    ):
         with _camera_preview_lock:
             source = _get_preview_camera_source(profile)
             reader = getattr(source, "read_exposure_capability", None)
@@ -1172,7 +1176,10 @@ def update_camera_exposure(request: CameraExposureRequest) -> dict[str, Any]:
         )
     profile = _camera_profile_for_exposure_request(request.camera)
     try:
-        with _camera_operation("camera_exposure_update", blocking=False):
+        with _camera_operation(
+            "camera_exposure_update",
+            timeout=_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS,
+        ):
             with _camera_preview_lock:
                 source = _require_exposure_source(_get_preview_camera_source(profile))
                 update = apply_camera_exposure(

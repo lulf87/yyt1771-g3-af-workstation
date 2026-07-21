@@ -86,12 +86,13 @@ export function ExposureControl({
         setStatus("applying");
         setError("");
       },
-      onSuccess: (actual, response) => {
+      onSuccess: (actual, response, context) => {
         confirmedRef.current = actual;
+        setLoadedCapability({ cameraKey, value: response });
+        if (!context.isLatestIntent) return;
         latestIntentRef.current = null;
         lastRequestedRef.current = null;
         compensationPendingRef.current = false;
-        setLoadedCapability({ cameraKey, value: response });
         setDraft(String(actual));
         setStatus("saved");
         setError("");

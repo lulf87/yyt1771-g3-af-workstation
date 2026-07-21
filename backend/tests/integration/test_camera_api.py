@@ -585,9 +585,10 @@ def test_camera_exposure_api_reuses_preview_source_and_persists_actual(monkeypat
     assert load_hardware_config(hardware_path).camera.exposure_us == 12345.0
 
 
-def test_camera_exposure_operations_are_rejected_while_real_run_owns_camera() -> None:
+def test_camera_exposure_operations_are_rejected_while_real_run_owns_camera(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
 
+    monkeypatch.setattr(api_main, "_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS", 0.01)
     client = TestClient(api_main.app)
     api_main._camera_operation_lock.acquire()
     api_main._camera_operation_owner = "real_camera_run"
@@ -605,6 +606,105 @@ def test_camera_exposure_operations_are_rejected_while_real_run_owns_camera() ->
         detail = response.json()["detail"]
         assert detail["camera_status"] == "busy"
         assert detail["details"]["active_operation"] == "real_camera_run"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("POST", "/api/camera/exposure/read", {}),
+        ("PUT", "/api/camera/exposure", {"exposure_us": 12000.0}),
+    ],
+)
+def test_camera_exposure_waits_for_in_flight_preview_then_continues(
+    monkeypatch,
+    tmp_path,
+    method,
+    path,
+    payload,
+) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    hardware_path = tmp_path / "hardware.yaml"
+    monkeypatch.setenv("YYT1771_G3_HARDWARE_CONFIG", str(hardware_path))
+    api_main._reset_preview_camera_source()
+    preview_entered = threading.Event()
+    release_preview = threading.Event()
+    exposure_finished = threading.Event()
+    responses = {}
+
+    class BlockingPreviewSource(FakeApiCameraSource):
+        def preview_frame(self) -> CameraFrame:
+            preview_entered.set()
+            if not release_preview.wait(timeout=2.0):
+                raise AssertionError("preview test release timed out")
+            return super().preview_frame()
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", BlockingPreviewSource)
+
+    def request_preview() -> None:
+        responses["preview"] = TestClient(api_main.app).get("/api/camera/preview")
+
+    def request_exposure() -> None:
+        try:
+            responses["exposure"] = TestClient(api_main.app).request(method, path, json=payload)
+        finally:
+            exposure_finished.set()
+
+    preview_thread = threading.Thread(target=request_preview)
+    exposure_thread = threading.Thread(target=request_exposure)
+    preview_thread.start()
+    exposure_started = False
+    try:
+        assert preview_entered.wait(timeout=1.0) is True
+        exposure_thread.start()
+        exposure_started = True
+        exposure_completed_while_preview_held_lock = exposure_finished.wait(timeout=0.1)
+    finally:
+        release_preview.set()
+        preview_thread.join(timeout=2.0)
+        if exposure_started:
+            exposure_thread.join(timeout=2.0)
+        api_main._reset_preview_camera_source()
+
+    assert preview_thread.is_alive() is False
+    assert exposure_thread.is_alive() is False
+    assert exposure_completed_while_preview_held_lock is False
+    assert responses["preview"].status_code == 200
+    assert responses["exposure"].status_code == 200
+
+
+def test_camera_exposure_uses_finite_timeout_while_real_run_owns_camera(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+
+    acquire_calls = []
+
+    class RecordingUnavailableLock:
+        def acquire(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            acquire_calls.append((args, kwargs))
+            return False
+
+        def release(self) -> None:
+            raise AssertionError("unacquired camera lock must not be released")
+
+    monkeypatch.setattr(api_main, "_camera_operation_lock", RecordingUnavailableLock())
+    monkeypatch.setattr(api_main, "_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS", 0.25, raising=False)
+    api_main._camera_operation_owner = "real_camera_run"
+    try:
+        responses = [
+            TestClient(api_main.app).post("/api/camera/exposure/read", json={}),
+            TestClient(api_main.app).put(
+                "/api/camera/exposure",
+                json={"exposure_us": 12000.0},
+            ),
+        ]
+    finally:
+        api_main._camera_operation_owner = None
+
+    assert [response.status_code for response in responses] == [409, 409]
+    assert acquire_calls == [
+        ((), {"timeout": 0.25}),
+        ((), {"timeout": 0.25}),
+    ]
 
 
 def test_camera_exposure_read_reports_unsupported_source_and_update_rejects_it(monkeypatch) -> None:  # noqa: ANN001

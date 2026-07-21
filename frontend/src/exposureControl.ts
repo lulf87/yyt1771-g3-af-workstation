@@ -6,7 +6,11 @@ export type ExposureCoordinatorOptions<
   delayMs: number;
   apply: (value: number, signal: AbortSignal) => Promise<T>;
   onPending?: (value: number) => void;
-  onSuccess: (actualUs: number, response: T) => void;
+  onSuccess: (
+    actualUs: number,
+    response: T,
+    context: { isLatestIntent: boolean }
+  ) => void;
   onError: (error: unknown) => void;
   setTimer: (
     callback: () => void,
@@ -127,8 +131,14 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
   options: ExposureCoordinatorOptions<T>
 ): ExposureCommitCoordinator {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let activeController: AbortController | null = null;
-  let requestId = 0;
+  let active:
+    | {
+        controller: AbortController;
+        intentId: number;
+      }
+    | null = null;
+  let queued: { value: number; intentId: number } | null = null;
+  let latestIntentId = 0;
   let disposed = false;
 
   function clearPendingTimer(): void {
@@ -138,37 +148,53 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
     }
   }
 
-  function invalidateActiveRequest(): void {
-    requestId += 1;
-    activeController?.abort();
-    activeController = null;
+  function nextIntentId(): number {
+    latestIntentId += 1;
+    return latestIntentId;
   }
 
-  async function apply(value: number): Promise<void> {
-    if (disposed) {
+  function enqueueOrApply(value: number, intentId: number): void {
+    if (disposed) return;
+    if (active !== null) {
+      queued = { value, intentId };
       return;
     }
+    void apply(value, intentId);
+  }
 
-    activeController?.abort();
+  async function apply(value: number, intentId: number): Promise<void> {
+    if (disposed || active !== null) return;
     const controller = new AbortController();
-    activeController = controller;
-    const currentId = ++requestId;
+    const current = { controller, intentId };
+    active = current;
     options.onPending?.(value);
 
     try {
       const response = await options.apply(value, controller.signal);
-      if (controller.signal.aborted || currentId !== requestId) {
+      if (disposed || controller.signal.aborted || active !== current) {
         return;
       }
-      options.onSuccess(response.actual_us, response);
+      options.onSuccess(response.actual_us, response, {
+        isLatestIntent: intentId === latestIntentId
+      });
     } catch (error) {
-      if (controller.signal.aborted || currentId !== requestId) {
+      if (
+        disposed ||
+        controller.signal.aborted ||
+        active !== current ||
+        intentId !== latestIntentId
+      ) {
         return;
       }
       options.onError(error);
     } finally {
-      if (currentId === requestId && activeController === controller) {
-        activeController = null;
+      if (active === current) {
+        active = null;
+      }
+      if (!disposed && active === null && queued !== null) {
+        const next = queued;
+        queued = null;
+        enqueueOrApply(next.value, next.intentId);
       }
     }
   }
@@ -179,10 +205,11 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
         return;
       }
       clearPendingTimer();
-      invalidateActiveRequest();
+      queued = null;
+      const intentId = nextIntentId();
       timer = options.setTimer(() => {
         timer = null;
-        void apply(value);
+        enqueueOrApply(value, intentId);
       }, options.delayMs);
     },
     commit(value) {
@@ -190,14 +217,16 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
         return;
       }
       clearPendingTimer();
-      void apply(value);
+      queued = null;
+      enqueueOrApply(value, nextIntentId());
     },
     cancel() {
       if (disposed) {
         return;
       }
       clearPendingTimer();
-      invalidateActiveRequest();
+      queued = null;
+      nextIntentId();
     },
     dispose() {
       if (disposed) {
@@ -205,7 +234,9 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
       }
       disposed = true;
       clearPendingTimer();
-      invalidateActiveRequest();
+      queued = null;
+      nextIntentId();
+      active?.controller.abort();
     }
   };
 }
