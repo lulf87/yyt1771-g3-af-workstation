@@ -25,3 +25,4 @@ output/
 # macOS/editor files
 .DS_Store
 .gstack/
+.superpowers/

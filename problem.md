@@ -10932,6 +10932,123 @@ FIXED_PENDING_BROWSER_RETEST
 
 ---
 
+### P-0115 — Windows 操作界面缺少相机曝光调节与持久化
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, hardware setup API/UI, Operator real-camera preview
+- Found date: 2026-07-21
+- Last update: 2026-07-21
+- Owner/tool: Codex
+
+#### Problem
+
+Hik MVS 相机打开时已经读取 `camera.exposure_us` 并设置 `ExposureTime`，但设备绑定 API、设备设置向导和 Operator 实时测试页均未暴露曝光调节。Windows 操作者只能手工修改隐藏配置文件，既无法从实时画面确认效果，也容易因 YAML 格式或取值错误导致初始化失败。
+
+#### Expected
+
+设备设置和 Operator 实时测试页均提供“滑杆 + 精确数值框”的曝光控件；范围和步长来自相机能力，调整后应用到实时预览并自动保存为以后默认值。正式测量运行期间控件锁定，每个 run 使用固定曝光并保存配置快照。
+
+#### Actual
+
+当前 dev.8 没有曝光 UI；默认配置为 `10000 μs`，只有相机 source 打开时应用一次。
+
+#### Suspected cause
+
+现有 `HardwareCameraBindingRequest` 和前端 `HardwareCameraDevice` 只传输相机身份字段，未传输曝光值或相机参数能力；相机 adapter 也没有运行期曝光更新接口。
+
+#### Fix summary
+
+待设计确认后实施。
+
+#### Tests run
+
+尚未执行修复验证；Windows Hik 真机验证必需。
+
+#### Final status
+
+IN_PROGRESS
+
+---
+
+### P-0116 — AFAS 高低温区与切线拖动可越出有效数据范围
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `frontend/src/afasInteraction.ts`, `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/styles.css`
+- Found date: 2026-07-21
+- Last update: 2026-07-21
+- Owner/tool: Codex
+
+#### Problem
+
+结果页拖动低温或高温拟合区间时，阴影区、边界命中带或拖动反馈可以进入坐标轴外侧；最大斜率切线整线平移或端点改斜率时也可以被拖到正式数据范围之外，不符合图表交互边界。
+
+#### Expected
+
+温区边界、整体平移、切线整线平移和切线端点改斜率都只在当前有效平滑数据域及绘图区内移动。温区始终至少包含两个有效温度点；切线的可操作锚点和两个端点不得越出正式数据边界，并且必须继续产生位于数据温度范围内的有效 AS/AF 交点。所有温区、拟合线、切线和交互命中层均裁剪在 plot 内。松手后仍由后端权威重算并持久化。
+
+#### Actual
+
+`resizeAfasRange()` / `moveAfasRange()` 会吸附到传入温度点，但 pointer 转数据坐标前没有限制到 plot；`translateAfasTangent()` / `rotateAfasTangent()` 也直接使用未限位的数据坐标。温区和切线 SVG rect/line/handle 没有统一 plot clip path；放大视图或越界拖动时可画到坐标轴区域，切线 override 也缺少正式数据域校验。
+
+#### Suspected cause
+
+交互数值约束和 SVG 可视裁剪是两个独立边界，当前只实现了前者的一部分。
+
+#### Fix summary
+
+待设计确认和真实浏览器复现后实施。
+
+#### Tests run
+
+尚未执行修复验证。
+
+#### Final status
+
+IN_PROGRESS
+
+---
+
+### P-0117 — Chromium 导出目录选择器拒绝系统/敏感目录且缺少稳定自定义保存位置
+
+- Status: IN_PROGRESS
+- Priority: P0
+- Module: `frontend/src/exportSaveTarget.ts`, `frontend/src/main.tsx`, export API, cross-platform application paths
+- Found date: 2026-07-21
+- Last update: 2026-07-21
+- Owner/tool: Codex
+
+#### Problem
+
+Windows dev.8 在“结果与导出”页面强制调用浏览器 `showDirectoryPicker()`。操作员选择磁盘根目录、系统目录或 Chromium 判定的敏感目录时，原生选择器提示目录包含系统文件/不可用于保存，导致反复无法完成导出。
+
+#### Expected
+
+软件提供可写的专用默认导出目录，同时允许通过系统原生文件夹选择器更改位置；选择结果按当前 Windows 用户长期保存，升级不覆盖。保存前验证目录可写，失败时保留上一次有效路径；页面提供完整路径、“打开导出文件夹”和“恢复默认位置”。
+
+#### Actual
+
+当前只在 IndexedDB 保存浏览器 directory handle；权限可能过期，浏览器限制无法由应用解释或恢复，也没有应用管理的默认目录和打开文件夹入口。
+
+#### Suspected cause
+
+本地 Windows 工作站仍沿用了普通网页的 File System Access API，而没有把导出目标作为桌面应用的持久用户偏好交给本地后端管理。
+
+#### Fix summary
+
+待设计确认后实施。
+
+#### Tests run
+
+尚未执行修复验证；Windows 原生目录选择与权限验证必需。
+
+#### Final status
+
+IN_PROGRESS
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。
