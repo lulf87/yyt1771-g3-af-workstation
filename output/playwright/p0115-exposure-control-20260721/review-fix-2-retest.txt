@@ -1,0 +1,45 @@
+P-0115 second review-fix incremental browser retest
+Date: 2026-07-22
+Browser: Chromium 134.0.6998.35 (gstack browse)
+OS: macOS 26.1 (Build 25B78)
+Frontend/Backend: http://127.0.0.1:18026/
+
+Case 1: development-fake source truth and workflow permission
+- GET /api/operator/source-status returned:
+  real_hardware_available=false
+  operation_allowed=true
+  development_fake_available=true
+  camera_is_simulated=true
+  temperature_is_simulated=true
+  provenance.overall_kind=development_fake
+- Operator remained usable and displayed Development fake hardware in the source badge,
+  frame title, and trend source. It did not display Real hardware ready.
+- Evidence: review-fix-2-development-fake-badge.png.
+- Result: PASS.
+
+Case 2: formal run stop creates a new synchronous exposure-read gate
+- Development fake exposure latency: 1200 ms.
+- Browser MutationObserver event sequence:
+  t=646994 ms: Exposure locked during a formal run; Probe disabled; Stop enabled.
+  t=647203 ms: Loading exposure; Probe disabled; Start disabled; Stop disabled.
+  t=648424 ms: Current exposure: 47000 us; Probe enabled; Start enabled; Stop disabled.
+- The new gate was active about 209 ms after Stop and remained active for about 1221 ms,
+  matching the controlled exposure-read latency. Probe/Start did not reopen in the
+  render/effect gap.
+- Evidence: review-fix-2-run-stop-reread-gate.png shows the immediately preceding
+  formal-run lock; the exact stop/read transition is recorded above from the live DOM.
+- Result: PASS.
+
+Case 3: temperature unavailable to recovery
+- Executable deferred-response coverage passed for temperature recovery and confirms
+  that recovery creates a new read key before Probe/Start/preview callbacks can run.
+- Browser same-page recovery could not be completed: after automatic temperature polling
+  records unavailable/error, the current polling effect stops and Operator has no
+  temperature retry action. Without a page reload there is no supported UI transition
+  back to available in this development-fake setup.
+- No temporary recovery feature was added outside the three requested review fixes.
+- Result: BLOCKED for browser-only coverage by the existing no-retry flow.
+
+Overall: PARTIAL PASS on macOS Chromium development fake.
+P-0115 remains FIXED_PENDING_BROWSER_RETEST.
+Outstanding: Windows 11 x64 packaged app + real Hik + real LU92XX.

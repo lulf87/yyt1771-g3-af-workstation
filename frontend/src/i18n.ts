@@ -367,6 +367,7 @@ const ZH_TEXT: Record<string, string> = {
   "Offline dataset / simulated material": "离线数据集 / 模拟素材",
   "Real hardware unavailable": "真实硬件不可用",
   "Real hardware ready": "真实硬件已连接",
+  "Development fake hardware": "开发伪硬件",
   "Temperature controller unavailable. Open device setup.": "温控不可用，请打开设备设置。",
   "Checking real hardware": "正在检查真实硬件连接",
   "Real hardware unavailable guidance": "真实硬件不可用，请检查相机和温控配置。",

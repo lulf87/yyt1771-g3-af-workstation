@@ -1358,6 +1358,62 @@ def test_operator_source_status_reports_real_hardware_config(monkeypatch) -> Non
     assert payload["temperature_is_simulated"] is False
 
 
+def test_operator_source_status_reports_development_fake_truth_and_permission(monkeypatch) -> None:  # noqa: ANN001
+    from yyt1771_g3.api import main as api_main
+    from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, SerialPortConfig, TempConfig
+    from yyt1771_g3.core.runtime_policy import RuntimePolicy
+
+    monkeypatch.setenv("YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE", "1")
+    monkeypatch.setenv("YYT1771_G3_PRODUCT_MODE", "development")
+    monkeypatch.setattr(
+        api_main,
+        "_hardware_config",
+        lambda: HardwareConfig(
+            camera=CameraConfig(
+                backend="hik_gige_mvs",
+                model="MV-DEV-EXPOSURE",
+                serial_number="DEV-EXPOSURE-001",
+            ),
+            temp=TempConfig(
+                backend="lu92xx_modbus_rtu",
+                serial=SerialPortConfig(port="DEV-TEMP-001"),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_runtime_policy",
+        lambda: RuntimePolicy(runtime_source="real_hardware", product_mode="development"),
+    )
+    monkeypatch.setattr(api_main, "_registry", lambda: _FakeOfflineRegistry())
+
+    client = TestClient(api_main.app)
+    response = client.get("/api/operator/source-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["real_hardware_available"] is False
+    assert payload["operation_allowed"] is True
+    assert payload["development_fake_available"] is True
+    assert payload["camera_is_simulated"] is True
+    assert payload["temperature_is_simulated"] is True
+    assert payload["configuration_valid"] is True
+    assert payload["provenance"]["overall_kind"] == "development_fake"
+    assert payload["provenance"]["display_label_en"] == (
+        "Development fake camera + development fake temperature controller"
+    )
+
+    probe_response = client.post(
+        "/api/camera/setup-probe",
+        json={
+            "operator_mode": True,
+            "operator_data_source": "real_camera",
+            "measurement_definition": _operator_measurement_payload("operator-development-fake-probe"),
+        },
+    )
+    assert probe_response.status_code == 200
+
+
 def test_operator_source_status_reports_simulated_camera_and_temperature(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig, TempConfig

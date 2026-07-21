@@ -150,10 +150,10 @@ test("operator real-camera preview mounts the shared exposure control and locks 
     "a stopped run must re-read exposure before stale capability controls can reopen"
   );
   assert.match(component, /createCameraExposureReadSession/);
-  assert.match(component, /readCameraExposure\(identity, controller\.signal\)/);
+  assert.match(component, /readCameraExposure\(identity, readLifetime\.signal\)/);
   assert.match(
     component,
-    /useEffect\([\s\S]{0,1800}exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,160}readCameraExposure\(identity, controller\.signal\)[\s\S]{0,1200}\[cameraKey, disabled, exposureReadSession, runActive/
+    /useEffect\([\s\S]{0,1800}exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,180}readCameraExposure\(identity, readLifetime\.signal\)[\s\S]{0,1400}\[cameraKey, disabled, exposureReadSession, readKey, runActive/
   );
 });
 
@@ -184,16 +184,16 @@ test("closing Device Setup re-reads the operator exposure without a page reload"
   );
   assert.match(
     component,
-    /\[cameraKey, disabled, exposureReadSession, runActive\]/,
+    /\[cameraKey, disabled, exposureReadSession, readKey, runActive\]/,
     "unlocking the operator control must trigger a fresh backend exposure read"
   );
   assert.match(
     app,
-    /const \[operatorExposureReactivationPending, setOperatorExposureReactivationPending\] = useState\(true\);/
+    /const \[operatorExposureReadGate\] = useState\(\(\) => createOperatorExposureReadGate\(\)\);/
   );
   assert.match(
     app,
-    /function closeDeviceSetup\(\)[\s\S]{0,180}setOperatorExposureReactivationPending\(true\)[\s\S]{0,100}setDeviceSetupOpen\(false\)/,
+    /const operatorExposureControlState =[\s\S]{0,320}deviceSetupOpen[\s\S]{0,400}operatorExposureReadGate\.activate\(/,
     "closing Device Setup must establish the preview gate before exposing the operator controls"
   );
   assert.match(
@@ -216,7 +216,7 @@ test("closing Device Setup re-reads the operator exposure without a page reload"
   );
   assert.match(
     component,
-    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,1200}\(\) => onReadSettledRef\.current\?\.\(\)[\s\S]{0,120}\.finally\(finishReadBusy\)/,
+    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,1200}\(\) => onReadSettledRef\.current\?\.\(activeReadKey\)[\s\S]{0,120}\.finally\(readLifetime\.dispose\)/,
     "only the read session's accepted-settlement callback may release the parent preview gate"
   );
 });
@@ -234,16 +234,11 @@ test("shared exposure control reports balanced read and write busy and cancels o
   assert.match(component, /exposureBusyTrackerRef\.current!?\.begin\(\)/);
   assert.match(
     component,
-    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,160}readCameraExposure\(identity, controller\.signal\)[\s\S]{0,1000}finally/
+    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,180}readCameraExposure\(identity, readLifetime\.signal\)[\s\S]{0,1000}finally\(readLifetime\.dispose\)/
   );
   assert.match(
     component,
-    /return \(\) => \{[\s\S]{0,100}exposureReadSession\.invalidate\(\)/
-  );
-  assert.doesNotMatch(
-    component,
-    /controller\.abort\(\)/,
-    "effect cleanup must not turn local fetch rejection into false transport settlement"
+    /return \(\) => \{[\s\S]{0,100}exposureReadSession\.invalidate\(\)[\s\S]{0,100}readLifetime\.dispose\(\)/
   );
   assert.match(
     component,
@@ -339,7 +334,7 @@ test("initial real-camera exposure read gates preview and Device Setup without b
 
   assert.match(
     app,
-    /const operatorExposureControlState =[\s\S]{0,400}temperatureUnavailable: operatorTemperatureHardwareUnavailable[\s\S]{0,180}const operatorExposureReadPending = isOperatorExposureReadPending\([\s\S]{0,120}operatorExposureReactivationPending/,
+    /const operatorExposureControlState =[\s\S]{0,400}temperatureUnavailable: operatorTemperatureHardwareUnavailable[\s\S]{0,260}operatorExposureReadGate\.activate\([\s\S]{0,120}!runningCamera && !running/,
     "the startup gate must apply only when the real-camera exposure control can mount"
   );
   assert.match(
@@ -354,7 +349,7 @@ test("initial real-camera exposure read gates preview and Device Setup without b
   );
   assert.match(
     app,
-    /function handleOperatorExposureReadSettled\(\)[\s\S]{0,100}setOperatorExposureReactivationPending\(false\)/,
+    /function handleOperatorExposureReadSettled\(readKey: string\)[\s\S]{0,160}operatorExposureReadGate\.settle\(readKey\)[\s\S]{0,160}setOperatorExposureGateRevision/,
     "the accepted read settlement must release both startup gates"
   );
 });
@@ -444,7 +439,7 @@ test("operator camera area treats connected hardware without a probed frame as a
 
   assert.match(
     operatorPage,
-    /cameraPreviewRefreshStatus === "unavailable" && realHardwareAvailable && !cameraPreviewError\s+\? "idle"\s+: cameraPreviewRefreshStatus/
+    /cameraPreviewRefreshStatus === "unavailable" && sourceAvailable && !cameraPreviewError\s+\? "idle"\s+: cameraPreviewRefreshStatus/
   );
 });
 
@@ -456,10 +451,23 @@ test("operator mode auto-opens a 20 fps real camera preview after hardware setup
 
   assert.match(mainSource, /const OPERATOR_CAMERA_PREVIEW_FPS = 20;/);
   assert.match(app, /const operatorPreviewAllowed =/);
-  assert.match(app, /operatorSourceStatus\?\.real_hardware_available === true/);
+  assert.match(app, /operatorSourceStatus\?\.operation_allowed === true/);
   assert.match(app, /if \(uiMode === "operator" && !operatorPreviewAllowed\) return;/);
   assert.match(mainSource, /setup_preview_fps: OPERATOR_CAMERA_PREVIEW_FPS/);
   assert.doesNotMatch(app, /if \(uiMode === "operator"\) return;\s+if \(!shouldPollRealCameraPreview/);
+});
+
+test("operator source rendering uses backend operation permission while preserving development-fake truth", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+  const operatorPage = sourceSlice("function OperatorRunPage({", "function OperatorSourceControls({");
+
+  assert.match(app, /operatorSourceStatus\?\.operation_allowed === true/);
+  assert.match(operatorPage, /operatorSourcePresentation\(/);
+  assert.match(operatorPage, /Development fake hardware/);
+  assert.doesNotMatch(
+    operatorPage,
+    /developmentFakeAvailable[\s\S]{0,160}Real hardware ready/
+  );
 });
 
 test("operator temperature panel auto-read path removes manual read temperature button", () => {

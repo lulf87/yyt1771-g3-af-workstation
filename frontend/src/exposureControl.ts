@@ -86,6 +86,28 @@ export type ExposureBusyTracker = {
   begin(): () => void;
 };
 
+export type ExposureReadLifetime = {
+  signal: AbortSignal;
+  dispose(): void;
+};
+
+export function createExposureReadLifetime(
+  busyTracker: ExposureBusyTracker
+): ExposureReadLifetime {
+  const controller = new AbortController();
+  const finishBusy = busyTracker.begin();
+  let disposed = false;
+  return {
+    signal: controller.signal,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      controller.abort();
+      finishBusy();
+    }
+  };
+}
+
 export function createExposureBusyTracker(
   onBusyChange: (busy: boolean) => void
 ): ExposureBusyTracker {

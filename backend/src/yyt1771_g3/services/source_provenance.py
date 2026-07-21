@@ -157,12 +157,14 @@ def operator_source_status(
     temperature_serial_port: str | None = None,
     offline_datasets_available: bool = False,
     offline_dataset_error: str = "",
+    development_fake_hardware: bool = False,
 ) -> dict[str, Any]:
     provenance = camera_runtime_provenance(
         camera_profile=camera_profile,
         camera_meta=camera_meta,
         temperature_backend=temperature_backend,
         temperature_source=temperature_source,
+        development_fake_hardware=development_fake_hardware,
     )
     profile = _mapping(camera_profile)
     camera_backend = str(provenance.get("camera_backend") or profile.get("backend") or "").strip()
@@ -195,6 +197,8 @@ def operator_source_status(
 
     return {
         "real_hardware_available": real_camera_available and real_temperature_available,
+        "operation_allowed": development_fake_hardware or (real_camera_available and real_temperature_available),
+        "development_fake_available": development_fake_hardware,
         "real_camera_available": real_camera_available,
         "real_temperature_available": real_temperature_available,
         "camera_is_simulated": camera_is_simulated,

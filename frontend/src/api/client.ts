@@ -180,6 +180,8 @@ export type OperatorSourceStatus = {
   configuration_error_zh: string;
   configuration_error_en: string;
   real_hardware_available: boolean;
+  operation_allowed: boolean;
+  development_fake_available: boolean;
   real_camera_available: boolean;
   real_temperature_available: boolean;
   camera_is_simulated: boolean;

@@ -938,3 +938,30 @@ test("exposure busy tracker balances overlapping read and write lifetimes", asyn
   finishWrite();
   assert.deepEqual(busyChanges, [true, false]);
 });
+
+test("disposing a never-settling exposure read aborts it and releases only its busy lease", async () => {
+  const {
+    createExposureBusyTracker,
+    createExposureReadLifetime
+  } = await loadExposureControlModule();
+  const busyChanges = [];
+  const tracker = createExposureBusyTracker((busy) => busyChanges.push(busy));
+
+  const oldRead = createExposureReadLifetime(tracker);
+  assert.equal(oldRead.signal.aborted, false);
+  assert.deepEqual(busyChanges, [true]);
+
+  oldRead.dispose();
+  assert.equal(oldRead.signal.aborted, true);
+  assert.deepEqual(busyChanges, [true, false]);
+
+  const newRead = createExposureReadLifetime(tracker);
+  assert.deepEqual(busyChanges, [true, false, true]);
+
+  oldRead.dispose();
+  assert.deepEqual(busyChanges, [true, false, true]);
+
+  newRead.dispose();
+  assert.equal(newRead.signal.aborted, true);
+  assert.deepEqual(busyChanges, [true, false, true, false]);
+});

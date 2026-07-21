@@ -640,6 +640,8 @@ def _operator_source_status_payload(
     offline_datasets_available: bool | None = None,
     offline_dataset_error: str = "",
 ) -> dict[str, Any]:
+    profile = camera_profile or config.camera.to_profile()
+    development_fake_hardware = development_fake_hardware_requested(profile)
     if offline_datasets_available is None:
         if _offline_datasets_disabled_by_runtime():
             offline_datasets_available = False
@@ -651,15 +653,16 @@ def _operator_source_status_payload(
                 offline_datasets_available = False
                 offline_dataset_error = str(exc)
     status = operator_source_status(
-        camera_profile=camera_profile or config.camera.to_profile(),
+        camera_profile=profile,
         camera_meta=camera_meta,
         temperature_backend=_temperature_backend(config),
         temperature_serial_port=config.temp.serial.port,
         offline_datasets_available=offline_datasets_available,
         offline_dataset_error=offline_dataset_error,
+        development_fake_hardware=development_fake_hardware,
     )
     policy = _runtime_policy()
-    configuration_valid = (
+    configuration_valid = development_fake_hardware or (
         status["camera_is_simulated"] and status["temperature_is_simulated"]
         if policy.runtime_source == "simulated_material"
         else not status["camera_is_simulated"] and not status["temperature_is_simulated"]
@@ -702,7 +705,7 @@ def _assert_operator_real_camera_available(
         camera_profile=camera_profile,
         camera_meta=camera_meta,
     )
-    if status["real_hardware_available"]:
+    if status["operation_allowed"]:
         return
     raise HTTPException(
         status_code=409,

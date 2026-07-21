@@ -11,6 +11,7 @@ import {
   createCameraExposureReadSession,
   createExposureBusyTracker,
   createExposureCommitCoordinator,
+  createExposureReadLifetime,
   scheduleExposureDraft,
   submitExposureDraft,
   type ExposureBusyTracker,
@@ -28,7 +29,8 @@ export type ExposureControlProps = {
   runActive: boolean;
   language: UiLanguage;
   onBusyChange: (owner: CameraBusyOwnerToken, busy: boolean) => void;
-  onReadSettled?: () => void;
+  onReadSettled?: (readKey: string) => void;
+  readKey?: string | null;
 };
 
 type ExposureStatus = "loading" | "idle" | "applying" | "saved" | "error";
@@ -55,7 +57,8 @@ export function ExposureControl({
   runActive,
   language,
   onBusyChange,
-  onReadSettled
+  onReadSettled,
+  readKey
 }: ExposureControlProps) {
   const cameraKey = cameraExposureIdentityKey(camera);
   const [busyOwner] = useState(() => createCameraBusyOwnerToken());
@@ -160,12 +163,12 @@ export function ExposureControl({
     setLoadedCapability(null);
     setDraft("");
     setStatus("loading");
-    const controller = new AbortController();
-    const finishReadBusy = exposureBusyTrackerRef.current!.begin();
+    const readLifetime = createExposureReadLifetime(exposureBusyTrackerRef.current!);
+    const activeReadKey = readKey ?? cameraKey;
     void exposureReadSession
       .read(
         camera,
-        (identity) => readCameraExposure(identity, controller.signal),
+        (identity) => readCameraExposure(identity, readLifetime.signal),
         (result) => {
           if (result.status === "rejected") {
             setStatus("error");
@@ -182,14 +185,15 @@ export function ExposureControl({
           setDraft(actual === null ? "" : String(actual));
           setStatus("idle");
         },
-        () => onReadSettledRef.current?.()
+        () => onReadSettledRef.current?.(activeReadKey)
       )
-      .finally(finishReadBusy);
+      .finally(readLifetime.dispose);
 
     return () => {
       exposureReadSession.invalidate();
+      readLifetime.dispose();
     };
-  }, [cameraKey, disabled, exposureReadSession, runActive]);
+  }, [cameraKey, disabled, exposureReadSession, readKey, runActive]);
 
   const locked =
     disabled ||

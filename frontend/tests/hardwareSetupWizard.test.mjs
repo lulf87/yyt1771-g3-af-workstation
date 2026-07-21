@@ -354,12 +354,15 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /onError:[\s\S]{0,300}confirmedRef\.current/);
   assert.match(component, /coordinator\.dispose\(\)/);
   assert.match(component, /createCameraExposureReadSession/);
+  assert.match(component, /createExposureReadLifetime/);
   assert.match(
     component,
-    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,160}readCameraExposure\(identity, controller\.signal\)/
+    /exposureReadSession[\s\S]{0,160}\.read\([\s\S]{0,180}readCameraExposure\(identity, readLifetime\.signal\)/
   );
-  assert.match(component, /exposureReadSession\.invalidate\(\)/);
-  assert.doesNotMatch(component, /controller\.abort\(\)/);
+  assert.match(
+    component,
+    /return \(\) => \{[\s\S]{0,100}exposureReadSession\.invalidate\(\);[\s\S]{0,100}readLifetime\.dispose\(\)/
+  );
   assert.doesNotMatch(
     component,
     /\[[^\]]*confirmed[^\]]*\]/,

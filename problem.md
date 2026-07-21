@@ -10968,6 +10968,9 @@ Hik MVS 相机打开时已经读取 `camera.exposure_us` 并设置 `ExposureTime
 - 2026-07-22 审查修复：开发伪硬件 v2 run 的 meta、summary、ZIP 导出和导入来源统一标记为 camera/temperature simulated，`overall_kind=development_fake`，并带明确双语开发伪硬件标签；保留既有 `operator_data_source` 值，避免破坏旧 UI/import。该类 real-runtime 导出同时强制 `source_validity.status=forbidden`，不能呈现为正式真实硬件结果；正常真实 Hik + LU92XX 来源标记保持不变。
 - 开发伪硬件开关改为只接受精确字符串 `1`；`true/yes/on` 在 builder、discovery、temperature 和 API 入口均明确拒绝。未表达伪硬件意图的普通 simulated/offline profile 继续可用。
 - 初始曝光门与 ExposureControl 的实际可读条件统一，包含温控可用性、相机 identity 和 Device Setup 状态；温控 unavailable/error 不再留下无法结算的门。Probe、Start 的 DOM disabled 和处理器共享 `operatorCameraActionLocked`，初始 read 期间程序化调用也不会触发 API。
+- 2026-07-22 第二轮审查修复：`/api/operator/source-status` 把“来源真实性”和“开发会话可操作权限”拆开。开发伪硬件现在固定返回 `real_hardware_available=false`、`operation_allowed=true`、`development_fake_available=true`，双 simulated flags 与 `overall_kind=development_fake`；Operator 徽标明确显示 `Development fake hardware / 开发伪硬件`，不再显示真实硬件已连接。正常 real-real 权限和来源不变，production fake 仍由严格 gate 拒绝。
+- 曝光读取门改为 generation-aware：温控恢复、页面返回、相机 identity 变化和正式 run 停止都会同步生成新 read key；只有同一 key 的 accepted settlement 能释放该代 Probe/Start/preview gate，旧请求结算不能释放新代。
+- 每次曝光读取拥有独立、幂等的 cancellable lifetime。组件 cleanup 会 invalidate session、abort fetch 并立即释放该次 busy lease；迟到的旧 `.finally()` 复用同一幂等 release，不能释放新读取 owner。后端相机操作锁仍独立持有到 SDK 操作实际退出。
 
 #### Tests run
 
@@ -10986,11 +10989,11 @@ PYTHONPATH=backend/src pytest -q backend/tests/unit/test_development_fake_camera
 # 20 passed, 32 deselected
 
 PYTHONPATH=backend/src pytest -q backend/tests
-# 336 passed, 12 skipped
+# 337 passed, 12 skipped
 
 cd frontend
 npm test
-# 245 passed
+# 250 passed
 
 npm run build
 # PASS (TypeScript + Vite production build)
@@ -11033,6 +11036,21 @@ git diff --check
 
 - 尚未在 Windows 11 x64 已打包应用 + 真实 Hik 相机上验证实际量程/步长、读写/读回、失败回滚、配置持久化与 run snapshot。
 - 生产模式仍只允许真实 Hik + 真实 LU92XX；开发伪硬件复测不能替代上述 Windows 真机复测。
+
+#### Second review-fix incremental browser retest
+
+- Retest date: 2026-07-22
+- Browser: Chromium 134.0.6998.35 (gstack browse)
+- OS: macOS 26.1 (Build 25B78)
+- Frontend URL: `http://127.0.0.1:18026/`
+- Backend URL: `http://127.0.0.1:18026/`
+- Dataset: none; development-only deterministic fake hardware (`DEV-EXPOSURE-001`)
+- Page: Operator Live Test
+- Steps: 以 1200 ms fake exposure latency 启动页面，核对 source-status 与 Operator 徽标；启动正式 fake run 后点击 Stop，并用浏览器 MutationObserver 记录 Probe/Start/Stop disabled 和曝光状态的逐次变化；尝试构造 temperature unavailable→recovery。
+- Expected: 开发伪硬件保持可操作但不得呈现为真实硬件；Stop 后的新 exposure read 完成前 Probe、Start、preview 均保持锁定；温控恢复后同样产生新代读取门。
+- Actual: source-status 返回 `real_hardware_available=false`、`operation_allowed=true`、`development_fake_available=true`，页面只显示 `Development fake hardware`。Stop 前为 `Exposure locked during a formal run`；Stop 后约 209 ms 进入 `Loading exposure`，Probe/Start 均 disabled；再过约 1221 ms 才显示 `Current exposure: 47000 μs` 并恢复 Probe/Start。温控恢复的可执行 generation 测试已通过；但真实浏览器同页 unavailable→recovery 未完成，因为当前自动温控轮询一旦记录 unavailable/error 就停止，Operator 页没有温控重试入口，无法在不刷新页面的情况下触发恢复读取。本轮未扩展温控恢复 UX。
+- Result: PARTIAL PASS — source truth/badge 与 run-stop generation gate 通过；temperature recovery browser case blocked by the existing no-retry flow。P-0115 继续保持 `FIXED_PENDING_BROWSER_RETEST`。
+- Evidence: `output/playwright/p0115-exposure-control-20260721/review-fix-2-retest.txt`, `review-fix-2-development-fake-badge.png`, `review-fix-2-run-stop-reread-gate.png`
 
 #### Final status
 
