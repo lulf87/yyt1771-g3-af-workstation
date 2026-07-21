@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import os
 import platform
 import struct
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -98,6 +100,22 @@ def save_hardware_binding(
             "backend": str(temp_payload.get("backend", "") or ""),
             "serial_port": str(serial_payload.get("port", "") or ""),
         },
+    }
+
+
+def save_camera_exposure(exposure_us: float, *, path: str | Path | None = None) -> dict[str, Any]:
+    value = float(exposure_us)
+    if not math.isfinite(value) or value <= 0:
+        raise HardwareSetupError("Camera exposure must be a positive finite value.")
+    config_path = local_hardware_profile_path(path)
+    _assert_writable_hardware_profile_path(config_path)
+    payload = _load_save_base_mapping(config_path)
+    _ensure_mapping(payload, "camera")["exposure_us"] = value
+    _write_yaml_mapping(config_path, payload)
+    return {
+        "saved": True,
+        "config_path": str(config_path),
+        "exposure_us": value,
     }
 
 
@@ -510,7 +528,21 @@ def _write_yaml_mapping(path: Path, payload: dict[str, Any]) -> None:
     except ImportError as exc:  # pragma: no cover
         raise HardwareSetupError("PyYAML is required to save hardware YAML config") from exc
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, allow_unicode=True, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def _ensure_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:

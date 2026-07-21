@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from yyt1771_g3.core.hardware_config import load_hardware_config
 
 
@@ -91,6 +93,16 @@ run:
     assert config.run.preview_max_width == 960
 
 
+def test_load_hardware_config_preserves_fractional_camera_exposure(tmp_path: Path) -> None:
+    config_path = tmp_path / "realcamera_temp.local.yaml"
+    config_path.write_text("camera:\n  exposure_us: 12345.5\n", encoding="utf-8")
+
+    config = load_hardware_config(config_path)
+
+    assert config.camera.exposure_us == 12345.5
+    assert config.camera.to_profile()["exposure_us"] == 12345.5
+
+
 def test_load_hardware_config_reads_simulated_temperature_settings(tmp_path: Path) -> None:
     config_path = tmp_path / "simcamera_simtemp.local.yaml"
     config_path.write_text(
@@ -130,3 +142,91 @@ def test_simulated_dataset_environment_overrides_profile_dataset(monkeypatch, tm
     config = load_hardware_config(config_path)
 
     assert config.camera.simulated_dataset_id == "golden_c_20260529_dev_lab"
+
+
+def test_save_camera_exposure_preserves_profile_and_fractional_value(tmp_path: Path) -> None:
+    from yyt1771_g3.services.hardware_setup_service import save_camera_exposure
+
+    config_path = tmp_path / "hardware.yaml"
+    config_path.write_text(
+        """
+camera:
+  backend: hik_gige_mvs
+  exposure_us: 10000
+  gain_db: 2.5
+temp:
+  backend: lu92xx_modbus_rtu
+  serial:
+    port: COM5
+run:
+  measurement_target_hz: 10
+custom:
+  retained: true
+        """,
+        encoding="utf-8",
+    )
+
+    result = save_camera_exposure(12345.5, path=config_path)
+
+    assert result == {
+        "saved": True,
+        "config_path": str(config_path),
+        "exposure_us": 12345.5,
+    }
+    import yaml
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved == {
+        "camera": {
+            "backend": "hik_gige_mvs",
+            "exposure_us": 12345.5,
+            "gain_db": 2.5,
+        },
+        "temp": {
+            "backend": "lu92xx_modbus_rtu",
+            "serial": {"port": "COM5"},
+        },
+        "run": {"measurement_target_hz": 10},
+        "custom": {"retained": True},
+    }
+
+
+def test_save_camera_exposure_replace_failure_preserves_original_and_removes_temporary_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    from yyt1771_g3.services import hardware_setup_service
+    from yyt1771_g3.services.hardware_setup_service import save_camera_exposure
+
+    config_path = tmp_path / "hardware.yaml"
+    original = b"camera:\n  exposure_us: 10000\ncustom:\n  retained: true\n"
+    config_path.write_bytes(original)
+
+    def reject_replace(source: Path, destination: Path) -> None:
+        raise OSError(f"replace rejected: {source} -> {destination}")
+
+    monkeypatch.setattr(hardware_setup_service.os, "replace", reject_replace)
+
+    with pytest.raises(OSError, match="replace rejected"):
+        save_camera_exposure(12345.5, path=config_path)
+
+    assert config_path.read_bytes() == original
+    assert list(tmp_path.glob(f".{config_path.name}.*.tmp")) == []
+
+
+@pytest.mark.parametrize("exposure_us", [0.0, -1.0, float("nan"), float("inf"), float("-inf")])
+def test_save_camera_exposure_rejects_invalid_value_without_corrupting_profile(
+    exposure_us: float,
+    tmp_path: Path,
+) -> None:
+    from yyt1771_g3.services.hardware_setup_service import HardwareSetupError, save_camera_exposure
+
+    config_path = tmp_path / "hardware.yaml"
+    original = b"camera:\n  exposure_us: 10000\n"
+    config_path.write_bytes(original)
+
+    with pytest.raises(HardwareSetupError, match="positive finite"):
+        save_camera_exposure(exposure_us, path=config_path)
+
+    assert config_path.read_bytes() == original
+    assert list(tmp_path.glob(f".{config_path.name}.*.tmp")) == []

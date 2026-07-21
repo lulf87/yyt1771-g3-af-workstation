@@ -34,7 +34,7 @@ class CameraConfig:
     ip: str = ""
     trigger_mode: str = "free_run"
     pixel_format: str = "mono8"
-    exposure_us: int = 10000
+    exposure_us: float = 10000.0
     gain_db: float = 0.0
     timeout_ms: int = 1000
     target_frame_rate_hz: float | None = DEFAULT_CAMERA_TARGET_FRAME_RATE_HZ
@@ -183,7 +183,7 @@ def _camera_config(payload: dict[str, Any]) -> CameraConfig:
         ip=str(payload.get("ip", "") or ""),
         trigger_mode=str(payload.get("trigger_mode", "free_run") or "free_run"),
         pixel_format=str(payload.get("pixel_format", "mono8") or "mono8"),
-        exposure_us=int(payload.get("exposure_us", 10000) or 10000),
+        exposure_us=float(payload.get("exposure_us", 10000.0) or 10000.0),
         gain_db=float(payload.get("gain_db", 0.0) or 0.0),
         timeout_ms=int(payload.get("timeout_ms", 1000) or 1000),
         target_frame_rate_hz=_optional_float(
