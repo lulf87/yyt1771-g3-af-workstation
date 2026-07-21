@@ -1,0 +1,21 @@
+P-0115 screenshot index and visual inspection
+
+Final or positive evidence:
+- device-setup-exposure-ready.png: two fake Hik identities, camera test success, exposure capability visible.
+- operator-exposure-after-reload-12400.png: persisted 12400 us after page reload.
+- operator-auto-reread-12400.png: same-page Operator re-read after Device Setup close.
+- operator-failure-55000-rollback-12400.png: injected error and rollback to 12400 us.
+- operator-second-55000-success.png: next 55000 us update succeeds.
+- operator-run-exposure-locked-47000.png: formal-run exposure lock at 47000 us.
+- operator-run-settings-guarded-47000.png: run-active Settings guard at 47000 us.
+- operator-after-stop-reread-47000.png: post-stop controls enabled and actual value 47000 us.
+- operator-restart-persistence-47000.png: final rebuilt service restart restores 47000 us.
+
+Intermediate diagnostic evidence retained for traceability:
+- device-setup-exposure-read-busy.png: Device Setup scan/read state; the background 500 banner
+  belongs to the early missing-registry launch and is not a final clean-run screenshot.
+- exposure-write-busy.png: intermediate modal write while the background Operator state is locked/stale.
+- operator-exposure-12400.png: early Operator exposure state during the quantization workflow.
+
+All files above were visually inspected. Final screenshots showed no clipping or overlap in
+the exposure control, and the values/lock states matched the assertions listed here.

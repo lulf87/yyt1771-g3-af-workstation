@@ -134,8 +134,8 @@ test("operator real-camera preview mounts the shared exposure control and locks 
   );
   assert.match(
     operatorPage,
-    /<ExposureControl[\s\S]{0,300}disabled=\{probing\}/,
-    "probing must lock exposure while the camera is owned by the probe operation"
+    /<ExposureControl[\s\S]{0,300}disabled=\{probing \|\| deviceSetupOpen\}/,
+    "probing and Device Setup must lock exposure while either operation owns the camera"
   );
   assert.doesNotMatch(
     operatorPage,
@@ -154,6 +154,70 @@ test("operator real-camera preview mounts the shared exposure control and locks 
   assert.match(
     component,
     /useEffect\([\s\S]{0,1800}exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,160}readCameraExposure\(identity, controller\.signal\)[\s\S]{0,1200}\[cameraKey, disabled, exposureReadSession, runActive/
+  );
+});
+
+test("closing Device Setup re-reads the operator exposure without a page reload", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+  const pageContent = sourceSlice("function PageContent({", "function OperatorRunPage({");
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+  const component = readFileSync(exposureControlPath, "utf8");
+
+  assert.match(
+    app,
+    /<PageContent[\s\S]{0,1800}deviceSetupOpen=\{deviceSetupOpen\}/,
+    "App must expose the modal lock state to the operator camera controls"
+  );
+  assert.match(
+    pageContent,
+    /<OperatorRunPage[\s\S]{0,1000}deviceSetupOpen=\{deviceSetupOpen\}/,
+    "PageContent must preserve the Device Setup lock state"
+  );
+  assert.match(operatorPage, /deviceSetupOpen: boolean;/);
+  assert.match(
+    operatorPage,
+    /<ExposureControl[\s\S]{0,300}disabled=\{probing \|\| deviceSetupOpen\}/,
+    "the background operator control must lock while Device Setup owns the camera"
+  );
+  assert.match(
+    component,
+    /\[cameraKey, disabled, exposureReadSession, runActive\]/,
+    "unlocking the operator control must trigger a fresh backend exposure read"
+  );
+  assert.match(
+    app,
+    /const \[operatorExposureReactivationPending, setOperatorExposureReactivationPending\] = useState\(true\);/
+  );
+  assert.match(
+    app,
+    /function closeDeviceSetup\(\)[\s\S]{0,180}setOperatorExposureReactivationPending\(true\)[\s\S]{0,100}setDeviceSetupOpen\(false\)/,
+    "closing Device Setup must establish the preview gate before exposing the operator controls"
+  );
+  assert.match(
+    app,
+    /const operatorPreviewAllowed =[\s\S]{0,300}!operatorExposureReadPending/,
+    "preview polling must stay blocked until the accepted operator exposure read settles"
+  );
+  assert.match(app, /onClose=\{closeDeviceSetup\}/);
+  assert.match(
+    app,
+    /<PageContent[\s\S]{0,4000}onOperatorExposureReadSettled=\{handleOperatorExposureReadSettled\}/
+  );
+  assert.match(
+    pageContent,
+    /<OperatorRunPage[\s\S]{0,3000}onOperatorExposureReadSettled=\{onOperatorExposureReadSettled\}/
+  );
+  assert.match(
+    operatorPage,
+    /<ExposureControl[\s\S]{0,420}onReadSettled=\{onOperatorExposureReadSettled\}/
+  );
+  assert.match(
+    component,
+    /exposureReadSession[\s\S]{0,120}\.read\([\s\S]{0,1200}\(\) => onReadSettledRef\.current\?\.\(\)[\s\S]{0,120}\.finally\(finishReadBusy\)/,
+    "only the read session's accepted-settlement callback may release the parent preview gate"
   );
 });
 
@@ -227,6 +291,71 @@ test("operator exposure busy pauses preview polling and gates Probe and Run", ()
   assert.match(
     operatorPage,
     /const startDisabled =\s+operatorRunActive \|\|\s+exposureBusy \|\|/
+  );
+});
+
+test("formal runs lock every Device Setup entry and defensively guard the handler", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+  const pageContent = sourceSlice("function PageContent({", "function OperatorRunPage({");
+  const operatorPage = sourceSlice(
+    "function OperatorRunPage({",
+    "function OperatorSourceControls({"
+  );
+
+  assert.match(
+    app,
+    /const cameraUnavailable =[\s\S]{0,120}exposureBusy \|\| runningCamera \|\| running \|\| operatorExposureReadPending;/,
+    "one App-level camera lock must cover exposure operations and both run modes"
+  );
+  assert.match(
+    app,
+    /function openDeviceSetup\(\)[\s\S]{0,120}if \(cameraUnavailable\) return;[\s\S]{0,160}runWhenCameraIdle/,
+    "the handler must reject stale or programmatic clicks while a run owns the camera"
+  );
+  assert.match(
+    app,
+    /<button className="iconButton" disabled=\{cameraUnavailable\} onClick=\{openDeviceSetup\}/,
+    "the header Settings entry must be disabled while a run owns the camera"
+  );
+  assert.match(
+    app,
+    /<PageContent[\s\S]{0,1800}cameraUnavailable=\{cameraUnavailable\}/,
+    "App must pass the unified camera lock to nested Device Setup entries"
+  );
+  assert.match(
+    pageContent,
+    /<OperatorRunPage[\s\S]{0,1200}cameraUnavailable=\{cameraUnavailable\}/
+  );
+  assert.match(operatorPage, /cameraUnavailable: boolean;/);
+  assert.equal(
+    operatorPage.match(/openDeviceSetupDisabled=\{cameraUnavailable\}/g)?.length,
+    2,
+    "both real-hardware-unavailable cards must use the same run-aware lock"
+  );
+});
+
+test("initial real-camera exposure read gates preview and Device Setup without blocking unavailable hardware setup", () => {
+  const app = sourceSlice("function App() {", "function TabButton({");
+
+  assert.match(
+    app,
+    /const operatorExposureReadPending =[\s\S]{0,240}operatorSourceStatus\?\.real_hardware_available === true[\s\S]{0,120}operatorExposureReactivationPending;/,
+    "the startup gate must apply only when the real-camera exposure control can mount"
+  );
+  assert.match(
+    app,
+    /const cameraUnavailable =[\s\S]{0,160}operatorExposureReadPending/,
+    "Device Setup must not race the initial accepted exposure read"
+  );
+  assert.match(
+    app,
+    /const operatorPreviewAllowed =[\s\S]{0,320}!operatorExposureReadPending/,
+    "preview polling must wait for the initial accepted exposure read"
+  );
+  assert.match(
+    app,
+    /function handleOperatorExposureReadSettled\(\)[\s\S]{0,100}setOperatorExposureReactivationPending\(false\)/,
+    "the accepted read settlement must release both startup gates"
   );
 });
 

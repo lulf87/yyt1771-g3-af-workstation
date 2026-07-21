@@ -659,6 +659,7 @@ function App() {
   const [page, setPage] = useState<Page>(() => defaultPageForUiMode("operator"));
   const [language, setLanguage] = useState<UiLanguage>(() => readInitialUiLanguage());
   const [deviceSetupOpen, setDeviceSetupOpen] = useState(false);
+  const [operatorExposureReactivationPending, setOperatorExposureReactivationPending] = useState(true);
   const [appRuntime, setAppRuntime] = useState<AppRuntime | null>(null);
   const [setupSource, setSetupSource] = useState<SetupSourceKind>(initialOperatorDataSource);
   const [operatorDataSource, setOperatorDataSource] = useState<OperatorDataSource>(initialOperatorDataSource);
@@ -723,12 +724,21 @@ function App() {
     temperatureStatus?.temperature_status === "unavailable" ||
     Boolean(temperatureStatus?.reading.error);
   const operatorRealHardwareAvailable = operatorSourceRealHardwareAvailable && !operatorTemperatureHardwareUnavailable;
+  const operatorExposureReadPending =
+    uiMode === "operator" &&
+    page === "operatorRun" &&
+    operatorDataSource === "real_camera" &&
+    operatorSourceStatus?.real_hardware_available === true &&
+    operatorExposureReactivationPending;
+  const cameraUnavailable =
+    exposureBusy || runningCamera || running || operatorExposureReadPending;
   const operatorPreviewAllowed =
     uiMode === "operator" &&
     page === "operatorRun" &&
     operatorDataSource === "real_camera" &&
     operatorSourceStatus?.real_hardware_available === true &&
-    !deviceSetupOpen;
+    !deviceSetupOpen &&
+    !operatorExposureReadPending;
 
   useEffect(() => {
     void refreshAppRuntime();
@@ -1086,7 +1096,17 @@ function App() {
   }
 
   function openDeviceSetup() {
+    if (cameraUnavailable) return;
     runWhenCameraIdle(cameraBusyOwnerRegistry, () => setDeviceSetupOpen(true));
+  }
+
+  function closeDeviceSetup() {
+    setOperatorExposureReactivationPending(true);
+    setDeviceSetupOpen(false);
+  }
+
+  function handleOperatorExposureReadSettled() {
+    setOperatorExposureReactivationPending(false);
   }
 
   async function runProbe(targetFrame = frameIndex) {
@@ -1772,7 +1792,7 @@ function App() {
             ))}
           </select>
         </label>
-        {appRuntime?.runtime_source !== "simulated_material" ? <button className="iconButton" disabled={exposureBusy} onClick={openDeviceSetup} type="button" title={t("Device setup")}>
+        {appRuntime?.runtime_source !== "simulated_material" ? <button className="iconButton" disabled={cameraUnavailable} onClick={openDeviceSetup} type="button" title={t("Device setup")}>
           <Settings size={17} aria-hidden="true" />
         </button> : null}
         <button className="iconButton" onClick={refreshDatasets} type="button" title={t("Refresh")}>
@@ -1820,6 +1840,8 @@ function App() {
               temperatureError={temperatureError}
               serialPorts={serialPorts}
               probing={probing}
+              deviceSetupOpen={deviceSetupOpen}
+              cameraUnavailable={cameraUnavailable}
               exposureBusy={exposureBusy}
               running={running}
               previewingCamera={previewingCamera}
@@ -1849,6 +1871,7 @@ function App() {
               onReadCurrentTemperature={readCurrentTemperature}
               onRefreshSerialPorts={refreshSerialPorts}
               onRefreshOperatorSourceStatus={() => void refreshOperatorSourceStatus({ reason: "manual" })}
+              onOperatorExposureReadSettled={handleOperatorExposureReadSettled}
               onOpenDeviceSetup={openDeviceSetup}
               page={page}
             />
@@ -1858,7 +1881,7 @@ function App() {
       {appRuntime?.runtime_source !== "simulated_material" ? <DeviceSetupWizard
         exposureBusy={exposureBusy}
         open={deviceSetupOpen}
-        onClose={() => setDeviceSetupOpen(false)}
+        onClose={closeDeviceSetup}
         onExposureBusyChange={cameraBusyOwnerRegistry.setOwnerBusy}
         onSaved={handleDeviceSetupSaved}
       /> : null}
@@ -1951,6 +1974,8 @@ function PageContent({
   temperatureError,
   serialPorts,
   probing,
+  deviceSetupOpen,
+  cameraUnavailable,
   exposureBusy,
   running,
   previewingCamera,
@@ -1980,6 +2005,7 @@ function PageContent({
   onReadCurrentTemperature,
   onRefreshSerialPorts,
   onRefreshOperatorSourceStatus,
+  onOperatorExposureReadSettled,
   onOpenDeviceSetup,
   page
 }: {
@@ -2015,6 +2041,8 @@ function PageContent({
   temperatureError: SetupTemperatureError | null;
   serialPorts: SerialPortInfo[];
   probing: boolean;
+  deviceSetupOpen: boolean;
+  cameraUnavailable: boolean;
   exposureBusy: boolean;
   running: boolean;
   previewingCamera: boolean;
@@ -2044,6 +2072,7 @@ function PageContent({
   onReadCurrentTemperature: () => void;
   onRefreshSerialPorts: () => void;
   onRefreshOperatorSourceStatus: () => void;
+  onOperatorExposureReadSettled: () => void;
   onOpenDeviceSetup: () => void;
   page: Page;
 }) {
@@ -2184,6 +2213,8 @@ function PageContent({
         operatorSourceStatusLastCheckedAt={operatorSourceStatusLastCheckedAt}
         probe={displayedProbe}
         probing={probing}
+        deviceSetupOpen={deviceSetupOpen}
+        cameraUnavailable={cameraUnavailable}
         exposureBusy={exposureBusy}
         operatorSettings={operatorSettings ?? createOperatorSettingsDraft(measurement)}
         operatorStartMessage={operatorStartMessage}
@@ -2204,6 +2235,7 @@ function PageContent({
         onStopRun={onStopRun}
         onRefreshSerialPorts={onRefreshSerialPorts}
         onRefreshOperatorSourceStatus={onRefreshOperatorSourceStatus}
+        onOperatorExposureReadSettled={onOperatorExposureReadSettled}
         onOpenDeviceSetup={onOpenDeviceSetup}
       />
     );
@@ -2325,6 +2357,8 @@ function OperatorRunPage({
   operatorSourceStatusLastCheckedAt,
   probe,
   probing,
+  deviceSetupOpen,
+  cameraUnavailable,
   exposureBusy,
   operatorSettings,
   operatorStartMessage,
@@ -2345,6 +2379,7 @@ function OperatorRunPage({
   onStopRun,
   onRefreshSerialPorts,
   onRefreshOperatorSourceStatus,
+  onOperatorExposureReadSettled,
   onOpenDeviceSetup
 }: {
   appRuntime: AppRuntime | null;
@@ -2365,6 +2400,8 @@ function OperatorRunPage({
   operatorSourceStatusLastCheckedAt: number | null;
   probe: ProbeResponse | null;
   probing: boolean;
+  deviceSetupOpen: boolean;
+  cameraUnavailable: boolean;
   exposureBusy: boolean;
   operatorSettings: OperatorConfirmedSettings;
   operatorStartMessage: string;
@@ -2385,6 +2422,7 @@ function OperatorRunPage({
   onStopRun: () => void;
   onRefreshSerialPorts: () => void;
   onRefreshOperatorSourceStatus: () => void;
+  onOperatorExposureReadSettled: () => void;
   onOpenDeviceSetup: () => void;
 }) {
   const language = useUiLanguage();
@@ -2527,7 +2565,7 @@ function OperatorRunPage({
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
-            openDeviceSetupDisabled={exposureBusy}
+            openDeviceSetupDisabled={cameraUnavailable}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
             onRecheck={onRefreshOperatorSourceStatus}
@@ -2558,9 +2596,10 @@ function OperatorRunPage({
           {!simulatedMode && realHardwareAvailable ? (
             <ExposureControl
               camera={operatorCameraIdentity}
-              disabled={probing}
+              disabled={probing || deviceSetupOpen}
               language={language}
               onBusyChange={onExposureBusyChange}
+              onReadSettled={onOperatorExposureReadSettled}
               runActive={operatorRunActive}
             />
           ) : null}
@@ -2629,7 +2668,7 @@ function OperatorRunPage({
           <RealHardwareUnavailableCard
             loading={loadingOperatorSourceStatus}
             lastCheckedAt={operatorSourceStatusLastCheckedAt}
-            openDeviceSetupDisabled={exposureBusy}
+            openDeviceSetupDisabled={cameraUnavailable}
             sourceStatus={operatorSourceStatus}
             statusError={realHardwareError}
             onRecheck={onRefreshOperatorSourceStatus}

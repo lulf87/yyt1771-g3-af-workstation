@@ -23,6 +23,7 @@ from yyt1771_g3.camera.hik_mvs_source import (
     _ip_from_int,
     _prepend_sdk_python_paths,
 )
+from yyt1771_g3.camera.simulated_source import development_fake_hardware_requested
 from yyt1771_g3.core.hardware_config import HardwareConfig, hardware_config_path, local_hardware_profile_path
 from yyt1771_g3.temperature.serial_ports import list_serial_ports
 
@@ -56,6 +57,20 @@ def build_hardware_environment_report(config: HardwareConfig) -> dict[str, Any]:
 
 def discover_hardware_cameras(config: HardwareConfig) -> list[dict[str, Any]]:
     profile = config.camera.to_profile()
+    if development_fake_hardware_requested(profile):
+        descriptors = [
+            {
+                "index": index,
+                "backend": "hik_gige_mvs",
+                "transport": "gige_vision",
+                "model": "MV-DEV-EXPOSURE",
+                "serial_number": f"DEV-EXPOSURE-{index:03d}",
+                "ip": f"192.0.2.{index}",
+                "user_defined_name": f"Development exposure camera {index}",
+            }
+            for index in (1, 2)
+        ]
+        return [_camera_payload(descriptor, profile) for descriptor in descriptors]
     backend = str(profile.get("backend", "hik_gige_mvs") or "hik_gige_mvs").strip().lower()
     if backend not in HIK_CAMERA_BACKENDS:
         raise HardwareSetupError(

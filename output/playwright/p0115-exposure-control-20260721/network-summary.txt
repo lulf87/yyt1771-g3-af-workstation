@@ -1,0 +1,25 @@
+P-0115 network summary
+
+Final clean reload after rebuilding the startup exposure gate:
+- console and network buffers were cleared before reload
+- 79 completed requests returned HTTP 200 during the observation window
+- static application assets returned HTTP 304
+- zero completed 4xx or 5xx responses
+- one live /api/camera/preview request was pending at the instant the buffer was sampled
+
+Final camera resource timing:
+- /api/camera/exposure/read: start 227.2 ms, duration 840.6 ms, end 1067.8 ms
+- first /api/camera/preview: start 1071.4 ms, duration 34.2 ms
+- first preview began 3.6 ms after exposure read completion
+
+Pre-fix reproduction timing:
+- /api/camera/exposure/read: start 200.5 ms, duration 816.4 ms
+- /api/camera/preview: start 200.8 ms, duration 4.9 ms, HTTP 409
+
+Expected functional error:
+- first intended exposure_us=55000 update: HTTP 422, injected development rollback check
+
+Historical environment interruptions retained for traceability:
+- one early /api/offline-datasets HTTP 500 before the explicit registry environment variable
+- ERR_CONNECTION_REFUSED while the launcher was intentionally stopped for restart verification
+- earlier 409 responses from stale/pre-fix browser bundles and the now-fixed initial-load race

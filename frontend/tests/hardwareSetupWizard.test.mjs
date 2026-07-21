@@ -33,7 +33,7 @@ test("top bar exposes a device setup entry and renders the wizard modal", () => 
   );
   assert.match(
     app,
-    /<button className="iconButton" disabled=\{exposureBusy\} onClick=\{openDeviceSetup\}[\s\S]{0,120}title=\{t\("Device setup"\)\}/
+    /<button className="iconButton" disabled=\{cameraUnavailable\} onClick=\{openDeviceSetup\}[\s\S]{0,120}title=\{t\("Device setup"\)\}/
   );
   assert.match(app, /onOpenDeviceSetup=\{openDeviceSetup\}/);
   assert.match(mainSource, /<DeviceSetupWizard/);
@@ -163,7 +163,7 @@ test("device setup exposure busy gates camera and wizard hardware operations", (
   assert.match(wizard, /aria-label=\{t\("Cancel"\)\}[\s\S]{0,160}disabled=\{wizardBusy\}/);
 });
 
-test("every Device Setup entry is visibly disabled and defensively guarded while exposure owns the camera", () => {
+test("every Device Setup entry uses the unified camera-ownership lock and guarded handler", () => {
   const app = sourceSlice("function App() {", "function TabButton({");
   const operatorPage = sourceSlice(
     "function OperatorRunPage({",
@@ -176,7 +176,7 @@ test("every Device Setup entry is visibly disabled and defensively guarded while
   );
   assert.match(
     operatorPage,
-    /<RealHardwareUnavailableCard[\s\S]{0,260}openDeviceSetupDisabled=\{exposureBusy\}[\s\S]{0,260}onOpenDeviceSetup=\{onOpenDeviceSetup\}/g
+    /<RealHardwareUnavailableCard[\s\S]{0,260}openDeviceSetupDisabled=\{cameraUnavailable\}[\s\S]{0,260}onOpenDeviceSetup=\{onOpenDeviceSetup\}/g
   );
 });
 

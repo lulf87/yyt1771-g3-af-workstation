@@ -1,0 +1,65 @@
+P-0115 browser steps and assertions
+
+1. Opened Device Setup and scanned cameras.
+   PASS: DEV-EXPOSURE-001 and DEV-EXPOSURE-002 were listed, and the camera test passed.
+   PASS: exposure capability displayed 100-100000 us with a 100 us increment.
+   PASS: the background Operator exposure control was disabled while Device Setup owned the camera.
+
+2. Entered 12360 us in Device Setup and saved the profile.
+   PASS: the backend applied half-up quantization and reported 12400 us.
+   PASS: UI, GET /api/hardware/profile, and YAML all reported 12400 us.
+   PASS: page reload restored 12400 us.
+
+3. Closed Device Setup without reloading the page.
+   PASS: Operator performed a fresh exposure read and displayed 12400 us.
+   PASS: close-transition timing was: close mark 183002.7 ms; read started +68.3 ms;
+   read duration 816.6 ms; first preview started +888.0 ms. No preview request started
+   while the accepted exposure read was pending.
+
+4. Exercised deterministic rollback at 55000 us.
+   PASS: the first intended 55000 us update returned the injected 422 and the UI rolled
+   back to 12400 us; API and YAML remained 12400 us.
+   PASS: after the cross-source fail-once registry fix and a clean process restart, the
+   next 55000 us update succeeded; UI, API, and YAML all reported 55000 us.
+
+5. Exercised Operator input behavior.
+   PASS: slider changes 30000 -> 40000 -> 45000 inside the debounce window produced
+   exactly one PUT whose body requested exposure_us=45000.
+   PASS: Enter submission applied 55000 us after the expected fail-once attempt.
+   PASS: blur submission produced exactly one PUT and applied 47000 us.
+
+6. Started and stopped formal real-camera runs at 47000 us.
+   PASS: exposure input, measurement controls, and Probe were locked during the run.
+   PASS: the header Settings button was disabled during the run.
+   PASS: a forced stale/programmatic click did not open Device Setup and started no setup resources.
+   PASS: after stop, exposure was re-read as 47000 us and the controls were enabled.
+   PASS: run snapshots recorded camera_profile.exposure_us=47000.0.
+
+7. Restarted the service with the same persisted profile and reloaded the browser.
+   PASS: Operator displayed 47000 us; API and YAML both remained 47000.0.
+
+8. Checked camera-identity stale-read handling.
+   The real UI deliberately disables camera selection while a camera operation is busy,
+   so a user-triggered DEV-EXPOSURE-002 -> DEV-EXPOSURE-001 stale read cannot be created
+   without bypassing the safety lock. No unsafe browser bypass was used. Executable
+   production-session tests cover stale fulfilled results, stale rejected results, and
+   stale settlements that must not release the parent preview gate.
+
+9. Reproduced and fixed the initial page-load preview race.
+   Before the fix, a clean reload started exposure/read at 200.5 ms for 816.4 ms and
+   preview at 200.8 ms, producing one current-session 409.
+   RED: the new startup-gate source assertions failed while the pending state still
+   initialized false and no derived real-camera gate existed.
+   GREEN: the gate now applies only when the Operator real-camera exposure control can
+   mount, so unavailable hardware still leaves Device Setup accessible.
+   Final clean reload: exposure/read started at 227.2 ms and lasted 840.6 ms; the first
+   preview started at 1071.4 ms, 3.6 ms after the accepted read completed. No 4xx/5xx
+   request or console error remained.
+
+Controlled and historical diagnostics (not omitted):
+- The first intended 55000 us failure is an expected injected 422 used to verify rollback.
+- An early launch without the explicit main-workspace offline registry produced a 500;
+  the corrected launch supplied YYT1771_G3_OFFLINE_DATASETS_CONFIG and the failure did not recur.
+- ERR_CONNECTION_REFUSED entries were recorded while the development service was intentionally stopped.
+- Earlier 409 entries came from stale/pre-fix bundles and the reproducible initial-load race;
+  the final clean reload after the startup gate contained zero 409 responses.

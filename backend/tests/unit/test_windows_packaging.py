@@ -25,6 +25,12 @@ def test_windows_build_starts_packaged_executable_before_upload() -> None:
     assert "/api/hardware/profile" in script
     assert "target_frame_rate_hz" in script
     assert "did not expose the 20 FPS camera target" in script
+    assert '$HardwareProfile.camera.PSObject.Properties["exposure_us"]' in script
+    assert "[System.Convert]::ToDouble" in script
+    assert "[double]::IsNaN($ParsedExposure)" in script
+    assert "[double]::IsInfinity($ParsedExposure)" in script
+    assert "$ParsedExposure -gt 0.0" in script
+    assert "did not expose a positive finite camera exposure_us" in script
     assert 'function Assert-NativeSuccess([string]$Step)' in script
     assert 'Assert-NativeSuccess "Python virtual environment creation"' in script
     assert 'Assert-NativeSuccess "pip upgrade"' in script

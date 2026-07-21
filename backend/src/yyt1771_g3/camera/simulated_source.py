@@ -1,11 +1,59 @@
 from __future__ import annotations
 
-from typing import Any
+import math
+import os
+import threading
+import time
+from typing import Any, Mapping
 
 import numpy as np
 
-from yyt1771_g3.camera.base import CameraFrame, CameraUnavailableError
+from yyt1771_g3.camera.base import CameraExposureCapability, CameraFrame, CameraUnavailableError
 from yyt1771_g3.core.timebase import now_ms
+
+
+DEVELOPMENT_FAKE_HARDWARE_ENV = "YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE"
+DEVELOPMENT_FAKE_EXPOSURE_FAIL_ONCE_ENV = "YYT1771_G3_DEVELOPMENT_FAKE_EXPOSURE_FAIL_ONCE_US"
+DEVELOPMENT_FAKE_EXPOSURE_LATENCY_ENV = "YYT1771_G3_DEVELOPMENT_FAKE_EXPOSURE_LATENCY_MS"
+DEVELOPMENT_FAKE_SERIAL_PREFIX = "DEV-EXPOSURE-"
+PRODUCT_MODE_ENV = "YYT1771_G3_PRODUCT_MODE"
+
+FAKE_EXPOSURE_MINIMUM_US = 100.0
+FAKE_EXPOSURE_MAXIMUM_US = 100000.0
+FAKE_EXPOSURE_INCREMENT_US = 100.0
+
+_development_fake_exposure_failure_lock = threading.Lock()
+_development_fake_exposure_failures_consumed: set[tuple[str, float]] = set()
+
+
+def _reset_development_fake_exposure_failures() -> None:
+    with _development_fake_exposure_failure_lock:
+        _development_fake_exposure_failures_consumed.clear()
+
+
+def development_fake_hardware_requested(
+    profile: Mapping[str, Any],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    environment = os.environ if environ is None else environ
+    if not _bool(environment.get(DEVELOPMENT_FAKE_HARDWARE_ENV), default=False):
+        return False
+    product_mode_value = environment.get(PRODUCT_MODE_ENV)
+    if product_mode_value is None or not str(product_mode_value).strip():
+        raise CameraUnavailableError(
+            "Development fake hardware requires an explicit development product mode."
+        )
+    product_mode = str(product_mode_value).strip().lower()
+    if product_mode != "development":
+        raise CameraUnavailableError("Development fake hardware is disabled in production product mode.")
+    serial_number = str(profile.get("serial_number", "") or "").strip().upper()
+    if not serial_number.startswith(DEVELOPMENT_FAKE_SERIAL_PREFIX):
+        raise CameraUnavailableError(
+            "Development fake hardware requires an explicit DEV-EXPOSURE profile.",
+            details={"serial_number": serial_number},
+        )
+    return True
 
 
 class SimulatedCameraSource:
@@ -13,6 +61,7 @@ class SimulatedCameraSource:
 
     def __init__(self, profile: dict[str, Any] | None = None) -> None:
         self.profile = profile or {}
+        self._development_fake_hardware = development_fake_hardware_requested(self.profile)
         self._frame_id = 0
         self._dataset_id = str(
             self.profile.get("simulated_dataset_id") or self.profile.get("dataset_id") or ""
@@ -24,6 +73,9 @@ class SimulatedCameraSource:
         )
         self._registry = None
         self._resolved = None
+        requested_exposure = _finite_float(self.profile.get("exposure_us"), default=10000.0)
+        self._requested_exposure_us = requested_exposure
+        self._actual_exposure_us = _quantize_exposure_us(requested_exposure)
 
     def preview_frame(self) -> CameraFrame:
         if self._dataset_id:
@@ -34,16 +86,72 @@ class SimulatedCameraSource:
             array=array,
             timestamp_ms=_timestamp_ms(),
             camera_meta={
-                "backend": "simulated",
-                "model": "G3 simulated camera",
-                "serial_number": "SIM-G3",
+                "backend": "development_fake_hik" if self._development_fake_hardware else "simulated",
+                "model": (
+                    str(self.profile.get("model", "") or "MV-DEV-EXPOSURE")
+                    if self._development_fake_hardware
+                    else "G3 simulated camera"
+                ),
+                "serial_number": (
+                    str(self.profile.get("serial_number", "") or "DEV-EXPOSURE-001")
+                    if self._development_fake_hardware
+                    else "SIM-G3"
+                ),
                 "ip": "",
                 "pixel_format": str(self.profile.get("pixel_format", "mono8") or "mono8"),
                 "frame_id": self._frame_id,
                 "target_frame_rate_hz": self.profile.get("target_frame_rate_hz"),
                 "device_roi": _device_roi(self.profile),
+                "exposure_us": self._actual_exposure_us,
             },
         )
+
+    def read_exposure_capability(self) -> CameraExposureCapability:
+        self._wait_for_fake_exposure_latency()
+        return CameraExposureCapability(
+            supported=True,
+            minimum_us=FAKE_EXPOSURE_MINIMUM_US,
+            maximum_us=FAKE_EXPOSURE_MAXIMUM_US,
+            increment_us=FAKE_EXPOSURE_INCREMENT_US,
+            requested_us=self._requested_exposure_us,
+            actual_us=self._actual_exposure_us,
+        )
+
+    def set_exposure_us(self, value: float) -> float:
+        requested = _finite_float(value, default=math.nan)
+        if not math.isfinite(requested):
+            raise ValueError("Exposure must be finite.")
+        if requested < FAKE_EXPOSURE_MINIMUM_US or requested > FAKE_EXPOSURE_MAXIMUM_US:
+            raise ValueError(
+                f"Exposure {requested} is outside "
+                f"[{FAKE_EXPOSURE_MINIMUM_US}, {FAKE_EXPOSURE_MAXIMUM_US}] us."
+            )
+        self._wait_for_fake_exposure_latency()
+        actual = _quantize_exposure_us(requested)
+        fail_once_us = _optional_finite_float(os.environ.get(DEVELOPMENT_FAKE_EXPOSURE_FAIL_ONCE_ENV))
+        if (
+            self._development_fake_hardware
+            and fail_once_us is not None
+            and math.isclose(actual, _quantize_exposure_us(fail_once_us), rel_tol=0.0, abs_tol=1e-9)
+        ):
+            failure_key = (
+                str(self.profile.get("serial_number", "") or "").strip().upper(),
+                _quantize_exposure_us(fail_once_us),
+            )
+            with _development_fake_exposure_failure_lock:
+                should_fail = failure_key not in _development_fake_exposure_failures_consumed
+                if should_fail:
+                    _development_fake_exposure_failures_consumed.add(failure_key)
+            if should_fail:
+                raise RuntimeError("Injected development fake exposure failure for rollback verification.")
+        self._requested_exposure_us = requested
+        self._actual_exposure_us = actual
+        return actual
+
+    def _wait_for_fake_exposure_latency(self) -> None:
+        latency_ms = _optional_finite_float(os.environ.get(DEVELOPMENT_FAKE_EXPOSURE_LATENCY_ENV))
+        if latency_ms is not None and latency_ms > 0:
+            time.sleep(latency_ms / 1000.0)
 
     def close(self) -> None:
         return None
@@ -84,6 +192,7 @@ class SimulatedCameraSource:
                 "offline_frame_index": loaded.frame_index,
                 "frame_path": str(loaded.frame_path),
                 "target_frame_rate_hz": self.profile.get("target_frame_rate_hz"),
+                "exposure_us": self._actual_exposure_us,
             },
         )
 
@@ -167,6 +276,30 @@ def _bool(value: Any, *, default: bool) -> bool:
     return default
 
 
+def _finite_float(value: Any, *, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _optional_finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _quantize_exposure_us(value: float) -> float:
+    clamped = min(max(value, FAKE_EXPOSURE_MINIMUM_US), FAKE_EXPOSURE_MAXIMUM_US)
+    steps = math.floor(
+        (clamped - FAKE_EXPOSURE_MINIMUM_US) / FAKE_EXPOSURE_INCREMENT_US + 0.5
+    )
+    return FAKE_EXPOSURE_MINIMUM_US + steps * FAKE_EXPOSURE_INCREMENT_US
+
+
 def _draw_line(
     image: np.ndarray,
     x0: int,
@@ -204,4 +337,4 @@ def _timestamp_ms() -> int:
     return now_ms()
 
 
-__all__ = ["SimulatedCameraSource"]
+__all__ = ["SimulatedCameraSource", "development_fake_hardware_requested"]

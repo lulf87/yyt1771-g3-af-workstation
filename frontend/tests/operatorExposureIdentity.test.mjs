@@ -180,3 +180,52 @@ test("Operator exposure identity change rejects an old camera read error", async
   assert.equal(applied[0].status, "fulfilled");
   assert.deepEqual(applied[0].value, capability(24000, 250, 75000));
 });
+
+test("exposure read settlement notifies only the accepted current session", async () => {
+  const { exposure } = await loadModules();
+  const session = exposure.createCameraExposureReadSession();
+  const settled = [];
+  const applied = [];
+
+  assert.equal(
+    await session.read(
+      null,
+      async () => capability(12000, 100, 100000),
+      (result) => applied.push(result),
+      () => settled.push("success")
+    ),
+    true
+  );
+  assert.deepEqual(settled, ["success"]);
+
+  assert.equal(
+    await session.read(
+      null,
+      async () => {
+        throw new Error("current read failed");
+      },
+      (result) => applied.push(result),
+      () => settled.push("error")
+    ),
+    true
+  );
+  assert.deepEqual(settled, ["success", "error"]);
+
+  const staleRequest = deferred();
+  const staleRead = session.read(
+    null,
+    () => staleRequest.promise,
+    (result) => applied.push(result),
+    () => settled.push("stale")
+  );
+  const currentRead = session.read(
+    null,
+    async () => capability(13000, 100, 100000),
+    (result) => applied.push(result),
+    () => settled.push("current")
+  );
+  assert.equal(await currentRead, true);
+  staleRequest.resolve(capability(99999, 100, 100000));
+  assert.equal(await staleRead, false);
+  assert.deepEqual(settled, ["success", "error", "current"]);
+});

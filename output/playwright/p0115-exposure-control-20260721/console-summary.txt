@@ -1,0 +1,12 @@
+P-0115 console summary
+
+Final clean reload after console clear and frontend rebuild:
+- no console errors
+
+Expected/historical entries from the full iterative browser session:
+- HTTP 422 for the injected first 55000 us rollback verification
+- HTTP 500 from the initial launch that lacked the explicit offline registry path
+- ERR_CONNECTION_REFUSED during intentional service-stop intervals
+- HTTP 409 from stale/pre-fix bundles and the initial-load race reproduced before its fix
+
+The final clean reload did not reproduce any of those entries.

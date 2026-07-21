@@ -63,6 +63,7 @@ $SmokeProcess = Start-Process -FilePath $Executable `
 $SmokeHealthy = $false
 $SmokeOfflineDatasetsDisabled = $false
 $SmokeCameraTargetConfigured = $false
+$SmokeCameraExposureConfigured = $false
 try {
     for ($Attempt = 0; $Attempt -lt 60; $Attempt++) {
         if ($SmokeProcess.HasExited) { break }
@@ -74,6 +75,21 @@ try {
                 $SmokeOfflineDatasetsDisabled = @($OfflineDatasets.datasets).Count -eq 0
                 $HardwareProfile = Invoke-RestMethod -Uri "http://127.0.0.1:$SmokePort/api/hardware/profile" -TimeoutSec 2
                 $SmokeCameraTargetConfigured = [double]$HardwareProfile.camera.target_frame_rate_hz -eq 20.0
+                $ExposureProperty = $HardwareProfile.camera.PSObject.Properties["exposure_us"]
+                if ($null -ne $ExposureProperty) {
+                    try {
+                        $ParsedExposure = [System.Convert]::ToDouble(
+                            $ExposureProperty.Value,
+                            [System.Globalization.CultureInfo]::InvariantCulture
+                        )
+                        $SmokeCameraExposureConfigured = `
+                            -not [double]::IsNaN($ParsedExposure) -and `
+                            -not [double]::IsInfinity($ParsedExposure) -and `
+                            $ParsedExposure -gt 0.0
+                    } catch {
+                        $SmokeCameraExposureConfigured = $false
+                    }
+                }
                 break
             }
         } catch {
@@ -92,6 +108,9 @@ if (-not $SmokeOfflineDatasetsDisabled) {
 }
 if (-not $SmokeCameraTargetConfigured) {
     throw "Packaged G3Workstation.exe did not expose the 20 FPS camera target"
+}
+if (-not $SmokeCameraExposureConfigured) {
+    throw "Packaged G3Workstation.exe did not expose a positive finite camera exposure_us in /api/hardware/profile"
 }
 
 $PortableZip = Join-Path $BuildRoot "YYT1771-G3-$Version-portable-x64.zip"

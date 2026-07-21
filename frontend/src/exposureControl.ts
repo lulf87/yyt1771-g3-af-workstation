@@ -8,7 +8,8 @@ export type CameraExposureReadSession = {
   read<T>(
     camera: CameraExposureIdentity | null,
     execute: (camera: CameraExposureIdentity | null) => Promise<T>,
-    apply: (result: CameraExposureReadResult<T>) => void
+    apply: (result: CameraExposureReadResult<T>) => void,
+    settle?: () => void
   ): Promise<boolean>;
   invalidate(): void;
 };
@@ -32,15 +33,17 @@ export function createCameraExposureReadSession(): CameraExposureReadSession {
   let generation = 0;
 
   return {
-    async read(camera, execute, apply) {
+    async read(camera, execute, apply, settle) {
       const requestGeneration = ++generation;
       try {
         const value = await execute(camera);
         if (generation !== requestGeneration) return false;
         apply({ status: "fulfilled", value });
+        settle?.();
       } catch (reason) {
         if (generation !== requestGeneration) return false;
         apply({ status: "rejected", reason });
+        settle?.();
       }
       return true;
     },

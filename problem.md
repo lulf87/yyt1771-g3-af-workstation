@@ -10934,11 +10934,11 @@ FIXED_PENDING_BROWSER_RETEST
 
 ### P-0115 — Windows 操作界面缺少相机曝光调节与持久化
 
-- Status: IN_PROGRESS
+- Status: FIXED_PENDING_BROWSER_RETEST
 - Priority: P0
 - Module: `backend/src/yyt1771_g3/camera/hik_mvs_source.py`, `backend/src/yyt1771_g3/core/hardware_config.py`, hardware setup API/UI, Operator real-camera preview
 - Found date: 2026-07-21
-- Last update: 2026-07-21
+- Last update: 2026-07-22
 - Owner/tool: Codex
 
 #### Problem
@@ -10959,15 +10959,63 @@ Hik MVS 相机打开时已经读取 `camera.exposure_us` 并设置 `ExposureTime
 
 #### Fix summary
 
-待设计确认后实施。
+- 后端增加曝光能力读取、运行期写入、读回实际值、YAML 持久化与失败回滚；Windows 打包 smoke 检查要求 `/api/hardware/profile.camera.exposure_us` 为有限正数。
+- Device Setup 与 Operator 共用“滑杆 + 数值框”曝光控件，量程/步长由相机能力返回，滑杆 200 ms 合并写入，Enter/失焦提交，显示后端读回的实际曝光。未增加 gain/FPS/自动曝光 UI。
+- 正式 run 锁定曝光、Probe、测量操作和所有 Device Setup 入口，并在 run snapshot 保存实际 `exposure_us`。
+- 开发专用确定性伪 Hik 相机仅在 `development` + `YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE=1` + `DEV-EXPOSURE-` 串号三重门生效；提供 `100–100000 μs` 量程、`100 μs` 步长、half-up 量化、800 ms 延迟与 55000 μs 一次性失败注入。一次性失败消耗改为进程内、按串号+量化值加锁登记，避免 source 回滚替换后重复失败。
+- Device Setup 关闭、正式 run 停止和页面初始化后都重读当前曝光；过期 fulfilled/rejected/settlement 不得覆盖新相机状态或提前释放 preview gate。
+- 真实浏览器发现并修复了四个同源竞态：Device Setup 关闭后 Operator 陈旧值、关闭过渡期 preview 抢占相机、跨 source 的 fail-once 重复失败、run 期间 Settings 绕过。最后一次 clean reload 又定位并修复了初始曝光读取与 preview 并发导致的 409；初始 gate 只在真实相机曝光控件可挂载时生效，不会锁死硬件不可用页的 Device Setup。
 
 #### Tests run
 
-尚未执行修复验证；Windows Hik 真机验证必需。
+```bash
+cd frontend
+node --test tests/operatorActualUseUi.test.mjs
+# 21 passed
+
+npm run build
+# PASS
+
+PYTHONPATH=backend/src pytest -q backend/tests/unit/test_development_fake_camera.py
+# 6 passed
+
+PYTHONPATH=backend/src pytest -q backend/tests
+# 322 passed, 12 skipped
+
+cd frontend
+npm test
+# 242 passed
+
+npm run build
+# PASS (TypeScript + Vite production build)
+
+git diff --check
+# PASS
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-21
+- Browser: Chromium 134.0.6998.35
+- OS: macOS 26.1 (Build 25B78)
+- Frontend URL: `http://127.0.0.1:18026/`
+- Backend URL: `http://127.0.0.1:18026/`
+- Dataset: none; development-only deterministic fake camera (`DEV-EXPOSURE-001/002`)
+- Page: Device Setup / Operator Live Test
+- Steps: 扫描两台伪 Hik 相机并测试绑定；验证 `12360 → 12400 μs` 量化与保存/刷新/同页重读；在 55000 μs 注入一次失败后检查回滚与第二次成功；验证滑杆 `30000 → 40000 → 45000` 只发一次 PUT，Enter 和失焦提交；以 47000 μs 启动/停止正式 run，检查曝光锁定、Settings 防绕过、停止后重读和 run snapshot；重启服务验证 47000 μs 持久化；最后 clear console/network 并 clean reload 检查初始读取时序。
+- Expected: 只有受三重开发门保护的伪硬件可用；曝光能力、量化、合并写入、失败回滚、持久化、run 锁定/快照及所有相机所有权门符合需求；过期曝光读取不得释放新门，preview 不得与初始/关闭后曝光读取并发。
+- Actual: 上述开发伪硬件流程通过。关闭过渡读取耗时 816.6 ms，首个 preview 在 close 后 +888.0 ms 启动；最终 clean reload 中 exposure/read 从 227.2 ms 开始、耗时 840.6 ms，首个 preview 在 1071.4 ms 启动（比 read 完成晚 3.6 ms）。console 无错误，完成请求无 4xx/5xx。首次 55000 μs 的 422 是预期失败注入；早期缺少 registry 环境变量的 500 与主动停服期间 `ERR_CONNECTION_REFUSED` 已单独保留在证据中。UI 在 busy 时禁止切换相机，因此未绕过安全锁伪造身份竞态；过期 fulfilled/rejected/settlement 由可执行自动测试覆盖。
+- Result: PASS (macOS Chromium + development-only deterministic fake hardware)
+- Evidence: `output/playwright/p0115-exposure-control-20260721/environment.txt`, `steps-and-assertions.txt`, `network-summary.txt`, `console-summary.txt`, `screenshots.txt`, `run-snapshot.txt` 及同目录 PNG；`output/runs/run-real_camera-20260721T192346553539Z/run_meta.json` 和 `output/runs/run-real_camera-20260721T193022948373Z/run_meta.json`。
+
+#### Remaining browser/hardware verification
+
+- 尚未在 Windows 11 x64 已打包应用 + 真实 Hik 相机上验证实际量程/步长、读写/读回、失败回滚、配置持久化与 run snapshot。
+- 生产模式仍只允许真实 Hik + 真实 LU92XX；开发伪硬件复测不能替代上述 Windows 真机复测。
 
 #### Final status
 
-IN_PROGRESS
+FIXED_PENDING_BROWSER_RETEST
 
 ---
 

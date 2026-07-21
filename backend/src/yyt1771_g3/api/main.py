@@ -29,6 +29,7 @@ from yyt1771_g3.camera.base import (
 )
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
+from yyt1771_g3.camera.simulated_source import SimulatedCameraSource, development_fake_hardware_requested
 from yyt1771_g3.core.hardware_config import (
     HARDWARE_CONFIG_ENV,
     SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
@@ -187,6 +188,8 @@ def _preview_profile_key(profile: dict[str, Any]) -> str:
 
 def _build_camera_source(profile: dict[str, Any] | None = None) -> CameraSource:
     profile = profile or {}
+    if development_fake_hardware_requested(profile):
+        return SimulatedCameraSource(profile=profile)
     backend = str(profile.get("backend", "hik_gige_mvs") or "hik_gige_mvs").strip().lower()
     if backend in HIK_CAMERA_BACKENDS:
         return HikMvsCameraSource(profile=profile)
@@ -1615,6 +1618,8 @@ def stop_real_camera_run(run_id: str) -> dict[str, Any]:
 
 
 def build_temperature_controller(config: HardwareConfig):  # noqa: ANN201
+    if development_fake_hardware_requested(config.camera.to_profile()):
+        return SimulatedTemperatureController(config.temp)
     if config.temp.backend in {"simulated", "simulated_temperature", "mock", "fake"}:
         return SimulatedTemperatureController(config.temp)
     if config.temp.backend != "lu92xx_modbus_rtu":

@@ -28,6 +28,7 @@ export type ExposureControlProps = {
   runActive: boolean;
   language: UiLanguage;
   onBusyChange: (owner: CameraBusyOwnerToken, busy: boolean) => void;
+  onReadSettled?: () => void;
 };
 
 type ExposureStatus = "loading" | "idle" | "applying" | "saved" | "error";
@@ -53,7 +54,8 @@ export function ExposureControl({
   disabled,
   runActive,
   language,
-  onBusyChange
+  onBusyChange,
+  onReadSettled
 }: ExposureControlProps) {
   const cameraKey = cameraExposureIdentityKey(camera);
   const [busyOwner] = useState(() => createCameraBusyOwnerToken());
@@ -70,6 +72,7 @@ export function ExposureControl({
   const compensationPendingRef = useRef(false);
   const coordinatorRef = useRef<ExposureCommitCoordinator | null>(null);
   const onBusyChangeRef = useRef(onBusyChange);
+  const onReadSettledRef = useRef(onReadSettled);
   const exposureBusyTrackerRef = useRef<ExposureBusyTracker | null>(null);
   if (exposureBusyTrackerRef.current === null) {
     exposureBusyTrackerRef.current = createExposureBusyTracker((busy) => {
@@ -81,6 +84,10 @@ export function ExposureControl({
   useEffect(() => {
     onBusyChangeRef.current = onBusyChange;
   }, [onBusyChange]);
+
+  useEffect(() => {
+    onReadSettledRef.current = onReadSettled;
+  }, [onReadSettled]);
 
   useEffect(() => {
     let finishWriteBusy: (() => void) | null = null;
@@ -174,7 +181,8 @@ export function ExposureControl({
           setLoadedCapability({ cameraKey, value: next });
           setDraft(actual === null ? "" : String(actual));
           setStatus("idle");
-        }
+        },
+        () => onReadSettledRef.current?.()
       )
       .finally(finishReadBusy);
 

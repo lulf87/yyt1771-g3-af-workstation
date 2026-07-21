@@ -1,0 +1,23 @@
+P-0115 exposure-control browser verification environment
+
+Retest date: 2026-07-21
+OS: macOS 26.1 (Build 25B78)
+Browser: Headless Chromium 134.0.6998.35
+Frontend URL: http://127.0.0.1:18026/
+Backend URL: http://127.0.0.1:18026/
+Dataset: none; development-only deterministic fake camera
+
+Development fake-hardware gates used together:
+- YYT1771_G3_PRODUCT_MODE=development
+- YYT1771_G3_DEVELOPMENT_FAKE_HARDWARE=1
+- selected camera serial DEV-EXPOSURE-001 (required DEV-EXPOSURE- prefix)
+
+Deterministic camera parameters:
+- range: 100-100000 us
+- increment: 100 us
+- read/write latency: 800 ms
+- injected fail-once value: 55000 us
+
+The development launcher used the worktree-local YAML profile and the main-workspace
+offline dataset registry through YYT1771_G3_OFFLINE_DATASETS_CONFIG. No production
+hardware path or production fake-hardware gate was changed for this retest.

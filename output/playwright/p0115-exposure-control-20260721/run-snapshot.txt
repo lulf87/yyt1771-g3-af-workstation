@@ -1,0 +1,11 @@
+P-0115 formal-run exposure snapshots
+
+Run: run-real_camera-20260721T192346553539Z
+Artifact: output/runs/run-real_camera-20260721T192346553539Z/run_meta.json
+Assertion: config_snapshot.camera_profile.exposure_us = 47000.0
+
+Run: run-real_camera-20260721T193022948373Z
+Artifact: output/runs/run-real_camera-20260721T193022948373Z/run_meta.json
+Assertion: config_snapshot.camera_profile.exposure_us = 47000.0
+
+The second run was used for the post-fix run-active Device Setup guard retest.
