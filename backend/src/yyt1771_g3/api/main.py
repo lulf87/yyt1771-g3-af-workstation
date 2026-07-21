@@ -324,8 +324,8 @@ class _CameraOperationLease:
         with self._close_lock:
             if self._closed:
                 return
+            self._operation.__exit__(None, None, None)
             self._closed = True
-        self._operation.__exit__(None, None, None)
 
 
 class _CameraOperationStreamingResponse(StreamingResponse):

@@ -283,6 +283,103 @@ def _track_camera_operations(monkeypatch, api_main):  # noqa: ANN001, ANN202
     return operations
 
 
+def test_camera_operation_lease_close_waits_for_in_flight_exit() -> None:
+    from yyt1771_g3.api import main as api_main
+
+    exit_started = threading.Event()
+    allow_exit = threading.Event()
+    exit_finished = threading.Event()
+    first_close_returned = threading.Event()
+    second_close_started = threading.Event()
+    second_close_returned = threading.Event()
+    close_errors: list[BaseException] = []
+
+    class BlockingExitOperation:
+        def __init__(self) -> None:
+            self.exit_count = 0
+
+        def __exit__(self, exc_type, exc, traceback):  # noqa: ANN001, ANN204
+            self.exit_count += 1
+            exit_started.set()
+            try:
+                if not allow_exit.wait(timeout=2.0):
+                    raise AssertionError("blocking operation exit was not released")
+            finally:
+                exit_finished.set()
+
+    operation = BlockingExitOperation()
+    lease = api_main._CameraOperationLease(operation)
+
+    def close_lease(started: threading.Event | None, returned: threading.Event) -> None:
+        if started is not None:
+            started.set()
+        try:
+            lease.close()
+        except BaseException as exc:  # pragma: no cover - asserted in the parent thread
+            close_errors.append(exc)
+        finally:
+            returned.set()
+
+    first_thread = threading.Thread(target=close_lease, args=(None, first_close_returned))
+    second_thread = threading.Thread(target=close_lease, args=(second_close_started, second_close_returned))
+    first_thread.start()
+    second_thread_started = False
+    try:
+        assert exit_started.wait(timeout=1.0) is True
+        second_thread.start()
+        second_thread_started = True
+        assert second_close_started.wait(timeout=1.0) is True
+        second_returned_while_exit_blocked = second_close_returned.wait(timeout=0.1)
+        assert exit_finished.is_set() is False
+    finally:
+        allow_exit.set()
+        first_thread.join(timeout=2.0)
+        if second_thread_started:
+            second_thread.join(timeout=2.0)
+
+    assert second_returned_while_exit_blocked is False
+    assert first_thread.is_alive() is False
+    assert second_thread.is_alive() is False
+    assert first_close_returned.is_set() is True
+    assert second_close_returned.is_set() is True
+    assert exit_finished.is_set() is True
+    assert close_errors == []
+    assert operation.exit_count == 1
+
+    lease.close()
+
+    assert operation.exit_count == 1
+
+
+def test_camera_operation_lease_failed_exit_can_be_retried() -> None:
+    from yyt1771_g3.api import main as api_main
+
+    exit_failure = RuntimeError("camera operation exit failed once")
+
+    class FailOnceExitOperation:
+        def __init__(self) -> None:
+            self.exit_count = 0
+
+        def __exit__(self, exc_type, exc, traceback):  # noqa: ANN001, ANN204
+            self.exit_count += 1
+            if self.exit_count == 1:
+                raise exit_failure
+
+    operation = FailOnceExitOperation()
+    lease = api_main._CameraOperationLease(operation)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        lease.close()
+
+    assert exc_info.value is exit_failure
+    assert operation.exit_count == 1
+
+    lease.close()
+    lease.close()
+
+    assert operation.exit_count == 2
+
+
 def test_camera_exposure_read_selected_camera_uses_authoritative_partial_identity(monkeypatch) -> None:  # noqa: ANN001
     from yyt1771_g3.api import main as api_main
     from yyt1771_g3.core.hardware_config import CameraConfig, HardwareConfig
