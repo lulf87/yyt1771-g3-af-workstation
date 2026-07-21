@@ -131,11 +131,7 @@ import {
   provenanceNeedsSimulatedWarning
 } from "./components/operator/SourceProvenanceBadge";
 import { ExposureControl } from "./components/camera/ExposureControl";
-import {
-  createHardwareCameraTestCoordinator,
-  isHardwareCameraTestResultCurrent
-} from "./hardwareCameraTestCoordinator";
-import { createHardwareSetupRefreshCoordinator } from "./hardwareSetupRefreshCoordinator";
+import { createHardwareSetupOperationCoordinator } from "./hardwareSetupRefreshCoordinator";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -2928,12 +2924,6 @@ const HARDWARE_SETUP_STEPS = [
   "Save configuration"
 ] as const;
 
-type HardwareSetupRefreshPayload = {
-  environmentResult: PromiseSettledResult<HardwareSetupEnvironment>;
-  cameraResult: PromiseSettledResult<HardwareCameraDevice[]>;
-  portResult: PromiseSettledResult<SerialPortInfo[]>;
-};
-
 function DeviceSetupWizard({
   open,
   onClose,
@@ -2966,11 +2956,8 @@ function DeviceSetupWizard({
   const [savingSdkPaths, setSavingSdkPaths] = useState(false);
   const [exposureBusy, setExposureBusy] = useState(false);
   const [error, setError] = useState("");
-  const cameraTestCoordinatorRef = useRef(
-    createHardwareCameraTestCoordinator<HardwareCameraTestResponse>()
-  );
-  const hardwareSetupRefreshCoordinatorRef = useRef(
-    createHardwareSetupRefreshCoordinator<HardwareSetupRefreshPayload>()
+  const hardwareSetupOperationCoordinatorRef = useRef(
+    createHardwareSetupOperationCoordinator()
   );
   const wizardOpenRef = useRef(open);
   const loadingWizardRef = useRef(true);
@@ -2992,9 +2979,12 @@ function DeviceSetupWizard({
   }
 
   useEffect(() => {
-    hardwareSetupRefreshCoordinatorRef.current.invalidate();
-    cameraTestCoordinatorRef.current.invalidate();
+    hardwareSetupOperationCoordinatorRef.current.invalidate();
     setTestingCamera(false);
+    setTestingTemperature(false);
+    setTestingBinding(false);
+    setSavingBinding(false);
+    setSavingSdkPaths(false);
     setWizardLoading(true);
     if (!open) return;
     setActiveStep(0);
@@ -3045,14 +3035,13 @@ function DeviceSetupWizard({
             : true;
 
   async function refreshWizardData() {
-    cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
     setWizardLoading(true);
     setError("");
-    const refreshResult = await hardwareSetupRefreshCoordinatorRef.current.run(
+    const refreshResult = await hardwareSetupOperationCoordinatorRef.current.run(
       async () => {
         const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
           getHardwareSetupEnvironment(),
@@ -3063,7 +3052,6 @@ function DeviceSetupWizard({
       }
     );
     if (!refreshResult.accepted || !wizardOpenRef.current) return;
-    cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
@@ -3125,15 +3113,21 @@ function DeviceSetupWizard({
     if (exposureBusy) return;
     setWizardLoading(true);
     setError("");
-    try {
-      const nextEnvironment = await getHardwareSetupEnvironment();
-      setEnvironment(nextEnvironment);
-      applyDetectedSdkPaths(nextEnvironment);
-    } catch (err) {
+    const environmentResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      () => getHardwareSetupEnvironment()
+    );
+    if (!environmentResult.accepted || !wizardOpenRef.current) return;
+    setWizardLoading(false);
+    if (environmentResult.status === "fulfilled") {
+      setEnvironment(environmentResult.value);
+      applyDetectedSdkPaths(environmentResult.value);
+    } else {
       setEnvironment(null);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWizardLoading(false);
+      setError(
+        environmentResult.reason instanceof Error
+          ? environmentResult.reason.message
+          : String(environmentResult.reason)
+      );
     }
   }
 
@@ -3156,34 +3150,44 @@ function DeviceSetupWizard({
     setSavingSdkPaths(true);
     setError("");
     setSdkPathResult(null);
-    try {
-      const result = await saveHardwareSdkPaths({
-        sdk_python_paths: [sdkPythonPath],
-        sdk_library_path: sdkLibraryPath
-      });
-      setSdkPathResult(result);
-      setEnvironment(result.environment);
-      setSdkPythonPath(result.sdk_python_paths[0] ?? "");
-      setSdkLibraryPath(result.sdk_library_path);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSavingSdkPaths(false);
+    const sdkPathResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      () =>
+        saveHardwareSdkPaths({
+          sdk_python_paths: [sdkPythonPath],
+          sdk_library_path: sdkLibraryPath
+        })
+    );
+    if (!sdkPathResult.accepted || !wizardOpenRef.current) return;
+    setSavingSdkPaths(false);
+    if (sdkPathResult.status === "fulfilled") {
+      setSdkPathResult(sdkPathResult.value);
+      setEnvironment(sdkPathResult.value.environment);
+      setSdkPythonPath(sdkPathResult.value.sdk_python_paths[0] ?? "");
+      setSdkLibraryPath(sdkPathResult.value.sdk_library_path);
+    } else {
+      setError(
+        sdkPathResult.reason instanceof Error
+          ? sdkPathResult.reason.message
+          : String(sdkPathResult.reason)
+      );
     }
   }
 
   async function scanHardwareCameras() {
     if (exposureBusy) return;
-    cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setWizardLoading(true);
     setError("");
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
-    try {
-      const nextCameras = await listHardwareCameras();
-      cameraTestCoordinatorRef.current.invalidate();
+    const cameraScanResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      () => listHardwareCameras()
+    );
+    if (!cameraScanResult.accepted || !wizardOpenRef.current) return;
+    setWizardLoading(false);
+    if (cameraScanResult.status === "fulfilled") {
+      const nextCameras = cameraScanResult.value;
       setTestingCamera(false);
       setCameraTestResult(null);
       setTestResult(null);
@@ -3200,8 +3204,7 @@ function DeviceSetupWizard({
       selectedCameraKeyRef.current = nextCameraKey;
       setCameras(nextCameras);
       setSelectedCameraKey(nextCameraKey);
-    } catch (err) {
-      cameraTestCoordinatorRef.current.invalidate();
+    } else {
       setTestingCamera(false);
       setCameraTestResult(null);
       setTestResult(null);
@@ -3209,9 +3212,11 @@ function DeviceSetupWizard({
       selectedCameraKeyRef.current = "";
       setCameras([]);
       setSelectedCameraKey("");
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWizardLoading(false);
+      setError(
+        cameraScanResult.reason instanceof Error
+          ? cameraScanResult.reason.message
+          : String(cameraScanResult.reason)
+      );
     }
   }
 
@@ -3222,23 +3227,29 @@ function DeviceSetupWizard({
     setTemperatureTestResult(null);
     setTestResult(null);
     setSaveResult(null);
-    try {
-      const nextPorts = await listTemperatureSerialPorts();
-      setPorts(nextPorts);
-      setSelectedPort((current) => current || nextPorts[0]?.device || "");
-    } catch (err) {
+    const portRefreshResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      () => listTemperatureSerialPorts()
+    );
+    if (!portRefreshResult.accepted || !wizardOpenRef.current) return;
+    setWizardLoading(false);
+    if (portRefreshResult.status === "fulfilled") {
+      setPorts(portRefreshResult.value);
+      setSelectedPort((current) => current || portRefreshResult.value[0]?.device || "");
+    } else {
       setPorts([]);
       setSelectedPort("");
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWizardLoading(false);
+      setError(
+        portRefreshResult.reason instanceof Error
+          ? portRefreshResult.reason.message
+          : String(portRefreshResult.reason)
+      );
     }
   }
 
   function selectHardwareCamera(cameraKey: string) {
     if (loadingWizardRef.current) return;
     if (wizardBusy) return;
-    cameraTestCoordinatorRef.current.invalidate();
+    hardwareSetupOperationCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
@@ -3260,21 +3271,21 @@ function DeviceSetupWizard({
     setTestResult(null);
     setSaveResult(null);
     setError("");
-    const result = await cameraTestCoordinatorRef.current.run(
-      cameraKey,
+    const cameraTestOperationResult = await hardwareSetupOperationCoordinatorRef.current.run(
       () => testHardwareCamera(selectedCamera)
     );
-    if (!isHardwareCameraTestResultCurrent(result, selectedCameraKeyRef.current)) return;
+    if (!cameraTestOperationResult.accepted || !wizardOpenRef.current) return;
+    if (cameraKey !== selectedCameraKeyRef.current) return;
 
     setTestingCamera(false);
-    if (result.status === "fulfilled") {
-      setCameraTestResult(result.value);
+    if (cameraTestOperationResult.status === "fulfilled") {
+      setCameraTestResult(cameraTestOperationResult.value);
     } else {
       setCameraTestResult(null);
       setError(
-        result.reason instanceof Error
-          ? result.reason.message
-          : String(result.reason)
+        cameraTestOperationResult.reason instanceof Error
+          ? cameraTestOperationResult.reason.message
+          : String(cameraTestOperationResult.reason)
       );
     }
   }
@@ -3287,19 +3298,25 @@ function DeviceSetupWizard({
     }
     setTestingTemperature(true);
     setError("");
-    try {
-      setTemperatureTestResult(
-        await testHardwareTemperature({
+    const temperatureTestOperationResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      () =>
+        testHardwareTemperature({
           serial_port: selectedPort,
           baudrate: 19200,
           slave_address: 1
         })
-      );
-    } catch (err) {
+    );
+    if (!temperatureTestOperationResult.accepted || !wizardOpenRef.current) return;
+    setTestingTemperature(false);
+    if (temperatureTestOperationResult.status === "fulfilled") {
+      setTemperatureTestResult(temperatureTestOperationResult.value);
+    } else {
       setTemperatureTestResult(null);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTestingTemperature(false);
+      setError(
+        temperatureTestOperationResult.reason instanceof Error
+          ? temperatureTestOperationResult.reason.message
+          : String(temperatureTestOperationResult.reason)
+      );
     }
   }
 
@@ -3311,15 +3328,21 @@ function DeviceSetupWizard({
     }
     setTestingBinding(true);
     setError("");
-    try {
-      const result = await testHardwareBinding(binding);
-      setTestResult(result);
-      if (result.overall_status === "passed") setActiveStep(4);
-    } catch (err) {
+    const bindingTestOperationResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      () => testHardwareBinding(binding)
+    );
+    if (!bindingTestOperationResult.accepted || !wizardOpenRef.current) return;
+    setTestingBinding(false);
+    if (bindingTestOperationResult.status === "fulfilled") {
+      setTestResult(bindingTestOperationResult.value);
+      if (bindingTestOperationResult.value.overall_status === "passed") setActiveStep(4);
+    } else {
       setTestResult(null);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTestingBinding(false);
+      setError(
+        bindingTestOperationResult.reason instanceof Error
+          ? bindingTestOperationResult.reason.message
+          : String(bindingTestOperationResult.reason)
+      );
     }
   }
 
@@ -3335,29 +3358,44 @@ function DeviceSetupWizard({
     }
     setSavingBinding(true);
     setError("");
-    try {
-      const freshTestResult = await testHardwareBinding(binding);
-      setTestResult(freshTestResult);
-      if (freshTestResult.overall_status !== "passed") {
-        setSaveResult(null);
-        setError(
-          [freshTestResult.camera.message, freshTestResult.temperature.message]
-            .filter(Boolean)
-            .join(" · ") || t("Binding test failed")
-        );
-        return false;
+    const saveBindingResult = await hardwareSetupOperationCoordinatorRef.current.run(
+      async (scope) => {
+        const freshTestResult = await testHardwareBinding(binding);
+        if (!scope.isCurrent()) return null;
+        if (freshTestResult.overall_status !== "passed") {
+          return { freshTestResult, savedBinding: null };
+        }
+        const savedBinding = await saveHardwareBinding(binding);
+        if (!scope.isCurrent()) return null;
+        await onSaved();
+        return { freshTestResult, savedBinding };
       }
-      const result = await saveHardwareBinding(binding);
-      setSaveResult(result);
-      await onSaved();
-      return true;
-    } catch (err) {
+    );
+    if (!saveBindingResult.accepted || !wizardOpenRef.current) return false;
+    setSavingBinding(false);
+    if (saveBindingResult.status === "rejected") {
       setSaveResult(null);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(
+        saveBindingResult.reason instanceof Error
+          ? saveBindingResult.reason.message
+          : String(saveBindingResult.reason)
+      );
       return false;
-    } finally {
-      setSavingBinding(false);
     }
+    if (saveBindingResult.value === null) return false;
+    const { freshTestResult, savedBinding } = saveBindingResult.value;
+    setTestResult(freshTestResult);
+    if (savedBinding === null) {
+      setSaveResult(null);
+      setError(
+        [freshTestResult.camera.message, freshTestResult.temperature.message]
+          .filter(Boolean)
+          .join(" · ") || t("Binding test failed")
+      );
+      return false;
+    }
+    setSaveResult(savedBinding);
+    return true;
   }
 
   async function finishWizard() {

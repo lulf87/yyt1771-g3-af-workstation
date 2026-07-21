@@ -151,29 +151,29 @@ test("selecting another camera synchronously clears the previous camera test bef
   );
 });
 
-test("camera test requests use an identity generation guard invalidated by selection and refresh lifecycle", () => {
+test("camera test requests use the shared lifecycle plus the selected-camera identity guard", () => {
   const wizard = sourceSlice(
     "function DeviceSetupWizard({",
     "function HardwareCheckList("
   );
 
-  assert.match(mainSource, /createHardwareCameraTestCoordinator/);
-  assert.match(wizard, /cameraTestCoordinatorRef\.current\.run\(/);
+  assert.match(mainSource, /createHardwareSetupOperationCoordinator/);
+  assert.match(wizard, /hardwareSetupOperationCoordinatorRef\.current\.run\(/);
   assert.match(
     wizard,
-    /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,220}cameraTestCoordinatorRef\.current\.invalidate\(\)/
+    /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,220}hardwareSetupOperationCoordinatorRef\.current\.invalidate\(\)/
   );
   assert.match(
     wizard,
-    /async function scanHardwareCameras\(\)[\s\S]{0,220}cameraTestCoordinatorRef\.current\.invalidate\(\)/
+    /useEffect\(\(\) => \{[\s\S]{0,180}hardwareSetupOperationCoordinatorRef\.current\.invalidate\(\)/
   );
   assert.match(
     wizard,
-    /useEffect\(\(\) => \{[\s\S]{0,180}cameraTestCoordinatorRef\.current\.invalidate\(\)[\s\S]{0,220}if \(!open\) return;/
+    /if \(cameraKey !== selectedCameraKeyRef\.current\) return;/
   );
 });
 
-test("camera refresh gates testing and invalidates requests again before applying a refreshed selection", () => {
+test("camera refresh and test share lifecycle ownership before applying a selected-camera result", () => {
   const wizard = sourceSlice(
     "function DeviceSetupWizard({",
     "function HardwareCheckList("
@@ -191,14 +191,8 @@ test("camera refresh gates testing and invalidates requests again before applyin
     "async function runTemperatureTest()"
   );
 
-  assert.ok(
-    (refresh.match(/cameraTestCoordinatorRef\.current\.invalidate\(\)/g) ?? []).length >= 2,
-    "full refresh must invalidate camera tests at start and settlement"
-  );
-  assert.ok(
-    (scan.match(/cameraTestCoordinatorRef\.current\.invalidate\(\)/g) ?? []).length >= 2,
-    "camera scan must invalidate camera tests at start and settlement"
-  );
+  assert.match(refresh, /hardwareSetupOperationCoordinatorRef\.current\.run\(/);
+  assert.match(scan, /hardwareSetupOperationCoordinatorRef\.current\.run\(/);
   assert.match(runCameraTest, /if \(loadingWizardRef\.current\) return;/);
   assert.match(
     wizard,
@@ -206,7 +200,7 @@ test("camera refresh gates testing and invalidates requests again before applyin
   );
   assert.match(
     wizard,
-    /useEffect\(\(\) => \{[\s\S]{0,180}setWizardLoading\(true\);[\s\S]{0,120}if \(!open\) return;/
+    /useEffect\(\(\) => \{[\s\S]{0,320}setWizardLoading\(true\);[\s\S]{0,80}if \(!open\) return;/
   );
   assert.match(
     wizard,
@@ -215,7 +209,7 @@ test("camera refresh gates testing and invalidates requests again before applyin
   assert.match(wizard, /selectedCameraKeyRef/);
   assert.match(
     runCameraTest,
-    /isHardwareCameraTestResultCurrent\(result, selectedCameraKeyRef\.current\)/
+    /if \(!cameraTestOperationResult\.accepted \|\| !wizardOpenRef\.current\) return;[\s\S]{0,100}if \(cameraKey !== selectedCameraKeyRef\.current\) return;/
   );
   assert.match(
     wizard,
@@ -231,7 +225,7 @@ test("camera refresh gates testing and invalidates requests again before applyin
   );
 });
 
-test("device setup full refresh only applies the latest still-open lifecycle", () => {
+test("device setup full refresh only applies the latest still-open shared lifecycle", () => {
   const wizard = sourceSlice(
     "function DeviceSetupWizard({",
     "function HardwareCheckList("
@@ -241,28 +235,28 @@ test("device setup full refresh only applies the latest still-open lifecycle", (
     "async function refreshEnvironmentChecks()"
   );
 
-  assert.match(mainSource, /createHardwareSetupRefreshCoordinator/);
+  assert.match(mainSource, /createHardwareSetupOperationCoordinator/);
   assert.match(wizard, /const wizardOpenRef = useRef\(open\)/);
   assert.match(wizard, /wizardOpenRef\.current = open;/);
   assert.match(
     wizard,
-    /useEffect\(\(\) => \{[\s\S]{0,220}hardwareSetupRefreshCoordinatorRef\.current\.invalidate\(\)[\s\S]{0,220}if \(!open\) return;/
+    /useEffect\(\(\) => \{[\s\S]{0,220}hardwareSetupOperationCoordinatorRef\.current\.invalidate\(\)[\s\S]{0,320}if \(!open\) return;/
   );
   assert.match(
     refresh,
-    /hardwareSetupRefreshCoordinatorRef\.current\.run\(/
+    /hardwareSetupOperationCoordinatorRef\.current\.run\(/
   );
-  const awaitResult = refresh.indexOf("await hardwareSetupRefreshCoordinatorRef.current.run(");
+  const awaitResult = refresh.indexOf("await hardwareSetupOperationCoordinatorRef.current.run(");
   const acceptanceGuard = refresh.indexOf(
     "if (!refreshResult.accepted || !wizardOpenRef.current) return;"
   );
   const settlementApply = refresh.indexOf(
-    "cameraTestCoordinatorRef.current.invalidate()",
+    "setTestingCamera(false)",
     awaitResult
   );
   const unlock = refresh.indexOf("setWizardLoading(false)", awaitResult);
 
-  assert.ok(awaitResult >= 0, "full refresh must run through its own coordinator");
+  assert.ok(awaitResult >= 0, "full refresh must run through the shared coordinator");
   assert.ok(
     acceptanceGuard > awaitResult,
     "the latest/open guard must run after the request settles"
@@ -274,6 +268,77 @@ test("device setup full refresh only applies the latest still-open lifecycle", (
   assert.ok(
     unlock > acceptanceGuard,
     "stale refreshes must not clear the loading gate"
+  );
+});
+
+const lifecycleGuardedWizardOperations = [
+  ["full refresh", "async function refreshWizardData()", "async function refreshEnvironmentChecks()"],
+  ["environment refresh", "async function refreshEnvironmentChecks()", "function applyDetectedSdkPaths("],
+  ["SDK path save", "async function validateAndSaveSdkPaths()", "async function scanHardwareCameras()"],
+  ["camera scan", "async function scanHardwareCameras()", "async function refreshTemperaturePorts()"],
+  ["temperature port refresh", "async function refreshTemperaturePorts()", "function selectHardwareCamera("],
+  ["camera test", "async function runCameraTest()", "async function runTemperatureTest()"],
+  ["temperature test", "async function runTemperatureTest()", "async function runBindingTest()"],
+  ["binding test", "async function runBindingTest()", "async function saveBinding()"],
+  ["configuration save", "async function saveBinding()", "async function finishWizard()"]
+];
+
+for (const [operationName, startMarker, endMarker] of lifecycleGuardedWizardOperations) {
+  test(`device setup ${operationName} uses the shared close/reopen lifecycle`, () => {
+    const operation = sourceSlice(startMarker, endMarker);
+
+    assert.match(operation, /hardwareSetupOperationCoordinatorRef\.current\.run\(/);
+    assert.match(
+      operation,
+      /if \(!\w+Result\.accepted \|\| !wizardOpenRef\.current\) return/
+    );
+    assert.doesNotMatch(
+      operation,
+      /finally\s*\{/,
+      "a stale finally block must not unlock a reopened wizard session"
+    );
+  });
+}
+
+test("device setup lifecycle invalidation resets every operation busy flag before reopening", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(mainSource, /createHardwareSetupOperationCoordinator/);
+  assert.match(
+    wizard,
+    /useEffect\(\(\) => \{[\s\S]{0,220}hardwareSetupOperationCoordinatorRef\.current\.invalidate\(\)/
+  );
+  for (const reset of [
+    "setTestingCamera(false)",
+    "setTestingTemperature(false)",
+    "setTestingBinding(false)",
+    "setSavingBinding(false)",
+    "setSavingSdkPaths(false)"
+  ]) {
+    assert.match(wizard, new RegExp(reset.replace(/[()]/g, "\\$&")));
+  }
+  assert.match(
+    wizard,
+    /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,220}hardwareSetupOperationCoordinatorRef\.current\.invalidate\(\)/
+  );
+});
+
+test("device setup save checkpoints lifecycle before save and post-save refresh stages", () => {
+  const save = sourceSlice(
+    "async function saveBinding()",
+    "async function finishWizard()"
+  );
+
+  assert.match(
+    save,
+    /hardwareSetupOperationCoordinatorRef\.current\.run\(\s*async \(scope\) =>/
+  );
+  assert.ok(
+    (save.match(/if \(!scope\.isCurrent\(\)\) return null;/g) ?? []).length >= 2,
+    "save must not start a later async stage after close/reopen invalidation"
   );
 });
 
@@ -360,7 +425,7 @@ test("device setup environment step can auto-fill, validate, and save MVS SDK pa
   assert.match(wizard, /applyDetectedSdkPaths/);
   assert.match(wizard, /saveHardwareSdkPaths\(/);
   assert.match(wizard, /Validate and save paths/);
-  assert.match(wizard, /setEnvironment\(result\.environment\)/);
+  assert.match(wizard, /setEnvironment\(sdkPathResult\.value\.environment\)/);
 });
 
 test("device setup wizard does not silently select the first camera when multiple cameras are present", () => {

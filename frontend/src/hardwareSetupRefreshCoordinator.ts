@@ -1,4 +1,4 @@
-export type HardwareSetupRefreshResult<T> =
+export type HardwareSetupOperationResult<T> =
   | { accepted: false }
   | {
       accepted: true;
@@ -11,23 +11,32 @@ export type HardwareSetupRefreshResult<T> =
       reason: unknown;
     };
 
-export type HardwareSetupRefreshCoordinator<T> = {
-  run(execute: () => Promise<T>): Promise<HardwareSetupRefreshResult<T>>;
+export type HardwareSetupOperationScope = {
+  isCurrent(): boolean;
+};
+
+export type HardwareSetupOperationCoordinator = {
+  run<T>(
+    execute: (scope: HardwareSetupOperationScope) => Promise<T>
+  ): Promise<HardwareSetupOperationResult<T>>;
   invalidate(): void;
 };
 
-export function createHardwareSetupRefreshCoordinator<T>(): HardwareSetupRefreshCoordinator<T> {
+export function createHardwareSetupOperationCoordinator(): HardwareSetupOperationCoordinator {
   let generation = 0;
 
   return {
     async run(execute) {
       const requestGeneration = ++generation;
+      const scope: HardwareSetupOperationScope = {
+        isCurrent: () => generation === requestGeneration
+      };
       try {
-        const value = await execute();
-        if (generation !== requestGeneration) return { accepted: false };
+        const value = await execute(scope);
+        if (!scope.isCurrent()) return { accepted: false };
         return { accepted: true, status: "fulfilled", value };
       } catch (reason) {
-        if (generation !== requestGeneration) return { accepted: false };
+        if (!scope.isCurrent()) return { accepted: false };
         return { accepted: true, status: "rejected", reason };
       }
     },
