@@ -36,6 +36,12 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
     }
   }
 
+  function invalidateActiveRequest(): void {
+    requestId += 1;
+    activeController?.abort();
+    activeController = null;
+  }
+
   async function apply(value: number): Promise<void> {
     if (disposed) {
       return;
@@ -71,6 +77,7 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
         return;
       }
       clearPendingTimer();
+      invalidateActiveRequest();
       timer = options.setTimer(() => {
         timer = null;
         void apply(value);
@@ -89,9 +96,7 @@ export function createExposureCommitCoordinator<T extends ExposureApplyResponse>
       }
       disposed = true;
       clearPendingTimer();
-      requestId += 1;
-      activeController?.abort();
-      activeController = null;
+      invalidateActiveRequest();
     }
   };
 }

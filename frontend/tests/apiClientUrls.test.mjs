@@ -679,6 +679,31 @@ test("camera exposure update serializes the selected identity and requested valu
   }
 });
 
+test("camera exposure update rejects a successful response without a numeric actual exposure", async () => {
+  const { updateCameraExposure } = await loadApiClientModule();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    supported: true,
+    minimum_us: 100,
+    maximum_us: 100000,
+    increment_us: 1,
+    requested_us: 12345,
+    actual_us: null,
+    saved: true,
+    editable: true,
+    lock_reason: ""
+  });
+
+  try {
+    await assert.rejects(
+      () => updateCameraExposure(12345, null),
+      /numeric actual_us/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("camera exposure client preserves structured 409, 422, and 500 backend errors", async () => {
   const { ApiError, updateCameraExposure } = await loadApiClientModule();
   const originalFetch = globalThis.fetch;

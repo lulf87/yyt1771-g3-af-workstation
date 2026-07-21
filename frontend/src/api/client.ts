@@ -258,6 +258,10 @@ export type CameraExposureState = {
   lock_reason: string;
 };
 
+export type CameraExposureUpdateState = Omit<CameraExposureState, "actual_us"> & {
+  actual_us: number;
+};
+
 export type HardwareTemperatureBinding = {
   backend: "lu92xx_modbus_rtu" | string;
   serial_port: string;
@@ -1242,13 +1246,17 @@ export async function updateCameraExposure(
   exposureUs: number,
   camera: CameraExposureIdentity | null,
   signal?: AbortSignal
-): Promise<CameraExposureState> {
-  return requestJson<CameraExposureState>("/api/camera/exposure", {
+): Promise<CameraExposureUpdateState> {
+  const state = await requestJson<CameraExposureState>("/api/camera/exposure", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ camera, exposure_us: exposureUs }),
     signal
   });
+  if (typeof state.actual_us !== "number" || !Number.isFinite(state.actual_us)) {
+    throw new Error("Camera exposure update response must include a numeric actual_us.");
+  }
+  return state as CameraExposureUpdateState;
 }
 
 export async function testHardwareCamera(camera: HardwareCameraDevice): Promise<HardwareCameraTestResponse> {

@@ -1,16 +1,74 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = resolve(rootDir, ".tmp-exposure-control-test-build");
+const typecheckDir = resolve(rootDir, ".tmp-exposure-control-typecheck");
 
 after(() => {
   rmSync(outDir, { recursive: true, force: true });
+  rmSync(typecheckDir, { recursive: true, force: true });
 });
+
+function typecheckExposureApiIntegration() {
+  rmSync(typecheckDir, { recursive: true, force: true });
+  mkdirSync(typecheckDir, { recursive: true });
+  const fixturePath = resolve(typecheckDir, "integration.ts");
+  writeFileSync(
+    fixturePath,
+    `import { updateCameraExposure } from "../src/api/client";
+import { createExposureCommitCoordinator } from "../src/exposureControl";
+
+const coordinator = createExposureCommitCoordinator({
+  delayMs: 200,
+  apply: (value, signal) => updateCameraExposure(value, null, signal),
+  onSuccess: (actualUs, response) => {
+    actualUs.toFixed(1);
+    response.actual_us.toFixed(1);
+  },
+  onError: () => {},
+  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimer: (timer) => clearTimeout(timer)
+});
+
+coordinator.dispose();
+`,
+    "utf8"
+  );
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        resolve(rootDir, "node_modules/typescript/bin/tsc"),
+        "--target",
+        "ES2020",
+        "--module",
+        "ES2020",
+        "--moduleResolution",
+        "node",
+        "--strict",
+        "--skipLibCheck",
+        "--types",
+        "vite/client",
+        "--lib",
+        "ES2020,DOM",
+        "--noEmit",
+        fixturePath
+      ],
+      { cwd: rootDir, stdio: "pipe" }
+    );
+  } catch (error) {
+    const output = [error.stdout, error.stderr]
+      .filter(Boolean)
+      .map((chunk) => chunk.toString())
+      .join("\n");
+    assert.fail(output || error.message);
+  }
+}
 
 async function loadExposureControlModule() {
   rmSync(outDir, { recursive: true, force: true });
@@ -72,6 +130,10 @@ function createPendingApply(pending) {
     pending.push({ value, signal, resolve, reject });
   });
 }
+
+test("camera exposure update composes with the coordinator under strict TypeScript", () => {
+  typecheckExposureApiIntegration();
+});
 
 test("exposure coordinator debounces slider input for 200 ms and applies only the latest value", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
@@ -207,6 +269,73 @@ test("exposure coordinator ignores an older rejection after a newer request star
 
   assert.deepEqual(successes, [13000]);
   assert.deepEqual(errors, []);
+});
+
+test("exposure coordinator ignores an active success as soon as a newer value is scheduled", async () => {
+  const { createExposureCommitCoordinator } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const pendingValues = [];
+  const successes = [];
+  const errors = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onPending: (value) => pendingValues.push(value),
+    onSuccess: (actualUs) => successes.push(actualUs),
+    onError: (error) => errors.push(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.commit(12000);
+  coordinator.schedule(13000);
+  assert.equal(pending.length, 1);
+  assert.deepEqual(pendingValues, [12000]);
+
+  pending[0].resolve({ actual_us: 12000 });
+  await Promise.resolve();
+  assert.deepEqual(successes, []);
+  assert.deepEqual(errors, []);
+  assert.equal(pending[0].signal.aborted, true);
+
+  scheduler.fireOnlyTimer();
+  assert.equal(pending[1].value, 13000);
+  assert.deepEqual(pendingValues, [12000, 13000]);
+  pending[1].resolve({ actual_us: 13000 });
+  await Promise.resolve();
+  assert.deepEqual(successes, [13000]);
+});
+
+test("exposure coordinator ignores an active failure as soon as a newer value is scheduled", async () => {
+  const { createExposureCommitCoordinator } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const successes = [];
+  const errors = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onSuccess: (actualUs) => successes.push(actualUs),
+    onError: (error) => errors.push(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.commit(12000);
+  coordinator.schedule(13000);
+  pending[0].reject(new Error("superseded failure"));
+  await Promise.resolve();
+
+  assert.deepEqual(successes, []);
+  assert.deepEqual(errors, []);
+  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending.length, 1);
+
+  scheduler.fireOnlyTimer();
+  pending[1].resolve({ actual_us: 13000 });
+  await Promise.resolve();
+  assert.deepEqual(successes, [13000]);
 });
 
 test("exposure coordinator reports backend actual exposure and the full response", async () => {
