@@ -1043,16 +1043,16 @@ export function buildAfasDataDomain(analysis: AnalysisCurveSource): AfasDataDoma
     const distance = readFiniteNumber(point.y);
     return temperature === null || distance === null ? [] : [{ temperature, distance }];
   });
-  if (formalPoints.length < 2) return null;
-
   const temperatures = formalPoints.map((point) => point.temperature);
   const distances = formalPoints.map((point) => point.distance);
+  const availableTemperatures = [...new Set(temperatures)].sort((left, right) => left - right);
+  if (formalPoints.length < 2 || availableTemperatures.length < 2) return null;
   return {
     temperatureMin: Math.min(...temperatures),
     temperatureMax: Math.max(...temperatures),
     distanceMin: Math.min(...distances),
     distanceMax: Math.max(...distances),
-    availableTemperatures: [...new Set(temperatures)].sort((left, right) => left - right)
+    availableTemperatures
   };
 }
 

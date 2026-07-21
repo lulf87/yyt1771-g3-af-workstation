@@ -239,6 +239,29 @@ test("analysis AFAS interaction domains use only formal points and preserve unsn
   });
 });
 
+test("analysis AFAS interaction domains reject two formal inputs at one temperature", async () => {
+  const { buildAfasDataDomain, buildAnalysisAfasModel } = await loadCurveModule();
+  const analysis = {
+    ...sampleAnalysis(),
+    temperature_distance: [
+      { x: 20, y: 100, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+      { x: 20, y: 120, frame_index: 2, sync_status: "TEMP_SYNC_OK" }
+    ],
+    afas_preprocessing: {
+      smoothed_temperature_points: [
+        { temperature_celsius: 20, distance_px: 100, representative_frame_index: 1 },
+        { temperature_celsius: 20, distance_px: 120, representative_frame_index: 2 }
+      ]
+    },
+    afas_analysis: {}
+  };
+
+  assert.equal(buildAfasDataDomain(analysis), null);
+  const model = buildAnalysisAfasModel(analysis, { width: 980, height: 540 });
+  assert.equal(model.dataDomain, null);
+  assert.equal(model.interactionDomain, null);
+});
+
 test("analysis AFAS model separates review layers and extends baselines to AS and AF", async () => {
   const { buildAnalysisAfasModel } = await loadCurveModule();
 

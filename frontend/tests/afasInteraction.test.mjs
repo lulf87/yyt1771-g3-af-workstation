@@ -156,3 +156,101 @@ test("AFAS tangent endpoint rotation clamps both left and right drags to finite 
     assert.ok(points.every((point) => point.distance >= 100 && point.distance <= 160));
   }
 });
+
+test("AFAS tangent translation fails closed when its data domain is unavailable", async () => {
+  const { translateAfasTangent } = await loadInteractionModule();
+  const tangent = translateAfasTangent(
+    2,
+    40,
+    { temperature: 30, distance: 100 },
+    { temperature: 30, distance: Number.POSITIVE_INFINITY }
+  );
+
+  assert.deepEqual(tangent, { slope: 2, intercept: 40 });
+  assert.equal(Number.isFinite(tangent.slope), true);
+  assert.equal(Number.isFinite(tangent.intercept), true);
+});
+
+test("AFAS tangent rotation fails closed when its data domain is unavailable", async () => {
+  const { rotateAfasTangent } = await loadInteractionModule();
+  const tangent = rotateAfasTangent(
+    { temperature: 30, distance: 100 },
+    { temperature: 1000, distance: 500 },
+    2,
+    1e-6
+  );
+
+  assert.deepEqual(tangent, { slope: 2, intercept: 40 });
+  assert.equal(Number.isFinite(tangent.slope), true);
+  assert.equal(Number.isFinite(tangent.intercept), true);
+});
+
+test("AFAS tangent rotation normalizes non-finite fallbacks for tiny temperature deltas", async () => {
+  const { rotateAfasTangent } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 20,
+    temperatureMax: 50,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 50]
+  };
+
+  for (const fallbackSlope of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    const tangent = rotateAfasTangent(
+      { temperature: 30, distance: 120 },
+      { temperature: 30 + 1e-12, distance: 160 },
+      fallbackSlope,
+      domain,
+      1e-6
+    );
+    assert.deepEqual(tangent, { slope: 0, intercept: 120 });
+  }
+
+  assert.deepEqual(
+    rotateAfasTangent(
+      { temperature: 30, distance: 120 },
+      { temperature: 30 + 1e-12, distance: 160 },
+      4,
+      domain,
+      1e-6
+    ),
+    { slope: 4, intercept: 0 }
+  );
+});
+
+test("AFAS tangent rotation recovers a finite line when slope or intercept arithmetic overflows", async () => {
+  const { rotateAfasTangent } = await loadInteractionModule();
+  const slopeOverflow = rotateAfasTangent(
+    { temperature: 0, distance: 100 },
+    { temperature: Number.MIN_VALUE, distance: 160 },
+    Number.NaN,
+    {
+      temperatureMin: 0,
+      temperatureMax: 1,
+      distanceMin: 100,
+      distanceMax: 160,
+      availableTemperatures: [0, 1]
+    },
+    0
+  );
+  const interceptOverflow = rotateAfasTangent(
+    { temperature: 2, distance: 120 },
+    { temperature: 2, distance: 160 },
+    Number.MAX_VALUE,
+    {
+      temperatureMin: 0,
+      temperatureMax: 10,
+      distanceMin: 0,
+      distanceMax: 200,
+      availableTemperatures: [0, 2, 10]
+    },
+    1e-6
+  );
+
+  assert.deepEqual(slopeOverflow, { slope: 0, intercept: 100 });
+  assert.deepEqual(interceptOverflow, { slope: 0, intercept: 120 });
+  for (const tangent of [slopeOverflow, interceptOverflow]) {
+    assert.equal(Number.isFinite(tangent.slope), true);
+    assert.equal(Number.isFinite(tangent.intercept), true);
+  }
+});

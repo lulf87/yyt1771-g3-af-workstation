@@ -65,15 +65,14 @@ export function translateAfasTangent(
   current: AfasDataPoint,
   domain?: AfasDataDomain
 ): { slope: number; intercept: number } {
-  const boundedCurrent = domain ? clampAfasDataPoint(current, domain) : current;
+  if (!domain) return finiteTangentParameters(slope, intercept);
+  const boundedCurrent = clampAfasDataPoint(current, domain);
   const candidateIntercept = intercept +
     (boundedCurrent.distance - start.distance) -
     slope * (boundedCurrent.temperature - start.temperature);
   return {
     slope,
-    intercept: domain
-      ? clampNumber(candidateIntercept, ...tangentInterceptBounds(slope, domain))
-      : candidateIntercept
+    intercept: clampNumber(candidateIntercept, ...tangentInterceptBounds(slope, domain))
   };
 }
 
@@ -97,23 +96,24 @@ export function rotateAfasTangent(
   domainOrMinimumTemperatureDelta?: AfasDataDomain | number,
   requestedMinimumTemperatureDelta = 1e-6
 ): { slope: number; intercept: number } {
-  const domain = typeof domainOrMinimumTemperatureDelta === "object"
+  const domain = domainOrMinimumTemperatureDelta !== null &&
+    typeof domainOrMinimumTemperatureDelta === "object"
     ? domainOrMinimumTemperatureDelta
     : null;
-  const minimumTemperatureDelta = typeof domainOrMinimumTemperatureDelta === "number"
-    ? domainOrMinimumTemperatureDelta
-    : requestedMinimumTemperatureDelta;
-  const boundedAnchor = domain ? clampAfasDataPoint(anchor, domain) : anchor;
-  const boundedPointer = domain ? clampAfasDataPoint(pointer, domain) : pointer;
+  const fallback = finiteNumberOrZero(fallbackSlope);
+  if (!domain) return tangentThroughAnchor(anchor, fallback);
+
+  const minimumTemperatureDelta = normalizedMinimumTemperatureDelta(
+    requestedMinimumTemperatureDelta
+  );
+  const boundedAnchor = clampAfasDataPoint(anchor, domain);
+  const boundedPointer = clampAfasDataPoint(pointer, domain);
   const temperatureDelta = boundedPointer.temperature - boundedAnchor.temperature;
   const candidateSlope = Math.abs(temperatureDelta) < minimumTemperatureDelta
-    ? fallbackSlope
+    ? fallback
     : (boundedPointer.distance - boundedAnchor.distance) / temperatureDelta;
-  const slope = Number.isFinite(candidateSlope) ? candidateSlope : fallbackSlope;
-  return {
-    slope,
-    intercept: boundedAnchor.distance - slope * boundedAnchor.temperature
-  };
+  const slope = Number.isFinite(candidateSlope) ? candidateSlope : fallback;
+  return tangentThroughAnchor(boundedAnchor, slope);
 }
 
 export function tangentInterceptBounds(slope: number, domain: AfasDataDomain): AfasRange {
@@ -229,4 +229,35 @@ function dataPointDistanceSquared(left: AfasDataPoint, right: AfasDataPoint): nu
   const temperatureDelta = left.temperature - right.temperature;
   const distanceDelta = left.distance - right.distance;
   return temperatureDelta * temperatureDelta + distanceDelta * distanceDelta;
+}
+
+function finiteTangentParameters(
+  slope: number,
+  intercept: number
+): { slope: number; intercept: number } {
+  return {
+    slope: finiteNumberOrZero(slope),
+    intercept: finiteNumberOrZero(intercept)
+  };
+}
+
+function tangentThroughAnchor(
+  anchor: AfasDataPoint,
+  requestedSlope: number
+): { slope: number; intercept: number } {
+  const temperature = finiteNumberOrZero(anchor.temperature);
+  const distance = finiteNumberOrZero(anchor.distance);
+  const slope = finiteNumberOrZero(requestedSlope);
+  const intercept = distance - slope * temperature;
+  return Number.isFinite(intercept)
+    ? { slope, intercept }
+    : { slope: 0, intercept: distance };
+}
+
+function finiteNumberOrZero(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function normalizedMinimumTemperatureDelta(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? value : 1e-6;
 }
