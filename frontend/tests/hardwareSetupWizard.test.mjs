@@ -213,6 +213,52 @@ test("camera refresh gates testing and invalidates requests again before applyin
   );
 });
 
+test("device setup full refresh only applies the latest still-open lifecycle", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+  const refresh = sourceSlice(
+    "async function refreshWizardData()",
+    "async function refreshEnvironmentChecks()"
+  );
+
+  assert.match(mainSource, /createHardwareSetupRefreshCoordinator/);
+  assert.match(wizard, /const wizardOpenRef = useRef\(open\)/);
+  assert.match(wizard, /wizardOpenRef\.current = open;/);
+  assert.match(
+    wizard,
+    /useEffect\(\(\) => \{[\s\S]{0,220}hardwareSetupRefreshCoordinatorRef\.current\.invalidate\(\)[\s\S]{0,220}if \(!open\) return;/
+  );
+  assert.match(
+    refresh,
+    /hardwareSetupRefreshCoordinatorRef\.current\.run\(/
+  );
+  const awaitResult = refresh.indexOf("await hardwareSetupRefreshCoordinatorRef.current.run(");
+  const acceptanceGuard = refresh.indexOf(
+    "if (!refreshResult.accepted || !wizardOpenRef.current) return;"
+  );
+  const settlementApply = refresh.indexOf(
+    "cameraTestCoordinatorRef.current.invalidate()",
+    awaitResult
+  );
+  const unlock = refresh.indexOf("setWizardLoading(false)", awaitResult);
+
+  assert.ok(awaitResult >= 0, "full refresh must run through its own coordinator");
+  assert.ok(
+    acceptanceGuard > awaitResult,
+    "the latest/open guard must run after the request settles"
+  );
+  assert.ok(
+    settlementApply > acceptanceGuard,
+    "stale refreshes must not clear or replace camera state"
+  );
+  assert.ok(
+    unlock > acceptanceGuard,
+    "stale refreshes must not clear the loading gate"
+  );
+});
+
 test("shared exposure control validates camera bounds and restores the last confirmed value", () => {
   assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
   const component = readFileSync(exposureControlPath, "utf8");

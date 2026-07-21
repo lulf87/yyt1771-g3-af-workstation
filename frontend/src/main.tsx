@@ -135,6 +135,7 @@ import {
   createHardwareCameraTestCoordinator,
   isHardwareCameraTestResultCurrent
 } from "./hardwareCameraTestCoordinator";
+import { createHardwareSetupRefreshCoordinator } from "./hardwareSetupRefreshCoordinator";
 import {
   displayPointToMeasurement,
   fitSourceToDisplay,
@@ -2906,6 +2907,12 @@ const HARDWARE_SETUP_STEPS = [
   "Save configuration"
 ] as const;
 
+type HardwareSetupRefreshPayload = {
+  environmentResult: PromiseSettledResult<HardwareSetupEnvironment>;
+  cameraResult: PromiseSettledResult<HardwareCameraDevice[]>;
+  portResult: PromiseSettledResult<SerialPortInfo[]>;
+};
+
 function DeviceSetupWizard({
   open,
   onClose,
@@ -2940,8 +2947,13 @@ function DeviceSetupWizard({
   const cameraTestCoordinatorRef = useRef(
     createHardwareCameraTestCoordinator<HardwareCameraTestResponse>()
   );
+  const hardwareSetupRefreshCoordinatorRef = useRef(
+    createHardwareSetupRefreshCoordinator<HardwareSetupRefreshPayload>()
+  );
+  const wizardOpenRef = useRef(open);
   const loadingWizardRef = useRef(true);
   const selectedCameraKeyRef = useRef(selectedCameraKey);
+  wizardOpenRef.current = open;
   selectedCameraKeyRef.current = selectedCameraKey;
 
   function setWizardLoading(loading: boolean) {
@@ -2950,6 +2962,7 @@ function DeviceSetupWizard({
   }
 
   useEffect(() => {
+    hardwareSetupRefreshCoordinatorRef.current.invalidate();
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setWizardLoading(true);
@@ -3009,17 +3022,39 @@ function DeviceSetupWizard({
     setSaveResult(null);
     setWizardLoading(true);
     setError("");
-    const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
-      getHardwareSetupEnvironment(),
-      listHardwareCameras(),
-      listTemperatureSerialPorts()
-    ]);
+    const refreshResult = await hardwareSetupRefreshCoordinatorRef.current.run(
+      async () => {
+        const [environmentResult, cameraResult, portResult] = await Promise.allSettled([
+          getHardwareSetupEnvironment(),
+          listHardwareCameras(),
+          listTemperatureSerialPorts()
+        ]);
+        return { environmentResult, cameraResult, portResult };
+      }
+    );
+    if (!refreshResult.accepted || !wizardOpenRef.current) return;
     cameraTestCoordinatorRef.current.invalidate();
     setTestingCamera(false);
     setCameraTestResult(null);
     setTestResult(null);
     setSaveResult(null);
     setError("");
+    if (refreshResult.status === "rejected") {
+      setEnvironment(null);
+      selectedCameraKeyRef.current = "";
+      setCameras([]);
+      setSelectedCameraKey("");
+      setPorts([]);
+      setSelectedPort("");
+      setError(
+        refreshResult.reason instanceof Error
+          ? refreshResult.reason.message
+          : String(refreshResult.reason)
+      );
+      setWizardLoading(false);
+      return;
+    }
+    const { environmentResult, cameraResult, portResult } = refreshResult.value;
     if (environmentResult.status === "fulfilled") {
       setEnvironment(environmentResult.value);
       applyDetectedSdkPaths(environmentResult.value);
