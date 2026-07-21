@@ -124,6 +124,11 @@ test("operator real-camera preview mounts the shared exposure control and locks 
     operatorPage,
     /<ExposureControl[\s\S]{0,350}runActive=\{operatorRunActive\}/
   );
+  assert.match(
+    operatorPage,
+    /<ExposureControl[\s\S]{0,300}disabled=\{probing \|\| cameraPreviewRefreshStatus !== "ok"\}/,
+    "probing must lock exposure while the camera is owned by the probe operation"
+  );
   assert.match(component, /disabled=\{disabled \|\| runActive/);
   assert.match(component, /if \(runActive\)/);
   assert.match(

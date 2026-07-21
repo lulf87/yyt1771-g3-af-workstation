@@ -21,6 +21,52 @@ export type ExposureCommitCoordinator = {
   dispose(): void;
 };
 
+export type ExposureDraftSubmission =
+  | { kind: "rejected"; reason: "finite" | "range" }
+  | { kind: "unchanged"; value: number }
+  | { kind: "pending"; value: number }
+  | { kind: "submitted"; value: number };
+
+export function submitExposureDraft({
+  draft,
+  minimumUs,
+  maximumUs,
+  confirmedUs,
+  latestIntentUs,
+  lastRequestedUs,
+  coordinator
+}: {
+  draft: string;
+  minimumUs: number | null;
+  maximumUs: number | null;
+  confirmedUs: number | null;
+  latestIntentUs: number | null;
+  lastRequestedUs: number | null;
+  coordinator: Pick<ExposureCommitCoordinator, "commit">;
+}): ExposureDraftSubmission {
+  if (!draft.trim()) {
+    return { kind: "rejected", reason: "finite" };
+  }
+  const value = Number(draft);
+  if (!Number.isFinite(value)) {
+    return { kind: "rejected", reason: "finite" };
+  }
+  if (
+    (minimumUs !== null && value < minimumUs) ||
+    (maximumUs !== null && value > maximumUs)
+  ) {
+    return { kind: "rejected", reason: "range" };
+  }
+  if (lastRequestedUs === value) {
+    return { kind: "pending", value };
+  }
+  if (confirmedUs === value && latestIntentUs === null) {
+    return { kind: "unchanged", value };
+  }
+  coordinator.commit(value);
+  return { kind: "submitted", value };
+}
+
 export function createExposureCommitCoordinator<T extends ExposureApplyResponse>(
   options: ExposureCoordinatorOptions<T>
 ): ExposureCommitCoordinator {

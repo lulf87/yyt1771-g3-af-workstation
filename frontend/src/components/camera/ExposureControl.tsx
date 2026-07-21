@@ -8,6 +8,7 @@ import {
 } from "../../api/client";
 import {
   createExposureCommitCoordinator,
+  submitExposureDraft,
   type ExposureCommitCoordinator
 } from "../../exposureControl";
 import { uiText, type UiLanguage } from "../../i18n";
@@ -64,6 +65,7 @@ export function ExposureControl({
   const [status, setStatus] = useState<ExposureStatus>("loading");
   const [error, setError] = useState("");
   const confirmedRef = useRef<number | null>(null);
+  const latestIntentRef = useRef<number | null>(null);
   const lastRequestedRef = useRef<number | null>(null);
   const coordinatorRef = useRef<ExposureCommitCoordinator | null>(null);
   const t = (text: string) => uiText(language, text);
@@ -84,6 +86,7 @@ export function ExposureControl({
       },
       onSuccess: (actual, response) => {
         confirmedRef.current = actual;
+        latestIntentRef.current = null;
         lastRequestedRef.current = null;
         setLoadedCapability({ cameraKey, value: response });
         setDraft(String(actual));
@@ -91,6 +94,7 @@ export function ExposureControl({
         setError("");
       },
       onError: (reason) => {
+        latestIntentRef.current = null;
         lastRequestedRef.current = null;
         setDraft(confirmedRef.current === null ? "" : String(confirmedRef.current));
         setStatus("error");
@@ -110,6 +114,7 @@ export function ExposureControl({
   useEffect(() => {
     const controller = new AbortController();
     confirmedRef.current = null;
+    latestIntentRef.current = null;
     lastRequestedRef.current = null;
     setError("");
 
@@ -159,27 +164,36 @@ export function ExposureControl({
 
   function commitDraft(): void {
     if (locked || capability === null) return;
-    if (!draft.trim()) {
-      rejectDraft(t("Exposure must be a finite number"));
+    const coordinator = coordinatorRef.current;
+    if (coordinator === null) return;
+    const result = submitExposureDraft({
+      draft,
+      minimumUs: capability.minimum_us,
+      maximumUs: capability.maximum_us,
+      confirmedUs: confirmedRef.current,
+      latestIntentUs: latestIntentRef.current,
+      lastRequestedUs: lastRequestedRef.current,
+      coordinator
+    });
+    if (result.kind === "rejected") {
+      rejectDraft(
+        t(
+          result.reason === "range"
+            ? "Exposure is outside the camera range"
+            : "Exposure must be a finite number"
+        )
+      );
       return;
     }
-    const value = Number(draft);
-    if (!Number.isFinite(value)) {
-      rejectDraft(t("Exposure must be a finite number"));
-      return;
-    }
-    if (!exposureValueInRange(value, capability)) {
-      rejectDraft(t("Exposure is outside the camera range"));
-      return;
-    }
-    if (lastRequestedRef.current === value) return;
-    if (confirmedRef.current === value) {
-      setDraft(String(value));
+    if (result.kind === "unchanged") {
+      setDraft(String(result.value));
       setStatus("idle");
       setError("");
       return;
     }
-    coordinatorRef.current?.commit(value);
+    if (result.kind === "submitted") {
+      latestIntentRef.current = result.value;
+    }
   }
 
   function statusMessage(): string {
@@ -225,6 +239,7 @@ export function ExposureControl({
               const value = Number(nextDraft);
               setDraft(nextDraft);
               if (exposureValueInRange(value, capability)) {
+                latestIntentRef.current = value;
                 coordinatorRef.current?.schedule(value);
               }
             }}

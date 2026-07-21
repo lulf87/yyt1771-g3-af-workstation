@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mainSource = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
 const exposureControlPath = resolve(rootDir, "src/components/camera/ExposureControl.tsx");
+const exposureLogicSource = readFileSync(resolve(rootDir, "src/exposureControl.ts"), "utf8");
 
 function sourceSlice(startMarker, endMarker) {
   const start = mainSource.indexOf(startMarker);
@@ -111,6 +112,27 @@ test("device setup mounts the shared exposure control after a successful camera 
   );
 });
 
+test("selecting another camera synchronously clears the previous camera test before exposure can mount", () => {
+  const wizard = sourceSlice(
+    "function DeviceSetupWizard({",
+    "function HardwareCheckList("
+  );
+
+  assert.match(
+    wizard,
+    /function selectHardwareCamera\(cameraKey: string\)[\s\S]{0,300}setCameraTestResult\(null\)[\s\S]{0,300}setSelectedCameraKey\(cameraKey\)/,
+    "camera selection must invalidate the previous camera result in the same event"
+  );
+  assert.match(
+    wizard,
+    /onChange=\{\(\) => selectHardwareCamera\(hardwareCameraKey\(camera\)\)\}/
+  );
+  assert.doesNotMatch(
+    wizard,
+    /onChange=\{\(\) => setSelectedCameraKey\(hardwareCameraKey\(camera\)\)\}/
+  );
+});
+
 test("shared exposure control validates camera bounds and restores the last confirmed value", () => {
   assert.ok(existsSync(exposureControlPath), "shared ExposureControl component must exist");
   const component = readFileSync(exposureControlPath, "utf8");
@@ -124,8 +146,9 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /coordinatorRef\.current\?\.schedule\(/);
   assert.match(component, /onBlur=\{commitDraft\}/);
   assert.match(component, /event\.key === "Enter"[\s\S]{0,120}commitDraft\(\)/);
-  assert.match(component, /if \(!draft\.trim\(\)\)/);
-  assert.match(component, /Number\.isFinite\(/);
+  assert.match(component, /submitExposureDraft\(/);
+  assert.match(exposureLogicSource, /if \(!draft\.trim\(\)\)/);
+  assert.match(exposureLogicSource, /Number\.isFinite\(/);
   assert.match(component, /capability\.minimum_us/);
   assert.match(component, /capability\.maximum_us/);
   assert.match(component, /confirmedRef\.current/);

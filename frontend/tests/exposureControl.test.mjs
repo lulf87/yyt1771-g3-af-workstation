@@ -196,6 +196,98 @@ test("exposure coordinator commit clears a scheduled slider update and applies i
   await Promise.resolve();
 });
 
+test("numeric submission equal to the confirmed value replaces a scheduled slider intent", async () => {
+  const {
+    createExposureCommitCoordinator,
+    submitExposureDraft
+  } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onSuccess: () => {},
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.schedule(200);
+  const result = submitExposureDraft({
+    draft: "100",
+    minimumUs: 10,
+    maximumUs: 1000,
+    confirmedUs: 100,
+    latestIntentUs: 200,
+    lastRequestedUs: null,
+    coordinator
+  });
+
+  assert.deepEqual(result, { kind: "submitted", value: 100 });
+  assert.equal(scheduler.timers.size, 0);
+  assert.deepEqual(scheduler.cleared, [1]);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].value, 100);
+  pending[0].resolve({ actual_us: 100 });
+  await Promise.resolve();
+});
+
+test("numeric submission equal to the confirmed value aborts an in-flight slider intent without blur duplication", async () => {
+  const {
+    createExposureCommitCoordinator,
+    submitExposureDraft
+  } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  let lastRequestedUs = null;
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onPending: (value) => {
+      lastRequestedUs = value;
+    },
+    onSuccess: () => {},
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.schedule(200);
+  scheduler.fireOnlyTimer();
+  assert.equal(lastRequestedUs, 200);
+
+  const enterResult = submitExposureDraft({
+    draft: "100",
+    minimumUs: 10,
+    maximumUs: 1000,
+    confirmedUs: 100,
+    latestIntentUs: 200,
+    lastRequestedUs,
+    coordinator
+  });
+  assert.deepEqual(enterResult, { kind: "submitted", value: 100 });
+  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending.length, 2);
+  assert.equal(pending[1].value, 100);
+  assert.equal(lastRequestedUs, 100);
+
+  const blurResult = submitExposureDraft({
+    draft: "100",
+    minimumUs: 10,
+    maximumUs: 1000,
+    confirmedUs: 100,
+    latestIntentUs: 100,
+    lastRequestedUs,
+    coordinator
+  });
+  assert.deepEqual(blurResult, { kind: "pending", value: 100 });
+  assert.equal(pending.length, 2);
+
+  pending[1].resolve({ actual_us: 100 });
+  pending[0].resolve({ actual_us: 200 });
+  await Promise.resolve();
+});
+
 test("exposure coordinator aborts the older request when a newer apply starts", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();

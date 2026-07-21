@@ -2493,7 +2493,7 @@ function OperatorRunPage({
           {!simulatedMode && realHardwareAvailable ? (
             <ExposureControl
               camera={null}
-              disabled={cameraPreviewRefreshStatus !== "ok"}
+              disabled={probing || cameraPreviewRefreshStatus !== "ok"}
               language={language}
               runActive={operatorRunActive}
             />
@@ -3110,6 +3110,13 @@ function DeviceSetupWizard({
     }
   }
 
+  function selectHardwareCamera(cameraKey: string) {
+    setCameraTestResult(null);
+    setTestResult(null);
+    setSaveResult(null);
+    setSelectedCameraKey(cameraKey);
+  }
+
   async function runCameraTest() {
     if (!selectedCamera) {
       setError(t("Select camera before testing"));
@@ -3291,7 +3298,7 @@ function DeviceSetupWizard({
                     <input
                       checked={hardwareCameraKey(camera) === selectedCameraKey}
                       disabled={!camera.is_supported_model}
-                      onChange={() => setSelectedCameraKey(hardwareCameraKey(camera))}
+                      onChange={() => selectHardwareCamera(hardwareCameraKey(camera))}
                       type="radio"
                     />
                     <span>
