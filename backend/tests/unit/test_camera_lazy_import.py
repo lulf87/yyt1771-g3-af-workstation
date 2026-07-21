@@ -314,7 +314,13 @@ class _FakeOfficialCamera:
     def MV_CC_SetFloatValue(self, key: str, value: float) -> int:
         self.configured[key] = value
         if key == "ExposureTime":
-            self.sdk.exposure_us = value
+            quantized = self.sdk.exposure_minimum_us + round(
+                (value - self.sdk.exposure_minimum_us) / self.sdk.exposure_device_quantum_us
+            ) * self.sdk.exposure_device_quantum_us
+            self.sdk.exposure_us = min(
+                max(quantized, self.sdk.exposure_minimum_us),
+                self.sdk.exposure_maximum_us,
+            )
         elif key == "AcquisitionFrameRate":
             self.sdk.resulting_fps = value
         return 0
@@ -322,9 +328,9 @@ class _FakeOfficialCamera:
     def MV_CC_GetFloatValue(self, key: str, value: _FakeFloatValue) -> int:
         if key == "ExposureTime":
             value.fCurValue = self.sdk.exposure_us
-            value.fMin = 100.0
-            value.fMax = 100000.0
-            value.fInc = 1.0
+            value.fMin = self.sdk.exposure_minimum_us
+            value.fMax = self.sdk.exposure_maximum_us
+            value.fInc = self.sdk.exposure_increment_us
         elif key == "ResultingFrameRate":
             value.fCurValue = self.sdk.resulting_fps
         return 0
@@ -380,6 +386,10 @@ class _FakeOfficialSdk:
     def __init__(self) -> None:
         self.created: list[_FakeOfficialCamera] = []
         self.exposure_us = 10000.0
+        self.exposure_minimum_us = 100.0
+        self.exposure_maximum_us = 100000.0
+        self.exposure_increment_us = 1.0
+        self.exposure_device_quantum_us = 8.0
         self.resulting_fps = 0.0
         camera_class = type("FakeOfficialCameraBound", (_FakeOfficialCamera,), {})
         camera_class._sdk = self
@@ -388,18 +398,25 @@ class _FakeOfficialSdk:
 
 def test_hik_exposure_capability_and_set_use_camera_reported_values(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_sdk = _FakeOfficialSdk()
-    fake_sdk.exposure_us = 10000.0
     monkeypatch.setattr("importlib.import_module", lambda name: fake_sdk)
-    source = HikMvsCameraSource(profile={"serial_number": "DEV-001", "exposure_us": 10000.0})
+    source = HikMvsCameraSource(profile={"serial_number": "DEV-001", "exposure_us": 10003.0})
 
     initial = source.read_exposure_capability()
-    actual = source.set_exposure_us(12345.0)
-    updated = source.read_exposure_capability()
 
     assert initial.supported is True
     assert (initial.minimum_us, initial.maximum_us, initial.increment_us) == (100.0, 100000.0, 1.0)
-    assert actual == 12345.0
-    assert updated.actual_us == 12345.0
+    assert initial.requested_us == 10003.0
+    assert initial.actual_us == fake_sdk.exposure_us == 10004.0
+    assert initial.actual_us != initial.requested_us
+
+    actual = source.set_exposure_us(12345.0)
+    updated = source.read_exposure_capability()
+
+    assert actual == fake_sdk.exposure_us == 12348.0
+    assert actual != 12345.0
+    assert source.profile["exposure_us"] == 12348.0
+    assert updated.requested_us == 12348.0
+    assert updated.actual_us == 12348.0
     assert fake_sdk.created[0].configured["ExposureAuto"] == "Off"
 
 
