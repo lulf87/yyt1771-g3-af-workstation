@@ -1035,14 +1035,7 @@ function formatRunTrendTick(value: number, range: { min: number; max: number }):
 }
 
 export function buildAfasDataDomain(analysis: AnalysisCurveSource): AfasDataDomain | null {
-  const formalPoints = formalCurvePoints(
-    analysis.afas_preprocessing,
-    analysis.temperature_distance
-  ).flatMap((point) => {
-    const temperature = readFiniteNumber(point.x);
-    const distance = readFiniteNumber(point.y);
-    return temperature === null || distance === null ? [] : [{ temperature, distance }];
-  });
+  const formalPoints = readAfasFormalDomainPoints(analysis);
   const temperatures = formalPoints.map((point) => point.temperature);
   const distances = formalPoints.map((point) => point.distance);
   const availableTemperatures = [...new Set(temperatures)].sort((left, right) => left - right);
@@ -1054,6 +1047,65 @@ export function buildAfasDataDomain(analysis: AnalysisCurveSource): AfasDataDoma
     distanceMax: Math.max(...distances),
     availableTemperatures
   };
+}
+
+function readAfasFormalDomainPoints(
+  analysis: AnalysisCurveSource
+): Array<{ temperature: number; distance: number }> {
+  const preprocessing = readRecord(analysis.afas_preprocessing);
+  for (const key of [
+    "smoothed_temperature_points",
+    "repaired_temperature_points",
+    "grouped_temperature_points"
+  ] as const) {
+    const points = readAfasDomainPointObjects(preprocessing[key]);
+    if (hasAfasDomainSupport(points)) return points;
+  }
+  for (const key of ["smoothed", "outlier_repair", "grouped"] as const) {
+    const points = readAfasParallelDomainSeries(preprocessing[key]);
+    if (hasAfasDomainSupport(points)) return points;
+  }
+
+  const parameters = readRecord(preprocessing.parameters);
+  return formalCurvePoints(
+    Object.keys(parameters).length ? { parameters } : undefined,
+    analysis.temperature_distance
+  ).flatMap((point) => {
+    const temperature = readFiniteNumber(point.x);
+    const distance = readFiniteNumber(point.y);
+    return temperature === null || distance === null ? [] : [{ temperature, distance }];
+  });
+}
+
+function readAfasDomainPointObjects(
+  value: unknown
+): Array<{ temperature: number; distance: number }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = readRecord(item);
+    const temperature = readFiniteNumber(record.temperature_celsius);
+    const distance = readFiniteNumber(record.distance_px);
+    return temperature === null || distance === null ? [] : [{ temperature, distance }];
+  });
+}
+
+function readAfasParallelDomainSeries(
+  value: unknown
+): Array<{ temperature: number; distance: number }> {
+  const series = readRecord(value);
+  const temperatures = series.temperature_celsius;
+  const values = series.values;
+  if (!Array.isArray(temperatures) || !Array.isArray(values) || temperatures.length !== values.length) {
+    return [];
+  }
+  return readAfasSeries(temperatures, values, undefined).map((point) => ({
+    temperature: point.temperature,
+    distance: point.distance
+  }));
+}
+
+function hasAfasDomainSupport(points: Array<{ temperature: number }>): boolean {
+  return points.length >= 2 && new Set(points.map((point) => point.temperature)).size >= 2;
 }
 
 export function intersectAfasDomainWithXRange(

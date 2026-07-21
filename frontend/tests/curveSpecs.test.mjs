@@ -239,6 +239,157 @@ test("analysis AFAS interaction domains use only formal points and preserve unsn
   });
 });
 
+test("analysis AFAS interaction domain uses parallel smoothed points without raw expansion", async () => {
+  const { buildAfasDataDomain } = await loadCurveModule();
+  const analysis = {
+    ...sampleAnalysis(),
+    afas_preprocessing: {
+      smoothed: {
+        temperature_celsius: [10, 20, 30],
+        values: [100, 120, 140]
+      }
+    },
+    temperature_distance: [
+      { x: 90, y: 9999, frame_index: 1, sync_status: "TEMP_SYNC_OK" }
+    ]
+  };
+
+  assert.deepEqual(buildAfasDataDomain(analysis), {
+    temperatureMin: 10,
+    temperatureMax: 30,
+    distanceMin: 100,
+    distanceMax: 140,
+    availableTemperatures: [10, 20, 30]
+  });
+});
+
+test("analysis AFAS interaction domain follows formal representation priority", async (t) => {
+  const { buildAfasDataDomain } = await loadCurveModule();
+  const raw = [
+    { x: -90, y: -9999, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+    { x: 90, y: 9999, frame_index: 2, sync_status: "TEMP_SYNC_OK" }
+  ];
+  const cases = [
+    {
+      name: "point-object repaired data precedes every parallel representation",
+      preprocessing: {
+        smoothed_temperature_points: [
+          { temperature_celsius: 10, distance_px: 100 }
+        ],
+        repaired_temperature_points: [
+          { temperature_celsius: 12, distance_px: 112 },
+          { temperature_celsius: 22, distance_px: 122 }
+        ],
+        grouped_temperature_points: [
+          { temperature_celsius: 14, distance_px: 214 },
+          { temperature_celsius: 24, distance_px: 224 }
+        ],
+        smoothed: {
+          temperature_celsius: [30, 40],
+          values: [300, 400]
+        }
+      },
+      expected: {
+        temperatureMin: 12,
+        temperatureMax: 22,
+        distanceMin: 112,
+        distanceMax: 122,
+        availableTemperatures: [12, 22]
+      }
+    },
+    {
+      name: "invalid parallel smoothed data falls back to repaired data",
+      preprocessing: {
+        smoothed: {
+          temperature_celsius: [10, 20],
+          values: [Number.NaN, 120]
+        },
+        outlier_repair: {
+          temperature_celsius: [15, 25],
+          values: [150, 250]
+        },
+        grouped: {
+          temperature_celsius: [30, 40],
+          values: [300, 400]
+        }
+      },
+      expected: {
+        temperatureMin: 15,
+        temperatureMax: 25,
+        distanceMin: 150,
+        distanceMax: 250,
+        availableTemperatures: [15, 25]
+      }
+    },
+    {
+      name: "invalid repaired data falls back to grouped data",
+      preprocessing: {
+        smoothed: {
+          temperature_celsius: [10, 20],
+          values: [100]
+        },
+        outlier_repair: {
+          temperature_celsius: [15, 15],
+          values: [150, 155]
+        },
+        grouped: {
+          temperature_celsius: [30, 40],
+          values: [300, 400]
+        }
+      },
+      expected: {
+        temperatureMin: 30,
+        temperatureMax: 40,
+        distanceMin: 300,
+        distanceMax: 400,
+        availableTemperatures: [30, 40]
+      }
+    },
+    {
+      name: "legacy raw data is used only after every formal representation is invalid",
+      preprocessing: {
+        smoothed_temperature_points: [
+          { temperature_celsius: 10, distance_px: 100 }
+        ],
+        smoothed: {
+          temperature_celsius: [10, 10],
+          values: [100, 110]
+        },
+        outlier_repair: {
+          temperature_celsius: [20],
+          values: [200]
+        },
+        grouped: {
+          temperature_celsius: [30, 40],
+          values: [300]
+        }
+      },
+      temperatureDistance: [
+        { x: 5, y: 50, frame_index: 1, sync_status: "TEMP_SYNC_OK" },
+        { x: 6, y: 60, frame_index: 2, sync_status: "TEMP_SYNC_OK" }
+      ],
+      expected: {
+        temperatureMin: 5,
+        temperatureMax: 6,
+        distanceMin: 50,
+        distanceMax: 60,
+        availableTemperatures: [5, 6]
+      }
+    }
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      const analysis = {
+        ...sampleAnalysis(),
+        afas_preprocessing: fixture.preprocessing,
+        temperature_distance: fixture.temperatureDistance ?? raw
+      };
+      assert.deepEqual(buildAfasDataDomain(analysis), fixture.expected);
+    });
+  }
+});
+
 test("analysis AFAS interaction domains reject two formal inputs at one temperature", async () => {
   const { buildAfasDataDomain, buildAnalysisAfasModel } = await loadCurveModule();
   const analysis = {

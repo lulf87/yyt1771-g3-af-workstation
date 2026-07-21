@@ -171,6 +171,151 @@ test("AFAS tangent translation fails closed when its data domain is unavailable"
   assert.equal(Number.isFinite(tangent.intercept), true);
 });
 
+test("AFAS tangent translation fails closed for non-finite pointer coordinates", async () => {
+  const { translateAfasTangent } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 20,
+    temperatureMax: 50,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 50]
+  };
+  const original = { slope: 2, intercept: 40 };
+
+  assert.deepEqual(
+    translateAfasTangent(
+      original.slope,
+      original.intercept,
+      { temperature: 30, distance: 100 },
+      { temperature: Number.NaN, distance: 120 },
+      domain
+    ),
+    original
+  );
+  assert.deepEqual(
+    translateAfasTangent(
+      original.slope,
+      original.intercept,
+      { temperature: 30, distance: Number.NaN },
+      { temperature: 40, distance: 120 },
+      domain
+    ),
+    original
+  );
+});
+
+test("AFAS tangent translation replaces non-finite line parameters with a finite horizontal line", async () => {
+  const { translateAfasTangent } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 20,
+    temperatureMax: 50,
+    distanceMin: 100,
+    distanceMax: 160,
+    availableTemperatures: [20, 30, 40, 50]
+  };
+
+  for (const [slope, intercept] of [
+    [Number.POSITIVE_INFINITY, 40],
+    [2, Number.POSITIVE_INFINITY],
+    [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY]
+  ]) {
+    assert.deepEqual(
+      translateAfasTangent(
+        slope,
+        intercept,
+        { temperature: 30, distance: 120 },
+        { temperature: 40, distance: 140 },
+        domain
+      ),
+      { slope: 0, intercept: 120 }
+    );
+  }
+});
+
+test("AFAS tangent translation preserves a finite line when domain arithmetic overflows", async () => {
+  const { translateAfasTangent } = await loadInteractionModule();
+  const tangent = translateAfasTangent(
+    Number.MAX_VALUE,
+    20,
+    { temperature: 10, distance: 100 },
+    { temperature: 0, distance: 160 },
+    {
+      temperatureMin: 0,
+      temperatureMax: 10,
+      distanceMin: 100,
+      distanceMax: 160,
+      availableTemperatures: [0, 10]
+    }
+  );
+
+  assert.deepEqual(tangent, { slope: Number.MAX_VALUE, intercept: 20 });
+  assert.equal(Number.isFinite(tangent.slope), true);
+  assert.equal(Number.isFinite(tangent.intercept), true);
+});
+
+test("AFAS tangent translation preserves zero pointer movement outside the data domain", async () => {
+  const { translateAfasTangent } = await loadInteractionModule();
+  const point = { temperature: -100, distance: 500 };
+
+  assert.deepEqual(
+    translateAfasTangent(2, 40, point, point, {
+      temperatureMin: 20,
+      temperatureMax: 50,
+      distanceMin: 100,
+      distanceMax: 160,
+      availableTemperatures: [20, 30, 40, 50]
+    }),
+    { slope: 2, intercept: 40 }
+  );
+});
+
+test("AFAS tangent endpoints are deterministically ordered inside the data domain", async () => {
+  const { clampTangentControlPoints, tangentIntersectsDomain } = await loadInteractionModule();
+  const domain = {
+    temperatureMin: 0,
+    temperatureMax: 10,
+    distanceMin: 0,
+    distanceMax: 10,
+    availableTemperatures: [0, 10]
+  };
+  const cases = [
+    {
+      name: "negative slope",
+      slope: -2,
+      intercept: 15,
+      expected: [
+        { temperature: 2.5, distance: 10 },
+        { temperature: 7.5, distance: 0 }
+      ]
+    },
+    {
+      name: "horizontal line",
+      slope: 0,
+      intercept: 5,
+      expected: [
+        { temperature: 0, distance: 5 },
+        { temperature: 10, distance: 5 }
+      ]
+    },
+    {
+      name: "corner singleton",
+      slope: 1,
+      intercept: 10,
+      expected: [{ temperature: 0, distance: 10 }]
+    }
+  ];
+
+  for (const fixture of cases) {
+    const points = clampTangentControlPoints(fixture.slope, fixture.intercept, domain);
+    assert.deepEqual(points, fixture.expected, fixture.name);
+    assert.equal(
+      tangentIntersectsDomain(fixture.slope, fixture.intercept, domain),
+      points.length > 0,
+      fixture.name
+    );
+  }
+});
+
 test("AFAS tangent rotation fails closed when its data domain is unavailable", async () => {
   const { rotateAfasTangent } = await loadInteractionModule();
   const tangent = rotateAfasTangent(

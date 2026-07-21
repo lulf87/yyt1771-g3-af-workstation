@@ -66,13 +66,34 @@ export function translateAfasTangent(
   domain?: AfasDataDomain
 ): { slope: number; intercept: number } {
   if (!domain) return finiteTangentParameters(slope, intercept);
-  const boundedCurrent = clampAfasDataPoint(current, domain);
+  const boundedDomain = normalizedAfasDataDomain(domain);
+  const fallback = failClosedTranslationTangent(slope, intercept, start, current, boundedDomain);
+  if (!boundedDomain || !afasDataPointIsFinite(start) || !afasDataPointIsFinite(current)) {
+    return fallback;
+  }
+  if (start.temperature === current.temperature && start.distance === current.distance) {
+    return fallback;
+  }
+  if (!Number.isFinite(slope) || !Number.isFinite(intercept)) return fallback;
+
+  const boundedStart = clampAfasDataPoint(start, boundedDomain);
+  const boundedCurrent = clampAfasDataPoint(current, boundedDomain);
+  const distanceDelta = boundedCurrent.distance - boundedStart.distance;
+  const temperatureDelta = boundedCurrent.temperature - boundedStart.temperature;
+  const slopeOffset = slope * temperatureDelta;
+  if (!Number.isFinite(distanceDelta) || !Number.isFinite(temperatureDelta) || !Number.isFinite(slopeOffset)) {
+    return fallback;
+  }
   const candidateIntercept = intercept +
-    (boundedCurrent.distance - start.distance) -
-    slope * (boundedCurrent.temperature - start.temperature);
+    distanceDelta -
+    slopeOffset;
+  const interceptBounds = tangentInterceptBounds(slope, boundedDomain);
+  if (!Number.isFinite(candidateIntercept) || !interceptBounds.every(Number.isFinite)) return fallback;
+  const nextIntercept = clampNumber(candidateIntercept, ...interceptBounds);
+  if (!Number.isFinite(nextIntercept)) return fallback;
   return {
     slope,
-    intercept: clampNumber(candidateIntercept, ...tangentInterceptBounds(slope, domain))
+    intercept: nextIntercept
   };
 }
 
@@ -161,7 +182,7 @@ export function clampTangentControlPoints(
     if (intersections.some((point) => afasDataPointsEqual(point, bounded))) continue;
     intersections.push(bounded);
   }
-  if (intersections.length <= 2) return intersections;
+  if (intersections.length <= 2) return intersections.sort(compareAfasDataPoints);
 
   let farthest: [AfasDataPoint, AfasDataPoint] = [intersections[0], intersections[1]];
   let farthestDistanceSquared = dataPointDistanceSquared(...farthest);
@@ -174,7 +195,7 @@ export function clampTangentControlPoints(
       }
     }
   }
-  return farthest;
+  return farthest.sort(compareAfasDataPoints);
 }
 
 export function tangentIntersectsDomain(
@@ -229,6 +250,53 @@ function dataPointDistanceSquared(left: AfasDataPoint, right: AfasDataPoint): nu
   const temperatureDelta = left.temperature - right.temperature;
   const distanceDelta = left.distance - right.distance;
   return temperatureDelta * temperatureDelta + distanceDelta * distanceDelta;
+}
+
+function compareAfasDataPoints(left: AfasDataPoint, right: AfasDataPoint): number {
+  return left.temperature - right.temperature || left.distance - right.distance;
+}
+
+function normalizedAfasDataDomain(domain: AfasDataDomain): AfasDataDomain | null {
+  const bounds = [
+    domain.temperatureMin,
+    domain.temperatureMax,
+    domain.distanceMin,
+    domain.distanceMax
+  ];
+  if (!bounds.every(Number.isFinite)) return null;
+  return {
+    temperatureMin: Math.min(domain.temperatureMin, domain.temperatureMax),
+    temperatureMax: Math.max(domain.temperatureMin, domain.temperatureMax),
+    distanceMin: Math.min(domain.distanceMin, domain.distanceMax),
+    distanceMax: Math.max(domain.distanceMin, domain.distanceMax),
+    availableTemperatures: Array.isArray(domain.availableTemperatures)
+      ? normalizedTemperatures(domain.availableTemperatures)
+      : []
+  };
+}
+
+function afasDataPointIsFinite(point: AfasDataPoint): boolean {
+  return Number.isFinite(point.temperature) && Number.isFinite(point.distance);
+}
+
+function failClosedTranslationTangent(
+  slope: number,
+  intercept: number,
+  start: AfasDataPoint,
+  current: AfasDataPoint,
+  domain: AfasDataDomain | null
+): { slope: number; intercept: number } {
+  if (Number.isFinite(slope) && Number.isFinite(intercept)) return { slope, intercept };
+  const source = afasDataPointIsFinite(start)
+    ? start
+    : afasDataPointIsFinite(current)
+      ? current
+      : {
+          temperature: domain?.temperatureMin ?? 0,
+          distance: domain?.distanceMin ?? 0
+        };
+  const anchor = domain ? clampAfasDataPoint(source, domain) : source;
+  return tangentThroughAnchor(anchor, 0);
 }
 
 function finiteTangentParameters(
