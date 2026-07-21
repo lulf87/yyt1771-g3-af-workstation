@@ -11,10 +11,15 @@ from yyt1771_g3.core.models import (
     ABPoints,
     DetectionCandidate,
     DetectionResult,
+    FrameRecord,
     MeasurementDefinition,
     RotatedROI,
     RunManifest,
+    TemperatureRecord,
 )
+from yyt1771_g3.services.analysis_service import build_analysis_result
+from yyt1771_g3.services.run_v2_service import build_v2_analysis_summary, initialize_v2_run
+from yyt1771_g3.storage.run_results_db import RunResultsDatabase
 from yyt1771_g3.storage.run_store import RunStore
 
 
@@ -188,6 +193,34 @@ def test_analysis_api_recomputes_and_persists_afas_parameters(tmp_path, monkeypa
     assert stored_after_restore["afas_analysis"]["parameters"] == restored_parameters
     assert stored_after_restore["afas_analysis"]["fit"]["tangent"]["manual_override"] is False
 
+    stored_path = run_store.analysis_result_path(manifest.run_id)
+    stored_before_invalid = stored_path.read_bytes()
+    invalid_adjustment = {
+        "region_id": "region_1",
+        "afas_analysis_parameters": {
+            "low_range_celsius": [10.0, 11.0],
+            "high_range_celsius": [45.0, 50.0],
+            "tangent_slope_override": 2.0,
+            "tangent_intercept_override": 40.0,
+        },
+    }
+
+    invalid_preview = client.post(
+        f"/api/runs/{manifest.run_id}/analysis/preview",
+        json=invalid_adjustment,
+    )
+    assert invalid_preview.status_code == 422
+    assert "low" in str(invalid_preview.json()["detail"])
+    assert stored_path.read_bytes() == stored_before_invalid
+
+    invalid_save = client.post(
+        f"/api/runs/{manifest.run_id}/analysis",
+        json=invalid_adjustment,
+    )
+    assert invalid_save.status_code == 422
+    assert "low" in str(invalid_save.json()["detail"])
+    assert stored_path.read_bytes() == stored_before_invalid
+
 
 def test_analysis_api_applies_global_afas_parameters_to_every_region(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
@@ -303,3 +336,114 @@ def test_analysis_api_applies_global_afas_parameters_to_every_region(tmp_path, m
         json={"region_id": "region_missing"},
     )
     assert unknown.status_code == 422
+
+
+def test_analysis_api_rejects_invalid_v2_adjustment_without_overwriting_summary(
+    tmp_path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    monkeypatch.setenv("YYT1771_G3_RUN_STORE_DIR", str(tmp_path / "runs"))
+    run_store = RunStore()
+    detections = []
+    for index in range(63):
+        temperature = 20.0 + index * 0.5
+        transition = 1.0 / (1.0 + 2.718281828 ** (-(temperature - 36.0) / 2.2))
+        detections.append(_valid_detection(index + 1, temperature, 100.0 + transition * 55.0))
+    measurement = MeasurementDefinition(
+        measurement_id="m-analysis-api-v2",
+        object_class=ObjectClass.WHOLE_ENVELOPE,
+        detector=DetectorType.CONTRAST_WIDEST_SPAN,
+        width_mode=WidthMode.MAX_WIDTH,
+        roi=RotatedROI(center_x=10.0, center_y=10.0, width=12.0, height=8.0),
+    )
+    run_id = "run-analysis-api-v2"
+    manifest = RunManifest(
+        run_id=run_id,
+        dataset_id="golden_a_20260522_dev_lab",
+        measurement_definition=measurement,
+        detection_results=detections,
+        region_detection_results=detections,
+    )
+    valid_analysis = build_analysis_result(
+        manifest,
+        afas_preprocessing_parameters={
+            "group_by_temperature": False,
+            "savgol_window_length": 9,
+            "savgol_polyorder": 2,
+        },
+        afas_analysis_parameters={
+            "low_range_celsius": [20.0, 26.0],
+            "high_range_celsius": [45.0, 51.0],
+        },
+    )
+    assert valid_analysis.afas_analysis["result_status"] == "ok"
+
+    initialize_v2_run(
+        run_store,
+        run_id=run_id,
+        dataset_id=manifest.dataset_id,
+        measurement=measurement,
+        runtime_source="simulated_material",
+        product_mode="development",
+        operator_data_source="simulated_material",
+        provenance={"overall_kind": "simulated"},
+        config_snapshot={},
+    )
+    frames = [
+        FrameRecord(
+            frame_index=result.frame_index,
+            shape=[1, 1],
+            dtype="uint8",
+            source="test",
+            timestamp_ms=result.frame_timestamp_ms,
+        )
+        for result in detections
+    ]
+    temperatures = [
+        TemperatureRecord(
+            timestamp_ms=result.temperature_timestamp_ms,
+            celsius=result.temperature_celsius,
+            source="test",
+            sampled_this_frame=True,
+        )
+        for result in detections
+    ]
+    with RunResultsDatabase(run_store.results_database_path(run_id)) as database:
+        database.append_batch(frames, temperatures, detections)
+    summary = build_v2_analysis_summary(
+        run_store,
+        run_id=run_id,
+        region_analyses=list(valid_analysis.regions),
+        latest_results={"region_1": detections[-1]},
+    )
+    summary_path = run_store.write_analysis_summary(summary)
+    stored_before_invalid = summary_path.read_bytes()
+
+    from yyt1771_g3.api.main import app
+
+    client = TestClient(app)
+    invalid_adjustment = {
+        "region_id": "region_1",
+        "afas_analysis_parameters": {
+            "low_range_celsius": [10.0, 11.0],
+            "high_range_celsius": [45.0, 50.0],
+            "tangent_slope_override": 2.0,
+            "tangent_intercept_override": 40.0,
+        },
+    }
+
+    invalid_preview = client.post(
+        f"/api/runs/{run_id}/analysis/preview",
+        json=invalid_adjustment,
+    )
+    assert invalid_preview.status_code == 422
+    assert "low" in str(invalid_preview.json()["detail"])
+    assert summary_path.read_bytes() == stored_before_invalid
+
+    invalid_save = client.post(
+        f"/api/runs/{run_id}/analysis",
+        json=invalid_adjustment,
+    )
+    assert invalid_save.status_code == 422
+    assert "low" in str(invalid_save.json()["detail"])
+    assert summary_path.read_bytes() == stored_before_invalid

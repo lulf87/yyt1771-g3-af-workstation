@@ -11,6 +11,7 @@ from yyt1771_g3.core.models import (
     RegionAnalysisResult,
     RunManifest,
 )
+from yyt1771_g3.services.afas_adjustment_validation import AfasAdjustmentValidationError
 from yyt1771_g3.services.afas_analysis import analyze_preprocessed_afas, build_afas_postprocessing
 
 
@@ -181,6 +182,8 @@ def build_region_analysis_result(
             preprocessing_parameters=afas_preprocessing_parameters,
             analysis_parameters=afas_analysis_parameters,
         )
+    except AfasAdjustmentValidationError:
+        raise
     except Exception as exc:  # pragma: no cover - failure isolation exercised through service tests
         reason = f"analysis_exception:{exc.__class__.__name__}"
         afas_preprocessing = {

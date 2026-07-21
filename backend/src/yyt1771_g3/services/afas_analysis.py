@@ -8,6 +8,7 @@ from scipy.signal import savgol_filter
 from scipy.stats import linregress
 
 from yyt1771_g3.core.models import CurvePoint
+from yyt1771_g3.services.afas_adjustment_validation import validate_manual_afas_adjustment
 
 
 AFAS_PREPROCESSING_SCHEMA_VERSION = "g3_afas_preprocessing.v0.2"
@@ -260,7 +261,7 @@ def analyze_preprocessed_afas(
     outlier_count = int(dict(preprocessing["outlier_repair"]).get("outlier_count", 0))
 
     if len(temperatures) < 10:
-        return {
+        return _finalize_afas_analysis({
             "schema_version": AFAS_ANALYSIS_SCHEMA_VERSION,
             "preprocessing_schema_version": preprocessing.get("schema_version"),
             "parameters": parameters.to_payload(),
@@ -276,7 +277,7 @@ def analyze_preprocessed_afas(
             },
             "fit": {},
             "result": {"As": None, "Af_tan": None, "max_slope_temp": None},
-        }
+        }, preprocessing, parameter_overrides)
 
     low_range, high_range, range_warnings = _resolve_ranges(temperatures, parameters)
     warnings.extend(range_warnings)
@@ -317,7 +318,7 @@ def analyze_preprocessed_afas(
         low_slope, low_intercept = fit_baseline(temperatures, values, *low_range)
         high_slope, high_intercept = fit_baseline(temperatures, values, *high_range)
     except ValueError as exc:
-        return {
+        return _finalize_afas_analysis({
             "schema_version": AFAS_ANALYSIS_SCHEMA_VERSION,
             "preprocessing_schema_version": preprocessing.get("schema_version"),
             "parameters": {
@@ -347,7 +348,7 @@ def analyze_preprocessed_afas(
                 },
             },
             "result": {"As": None, "Af_tan": None, "max_slope_temp": _optional_float(temperatures[max_slope_index])},
-        }
+        }, preprocessing, parameter_overrides)
     as_value = find_intersection(tangent_slope, tangent_intercept, low_slope, low_intercept)
     af_tan = find_intersection(tangent_slope, tangent_intercept, high_slope, high_intercept)
 
@@ -371,7 +372,7 @@ def analyze_preprocessed_afas(
         reason = "invalid_result"
         detail = f"Non-increasing intersections were produced: As={as_value:.3f}, Af-tan={af_tan:.3f}."
 
-    return {
+    return _finalize_afas_analysis({
         "schema_version": AFAS_ANALYSIS_SCHEMA_VERSION,
         "preprocessing_schema_version": preprocessing.get("schema_version"),
         "parameters": {
@@ -405,7 +406,16 @@ def analyze_preprocessed_afas(
             "Af_tan": _optional_float(af_tan),
             "max_slope_temp": _optional_float(temperatures[max_slope_index]),
         },
-    }
+    }, preprocessing, parameter_overrides)
+
+
+def _finalize_afas_analysis(
+    payload: dict[str, Any],
+    preprocessing: Mapping[str, Any],
+    parameter_overrides: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    validate_manual_afas_adjustment(preprocessing, parameter_overrides, payload)
+    return payload
 
 
 def group_by_temperature(
