@@ -10,7 +10,7 @@ import threading
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
@@ -20,7 +20,13 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from yyt1771_g3.camera.base import CameraFrame, CameraSource, CameraUnavailableError
+from yyt1771_g3.camera.base import (
+    CameraExposureCapability,
+    CameraFrame,
+    CameraSource,
+    CameraUnavailableError,
+    ExposureCapableCameraSource,
+)
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.core.hardware_config import (
@@ -54,11 +60,13 @@ from yyt1771_g3.services.analysis_service import (
     recompute_region_analysis_result,
 )
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
+from yyt1771_g3.services.camera_control_service import CameraControlError, apply_camera_exposure
 from yyt1771_g3.services.export_service import export_run, export_run_bundle, load_v2_export_models
 from yyt1771_g3.services.hardware_setup_service import (
     HardwareSetupError,
     build_hardware_environment_report,
     discover_hardware_cameras,
+    save_camera_exposure,
     save_hardware_binding,
     save_hardware_sdk_paths,
 )
@@ -181,6 +189,26 @@ def _build_camera_source(profile: dict[str, Any] | None = None) -> CameraSource:
     if backend in HIK_CAMERA_BACKENDS:
         return HikMvsCameraSource(profile=profile)
     return build_camera_source(profile)
+
+
+def _build_real_camera_source_with_actual_profile(
+    camera_profile: dict[str, Any],
+) -> tuple[CameraSource, dict[str, Any]]:
+    source = _build_camera_source(camera_profile)
+    reader = getattr(source, "read_exposure_capability", None)
+    if not callable(reader):
+        return source, camera_profile
+    try:
+        capability = reader()
+        if not capability.supported or capability.actual_us is None:
+            raise CameraUnavailableError("Real camera did not report its actual exposure.")
+    except BaseException:
+        try:
+            source.close()
+        except BaseException:
+            pass
+        raise
+    return source, {**camera_profile, "exposure_us": capability.actual_us}
 
 
 def _register_real_camera_stream_stop(run_id: str) -> None:
@@ -438,6 +466,74 @@ class HardwareCameraBindingRequest(BaseModel):
     serial_number: str = ""
     ip: str = ""
     user_defined_name: str = ""
+
+
+class CameraExposureRequest(BaseModel):
+    camera: HardwareCameraBindingRequest | None = None
+    exposure_us: float | None = None
+
+
+def _camera_exposure_payload(
+    capability: CameraExposureCapability,
+    *,
+    saved: bool,
+    editable: bool = True,
+    lock_reason: str = "",
+) -> dict[str, Any]:
+    return {
+        "supported": capability.supported,
+        "minimum_us": capability.minimum_us,
+        "maximum_us": capability.maximum_us,
+        "increment_us": capability.increment_us,
+        "requested_us": capability.requested_us,
+        "actual_us": capability.actual_us,
+        "saved": saved,
+        "editable": editable,
+        "lock_reason": lock_reason,
+    }
+
+
+def _camera_profile_for_exposure_request(
+    camera: HardwareCameraBindingRequest | None,
+) -> dict[str, Any]:
+    profile = _hardware_config().camera.to_profile()
+    if camera is None:
+        return profile
+    identity = camera.model_dump()
+    return {
+        **profile,
+        **{key: value for key, value in identity.items() if value not in (None, "")},
+        "target_frame_rate_hz": SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
+    }
+
+
+def _require_exposure_source(source: CameraSource) -> ExposureCapableCameraSource:
+    if not callable(getattr(source, "read_exposure_capability", None)) or not callable(
+        getattr(source, "set_exposure_us", None)
+    ):
+        raise CameraControlError(
+            "Camera does not expose manual exposure control.",
+            stage="capability",
+        )
+    return cast(ExposureCapableCameraSource, source)
+
+
+def _camera_control_http_exception(exc: CameraControlError) -> HTTPException:
+    if exc.details.get("rollback_status") == "failed":
+        logger.critical(
+            "Camera exposure rollback failed after %s error: %s; details=%s",
+            exc.stage,
+            str(exc),
+            exc.details,
+        )
+    return HTTPException(
+        status_code=422 if exc.stage in {"capability", "apply"} else 500,
+        detail={
+            "message": str(exc),
+            "stage": exc.stage,
+            "details": exc.details,
+        },
+    )
 
 
 class HardwareTemperatureBindingRequest(BaseModel):
@@ -966,6 +1062,73 @@ def release_real_camera_preview() -> dict[str, str]:
     return {"camera_status": "released"}
 
 
+@app.post("/api/camera/exposure/read")
+def read_camera_exposure(request: CameraExposureRequest) -> dict[str, Any]:
+    profile = _camera_profile_for_exposure_request(request.camera)
+    with _camera_operation("camera_exposure_read", blocking=False):
+        with _camera_preview_lock:
+            source = _get_preview_camera_source(profile)
+            reader = getattr(source, "read_exposure_capability", None)
+            if not callable(reader):
+                capability = CameraExposureCapability(
+                    supported=False,
+                    requested_us=profile.get("exposure_us"),
+                )
+            else:
+                try:
+                    capability = reader()
+                except CameraUnavailableError as exc:
+                    _reset_preview_camera_source()
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "camera_status": "unavailable",
+                            "message": str(exc),
+                            "details": exc.details,
+                        },
+                    ) from exc
+                except CameraControlError as exc:
+                    raise _camera_control_http_exception(exc) from exc
+                except Exception as exc:
+                    control_error = CameraControlError(
+                        str(exc),
+                        stage="capability",
+                        details={"error": str(exc)},
+                    )
+                    raise _camera_control_http_exception(control_error) from exc
+    return _camera_exposure_payload(capability, saved=True)
+
+
+@app.put("/api/camera/exposure")
+def update_camera_exposure(request: CameraExposureRequest) -> dict[str, Any]:
+    global _camera_preview_profile_key
+    if request.exposure_us is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "exposure_us is required.",
+                "stage": "validate",
+                "details": {},
+            },
+        )
+    profile = _camera_profile_for_exposure_request(request.camera)
+    try:
+        with _camera_operation("camera_exposure_update", blocking=False):
+            with _camera_preview_lock:
+                source = _require_exposure_source(_get_preview_camera_source(profile))
+                update = apply_camera_exposure(
+                    source,
+                    request.exposure_us,
+                    persist=lambda actual: save_camera_exposure(actual),
+                )
+                _camera_preview_profile_key = _preview_profile_key(
+                    {**profile, "exposure_us": update.actual_us}
+                )
+    except CameraControlError as exc:
+        raise _camera_control_http_exception(exc) from exc
+    return _camera_exposure_payload(update.capability, saved=update.saved)
+
+
 @app.post("/api/camera/setup-probe")
 def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[str, Any]:
     _assert_runtime_source("real_hardware")
@@ -1224,15 +1387,16 @@ def create_real_camera_run(request: RealCameraRunRequest) -> dict[str, Any]:
         with _camera_operation("real_camera_run", timeout=5.0):
             with _camera_preview_lock:
                 _reset_preview_camera_source()
+            camera_source, actual_camera_profile = _build_real_camera_source_with_actual_profile(camera_profile)
             temperature_controller = build_temperature_controller(run_config)
             result = run_real_camera(
                 _run_store(),
-                camera_source=_build_camera_source(camera_profile),
+                camera_source=camera_source,
                 temperature_controller=temperature_controller,
                 measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
-                camera_profile=camera_profile,
+                camera_profile=actual_camera_profile,
                 temp_sync_target_ms=run_config.run.temp_sync_target_ms,
                 temperature_backend=run_config.temp.backend,
                 save_raw_frames=run_config.run.save_raw_frames,
@@ -1273,15 +1437,16 @@ def stream_real_camera_run(request: RealCameraRunRequest) -> StreamingResponse:
         try:
             with _camera_preview_lock:
                 _reset_preview_camera_source()
+            camera_source, actual_camera_profile = _build_real_camera_source_with_actual_profile(camera_profile)
             temperature_controller = build_temperature_controller(run_config)
             events = iter_real_camera_run_events(
                 _run_store(),
-                camera_source=_build_camera_source(camera_profile),
+                camera_source=camera_source,
                 temperature_controller=temperature_controller,
                 measurement=_measurement_with_source(request.measurement_definition, MeasurementSource.REAL_CAMERA),
                 max_frames=request.max_frames,
                 target_fps=request.target_fps,
-                camera_profile=camera_profile,
+                camera_profile=actual_camera_profile,
                 temp_sync_target_ms=run_config.run.temp_sync_target_ms,
                 temperature_backend=run_config.temp.backend,
                 save_raw_frames=run_config.run.save_raw_frames,
