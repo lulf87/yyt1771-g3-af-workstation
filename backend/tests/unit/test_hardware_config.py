@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -230,3 +233,89 @@ def test_save_camera_exposure_rejects_invalid_value_without_corrupting_profile(
 
     assert config_path.read_bytes() == original
     assert list(tmp_path.glob(f".{config_path.name}.*.tmp")) == []
+
+
+def test_concurrent_hardware_profile_updates_preserve_every_transaction(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import yaml
+
+    from yyt1771_g3.services import hardware_setup_service
+
+    config_path = tmp_path / "hardware.yaml"
+    config_path.write_text(
+        """
+camera:
+  backend: hik_gige_mvs
+  model: old-model
+  serial_number: old-serial
+  ip: 192.168.1.10
+  exposure_us: 10000.0
+  gain_db: 2.5
+  sdk_python_paths:
+    - /old/python/path
+  sdk_library_path: /old/library/path
+temp:
+  backend: lu92xx_modbus_rtu
+  serial:
+    port: COM1
+run:
+  measurement_target_hz: 10
+custom:
+  retained: true
+        """,
+        encoding="utf-8",
+    )
+    sdk_python_dir = tmp_path / "MvImport"
+    sdk_python_dir.mkdir()
+    (sdk_python_dir / "MvCameraControl_class.py").write_text("# test binding\n", encoding="utf-8")
+    sdk_library = tmp_path / "libMvCameraControl.dylib"
+    sdk_library.write_bytes(b"test runtime")
+
+    original_load = hardware_setup_service._load_save_base_mapping
+
+    def delayed_load(path: Path) -> dict:  # noqa: ANN401
+        payload = original_load(path)
+        time.sleep(0.1)
+        return payload
+
+    monkeypatch.setattr(hardware_setup_service, "_load_save_base_mapping", delayed_load)
+    start = threading.Barrier(3)
+
+    def run_after_barrier(action) -> None:  # noqa: ANN001
+        start.wait(timeout=5.0)
+        action()
+
+    actions = [
+        lambda: hardware_setup_service.save_hardware_binding(
+            camera={
+                "backend": "hik_gige_mvs",
+                "transport": "gige_vision",
+                "model": "new-model",
+                "serial_number": "new-serial",
+                "ip": "192.168.1.20",
+            },
+            temperature={"backend": "lu92xx_modbus_rtu", "serial_port": "COM9"},
+            path=config_path,
+        ),
+        lambda: hardware_setup_service.save_camera_exposure(23456.5, path=config_path),
+        lambda: hardware_setup_service.save_hardware_sdk_paths(
+            sdk_python_paths=[str(sdk_python_dir)],
+            sdk_library_path=str(sdk_library),
+            path=config_path,
+        ),
+    ]
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(run_after_barrier, action) for action in actions]
+        for future in futures:
+            future.result(timeout=10.0)
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["camera"]["model"] == "new-model"
+    assert saved["camera"]["serial_number"] == "new-serial"
+    assert saved["camera"]["ip"] == "192.168.1.20"
+    assert saved["camera"]["exposure_us"] == 23456.5
+    assert saved["camera"]["sdk_python_paths"] == [str(sdk_python_dir.resolve())]
+    assert saved["camera"]["sdk_library_path"] == str(sdk_library.resolve())
+    assert saved["temp"]["serial"]["port"] == "COM9"
+    assert saved["camera"]["gain_db"] == 2.5
+    assert saved["run"] == {"measurement_target_hz": 10}
+    assert saved["custom"] == {"retained": True}

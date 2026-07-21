@@ -5,6 +5,7 @@ import os
 import platform
 import struct
 import tempfile
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ from yyt1771_g3.temperature.serial_ports import list_serial_ports
 
 
 EXAMPLE_CONFIG_SAVE_ERROR = "不能把设备绑定保存到 example 配置，请使用 configs/local/realcamera_temp.local.yaml。"
+_hardware_profile_locks_guard = threading.Lock()
+_hardware_profile_locks: dict[Path, threading.RLock] = {}
 
 
 class HardwareSetupError(RuntimeError):
@@ -76,31 +79,32 @@ def save_hardware_binding(
 ) -> dict[str, Any]:
     config_path = local_hardware_profile_path(path)
     _assert_writable_hardware_profile_path(config_path)
-    payload = _load_save_base_mapping(config_path)
-    camera_payload = _ensure_mapping(payload, "camera")
-    temp_payload = _ensure_mapping(payload, "temp")
-    serial_payload = _ensure_mapping(temp_payload, "serial")
+    with _hardware_profile_transaction_lock(config_path):
+        payload = _load_save_base_mapping(config_path)
+        camera_payload = _ensure_mapping(payload, "camera")
+        temp_payload = _ensure_mapping(payload, "temp")
+        serial_payload = _ensure_mapping(temp_payload, "serial")
 
-    _patch_non_empty(camera_payload, "backend", camera.get("backend") or "hik_gige_mvs")
-    _patch_non_empty(camera_payload, "transport", camera.get("transport") or "gige_vision")
-    _patch_non_empty(camera_payload, "model", camera.get("model"))
-    _patch_non_empty(camera_payload, "serial_number", camera.get("serial_number"))
-    _patch_non_empty(camera_payload, "ip", camera.get("ip"))
-    _patch_allowed_models(camera_payload, str(camera.get("model", "") or "").strip())
+        _patch_non_empty(camera_payload, "backend", camera.get("backend") or "hik_gige_mvs")
+        _patch_non_empty(camera_payload, "transport", camera.get("transport") or "gige_vision")
+        _patch_non_empty(camera_payload, "model", camera.get("model"))
+        _patch_non_empty(camera_payload, "serial_number", camera.get("serial_number"))
+        _patch_non_empty(camera_payload, "ip", camera.get("ip"))
+        _patch_allowed_models(camera_payload, str(camera.get("model", "") or "").strip())
 
-    _patch_non_empty(temp_payload, "backend", temperature.get("backend") or "lu92xx_modbus_rtu")
-    _patch_non_empty(serial_payload, "port", temperature.get("serial_port"))
+        _patch_non_empty(temp_payload, "backend", temperature.get("backend") or "lu92xx_modbus_rtu")
+        _patch_non_empty(serial_payload, "port", temperature.get("serial_port"))
 
-    _write_yaml_mapping(config_path, payload)
-    return {
-        "saved": True,
-        "config_path": str(config_path),
-        "camera": _bound_camera_summary(camera_payload),
-        "temperature": {
-            "backend": str(temp_payload.get("backend", "") or ""),
-            "serial_port": str(serial_payload.get("port", "") or ""),
-        },
-    }
+        _write_yaml_mapping(config_path, payload)
+        return {
+            "saved": True,
+            "config_path": str(config_path),
+            "camera": _bound_camera_summary(camera_payload),
+            "temperature": {
+                "backend": str(temp_payload.get("backend", "") or ""),
+                "serial_port": str(serial_payload.get("port", "") or ""),
+            },
+        }
 
 
 def save_camera_exposure(exposure_us: float, *, path: str | Path | None = None) -> dict[str, Any]:
@@ -109,14 +113,15 @@ def save_camera_exposure(exposure_us: float, *, path: str | Path | None = None) 
         raise HardwareSetupError("Camera exposure must be a positive finite value.")
     config_path = local_hardware_profile_path(path)
     _assert_writable_hardware_profile_path(config_path)
-    payload = _load_save_base_mapping(config_path)
-    _ensure_mapping(payload, "camera")["exposure_us"] = value
-    _write_yaml_mapping(config_path, payload)
-    return {
-        "saved": True,
-        "config_path": str(config_path),
-        "exposure_us": value,
-    }
+    with _hardware_profile_transaction_lock(config_path):
+        payload = _load_save_base_mapping(config_path)
+        _ensure_mapping(payload, "camera")["exposure_us"] = value
+        _write_yaml_mapping(config_path, payload)
+        return {
+            "saved": True,
+            "config_path": str(config_path),
+            "exposure_us": value,
+        }
 
 
 def save_hardware_sdk_paths(
@@ -130,17 +135,28 @@ def save_hardware_sdk_paths(
     normalized_python_paths = _normalize_sdk_python_paths(sdk_python_paths)
     normalized_library_path = _normalize_sdk_library_path(sdk_library_path)
 
-    payload = _load_save_base_mapping(config_path)
-    camera_payload = _ensure_mapping(payload, "camera")
-    camera_payload["sdk_python_paths"] = normalized_python_paths
-    camera_payload["sdk_library_path"] = normalized_library_path
-    _write_yaml_mapping(config_path, payload)
-    return {
-        "saved": True,
-        "config_path": str(config_path),
-        "sdk_python_paths": normalized_python_paths,
-        "sdk_library_path": normalized_library_path,
-    }
+    with _hardware_profile_transaction_lock(config_path):
+        payload = _load_save_base_mapping(config_path)
+        camera_payload = _ensure_mapping(payload, "camera")
+        camera_payload["sdk_python_paths"] = normalized_python_paths
+        camera_payload["sdk_library_path"] = normalized_library_path
+        _write_yaml_mapping(config_path, payload)
+        return {
+            "saved": True,
+            "config_path": str(config_path),
+            "sdk_python_paths": normalized_python_paths,
+            "sdk_library_path": normalized_library_path,
+        }
+
+
+def _hardware_profile_transaction_lock(config_path: Path) -> threading.RLock:
+    resolved_path = config_path.expanduser().resolve()
+    with _hardware_profile_locks_guard:
+        lock = _hardware_profile_locks.get(resolved_path)
+        if lock is None:
+            lock = threading.RLock()
+            _hardware_profile_locks[resolved_path] = lock
+        return lock
 
 
 def _normalize_sdk_python_paths(values: list[str]) -> list[str]:
