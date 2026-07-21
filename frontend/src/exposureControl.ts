@@ -27,6 +27,24 @@ export type ExposureDraftSubmission =
   | { kind: "pending"; value: number }
   | { kind: "submitted"; value: number };
 
+export type ExposureIntent = {
+  latestIntentUs: number;
+  lastRequestedUs: null;
+};
+
+export function scheduleExposureDraft({
+  value,
+  coordinator,
+  onIntent
+}: {
+  value: number;
+  coordinator: Pick<ExposureCommitCoordinator, "schedule">;
+  onIntent: (intent: ExposureIntent) => void;
+}): void {
+  onIntent({ latestIntentUs: value, lastRequestedUs: null });
+  coordinator.schedule(value);
+}
+
 export function submitExposureDraft({
   draft,
   minimumUs,

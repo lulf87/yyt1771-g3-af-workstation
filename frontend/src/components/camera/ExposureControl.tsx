@@ -8,6 +8,7 @@ import {
 } from "../../api/client";
 import {
   createExposureCommitCoordinator,
+  scheduleExposureDraft,
   submitExposureDraft,
   type ExposureCommitCoordinator
 } from "../../exposureControl";
@@ -239,8 +240,17 @@ export function ExposureControl({
               const value = Number(nextDraft);
               setDraft(nextDraft);
               if (exposureValueInRange(value, capability)) {
-                latestIntentRef.current = value;
-                coordinatorRef.current?.schedule(value);
+                const coordinator = coordinatorRef.current;
+                if (coordinator !== null) {
+                  scheduleExposureDraft({
+                    value,
+                    coordinator,
+                    onIntent: (intent) => {
+                      latestIntentRef.current = intent.latestIntentUs;
+                      lastRequestedRef.current = intent.lastRequestedUs;
+                    }
+                  });
+                }
               }
             }}
             step={capability.increment_us ?? "any"}

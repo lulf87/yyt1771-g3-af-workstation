@@ -288,6 +288,63 @@ test("numeric submission equal to the confirmed value aborts an in-flight slider
   await Promise.resolve();
 });
 
+test("a new slider schedule invalidates the old active value before numeric resubmission", async () => {
+  const {
+    createExposureCommitCoordinator,
+    scheduleExposureDraft,
+    submitExposureDraft
+  } = await loadExposureControlModule();
+  const scheduler = createScheduler();
+  const pending = [];
+  let latestIntentUs = null;
+  let lastRequestedUs = null;
+  const coordinator = createExposureCommitCoordinator({
+    delayMs: 200,
+    apply: createPendingApply(pending),
+    onPending: (value) => {
+      lastRequestedUs = value;
+    },
+    onSuccess: () => {},
+    onError: (error) => assert.fail(error),
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer
+  });
+
+  coordinator.commit(200);
+  assert.equal(lastRequestedUs, 200);
+
+  scheduleExposureDraft({
+    value: 300,
+    coordinator,
+    onIntent: (intent) => {
+      latestIntentUs = intent.latestIntentUs;
+      lastRequestedUs = intent.lastRequestedUs;
+    }
+  });
+  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(latestIntentUs, 300);
+  assert.equal(lastRequestedUs, null);
+  assert.equal(scheduler.timers.size, 1);
+
+  const result = submitExposureDraft({
+    draft: "200",
+    minimumUs: 10,
+    maximumUs: 1000,
+    confirmedUs: 100,
+    latestIntentUs,
+    lastRequestedUs,
+    coordinator
+  });
+
+  assert.deepEqual(result, { kind: "submitted", value: 200 });
+  assert.equal(scheduler.timers.size, 0);
+  assert.equal(pending.length, 2);
+  assert.equal(pending[1].value, 200);
+  pending[1].resolve({ actual_us: 200 });
+  pending[0].resolve({ actual_us: 200 });
+  await Promise.resolve();
+});
+
 test("exposure coordinator aborts the older request when a newer apply starts", async () => {
   const { createExposureCommitCoordinator } = await loadExposureControlModule();
   const scheduler = createScheduler();
