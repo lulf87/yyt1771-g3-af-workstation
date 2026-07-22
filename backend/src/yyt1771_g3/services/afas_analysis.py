@@ -8,7 +8,12 @@ from scipy.signal import savgol_filter
 from scipy.stats import linregress
 
 from yyt1771_g3.core.models import CurvePoint
-from yyt1771_g3.services.afas_adjustment_validation import validate_manual_afas_adjustment
+from yyt1771_g3.services.afas_adjustment_validation import (
+    AfasAdjustmentValidationError,
+    finite_json_number,
+    validate_manual_afas_adjustment,
+    validate_manual_afas_preflight,
+)
 
 
 AFAS_PREPROCESSING_SCHEMA_VERSION = "g3_afas_preprocessing.v0.2"
@@ -253,6 +258,7 @@ def analyze_preprocessed_afas(
     *,
     parameter_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    validate_manual_afas_preflight(preprocessing, parameter_overrides)
     smoothed = dict(preprocessing["smoothed"])
     temperatures = np.asarray(smoothed["temperature_celsius"], dtype=float)
     values = np.asarray(smoothed["values"], dtype=float)
@@ -734,17 +740,17 @@ def _normalize_range(value: Any) -> tuple[float, float] | None:
     if value is None:
         return None
     if isinstance(value, (list, tuple)) and len(value) == 2:
-        return float(value[0]), float(value[1])
-    raise ValueError("analysis range values must be [start, end] pairs")
+        message = "Analysis range values must be two finite numeric endpoints."
+        return finite_json_number(value[0], message), finite_json_number(value[1], message)
+    raise AfasAdjustmentValidationError(
+        "Analysis range values must be two finite numeric endpoints."
+    )
 
 
 def _normalize_optional_number(value: Any) -> float | None:
     if value is None:
         return None
-    numeric = float(value)
-    if not np.isfinite(numeric):
-        raise ValueError("manual tangent values must be finite numbers")
-    return numeric
+    return finite_json_number(value, "Manual tangent values must be finite numbers.")
 
 
 def _resolve_ranges(

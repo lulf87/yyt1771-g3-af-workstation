@@ -11,7 +11,10 @@ from yyt1771_g3.core.models import (
     RegionAnalysisResult,
     RunManifest,
 )
-from yyt1771_g3.services.afas_adjustment_validation import AfasAdjustmentValidationError
+from yyt1771_g3.services.afas_adjustment_validation import (
+    AfasAdjustmentValidationError,
+    validate_manual_afas_preflight,
+)
 from yyt1771_g3.services.afas_analysis import analyze_preprocessed_afas, build_afas_postprocessing
 
 
@@ -59,6 +62,15 @@ def recompute_region_analysis_result(
     )
     if region is None:
         raise ValueError(f"Unknown enabled measurement region: {region_id}")
+    current_region = next(
+        (candidate for candidate in current_analysis.regions if candidate.region_id == region_id),
+        None,
+    )
+    validate_manual_afas_preflight(
+        current_region.afas_preprocessing if current_region is not None else {},
+        afas_analysis_parameters,
+        current_region.afas_analysis if current_region is not None else {},
+    )
     detections = detection_results_by_region(manifest).get(region_id, [])
     replacement = build_region_analysis_result(
         region,
@@ -113,15 +125,23 @@ def preview_region_afas_patch(
     if isinstance(region, RegionAnalysisResult):
         region_id = region.region_id
         preprocessing = region.afas_preprocessing
+        current_afas_analysis = region.afas_analysis
         temperature_distance = region.temperature_distance
     else:
         region_id = str(region.get("region_id", ""))
         preprocessing_value = region.get("afas_preprocessing")
         preprocessing = preprocessing_value if isinstance(preprocessing_value, Mapping) else {}
+        analysis_value = region.get("afas_analysis")
+        current_afas_analysis = analysis_value if isinstance(analysis_value, Mapping) else {}
         temperature_distance_value = region.get("temperature_distance")
         temperature_distance = temperature_distance_value if isinstance(temperature_distance_value, list) else []
     if not region_id:
         raise ValueError("Analysis region is missing region_id")
+    validate_manual_afas_preflight(
+        preprocessing,
+        parameter_overrides,
+        current_afas_analysis,
+    )
     afas_analysis = analyze_preprocessed_afas(
         preprocessing,
         parameter_overrides=parameter_overrides,
