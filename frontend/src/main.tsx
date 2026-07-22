@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -6728,6 +6728,22 @@ function AnalysisAfasChart({
     ["low_range_celsius", "low_baseline", completeRange(analysisParameters.low_range_celsius)],
     ["high_range_celsius", "high_baseline", completeRange(analysisParameters.high_range_celsius)]
   ] as const).flatMap(([rangeKey, kind, range]) => range ? [{ rangeKey, kind, range }] : []);
+  const plotClipId = `analysis-afas-plot-${useId().replace(/:/g, "")}`;
+  const plotClipUrl = `url(#${plotClipId})`;
+  const rangeBandRects = rangeBands.map(({ kind, range }) => {
+    const x1 = analysisAfasChartX(range[0], model);
+    const x2 = analysisAfasChartX(range[1], model);
+    return (
+      <rect
+        className={`analysisAfasFitBand analysisAfasFitBand--${kind}`}
+        height={model.plot.bottom - model.plot.top}
+        key={`band-${kind}`}
+        width={Math.abs(x2 - x1)}
+        x={Math.min(x1, x2)}
+        y={model.plot.top}
+      />
+    );
+  });
   const analysisIdentity = `${analysis.run_id}:${regionId ?? analysis.regions?.[0]?.region_id ?? "region_1"}`;
 
   useEffect(() => {
@@ -7062,181 +7078,194 @@ function AnalysisAfasChart({
           }}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          underlay={rangeBands
-            .map(({ kind, range }) => {
+          underlay={(
+            <>
+              <defs>
+                <clipPath id={plotClipId}>
+                  <rect
+                    x={model.plot.left}
+                    y={model.plot.top}
+                    width={model.plot.right - model.plot.left}
+                    height={model.plot.bottom - model.plot.top}
+                  />
+                </clipPath>
+              </defs>
+              <g clipPath={plotClipUrl} data-layer="afas-clipped-underlay">
+                {rangeBandRects}
+              </g>
+            </>
+          )}
+          variant="analysis_review"
+        >
+          <g clipPath={plotClipUrl} data-layer="afas-clipped-plot">
+            {editable ? rangeBands.map(({ rangeKey, kind, range }) => {
               const x1 = analysisAfasChartX(range[0], model);
               const x2 = analysisAfasChartX(range[1], model);
               const x = Math.min(x1, x2);
               const width = Math.abs(x2 - x1);
               return (
-                <rect
-                  className={`analysisAfasFitBand analysisAfasFitBand--${kind}`}
-                  height={model.plot.bottom - model.plot.top}
-                  key={`band-${kind}`}
-                  width={width}
-                  x={x}
-                  y={model.plot.top}
-                />
-              );
-            })}
-          variant="analysis_review"
-        >
-          {editable ? rangeBands.map(({ rangeKey, kind, range }) => {
-            const x1 = analysisAfasChartX(range[0], model);
-            const x2 = analysisAfasChartX(range[1], model);
-            const x = Math.min(x1, x2);
-            const width = Math.abs(x2 - x1);
-            return (
-              <g className={`analysisAfasRangeEditor analysisAfasRangeEditor--${kind}`} key={`range-editor-${rangeKey}`}>
-                <rect
-                  aria-label={t(kind === "low_baseline" ? "Drag low-temperature range" : "Drag high-temperature range")}
-                  className="analysisAfasRangeMoveTarget"
-                  height={model.plot.bottom - model.plot.top}
-                  onPointerDown={(event) => beginRangeEdit(event, rangeKey, "move")}
-                  width={Math.max(8, width)}
-                  x={x}
-                  y={model.plot.top}
-                />
-              </g>
-            );
-          }) : null}
-          {model.rawPoints.map((point, index) => (
-            <circle
-              className="analysisAfasRawPoint"
-              cx={point.x}
-              cy={point.y}
-              key={`raw-${point.frameIndex ?? index}-${point.temperature}`}
-              r={2.6}
-            />
-          ))}
-          {model.outlierPoints.map((point, index) => (
-            <g className="analysisAfasOutlierPoint" key={`outlier-${point.frameIndex ?? index}-${point.temperature}`}>
-              <circle cx={point.x} cy={point.y} r={6} />
-              <line x1={point.x - 4.2} x2={point.x + 4.2} y1={point.y - 4.2} y2={point.y + 4.2} />
-              <line x1={point.x - 4.2} x2={point.x + 4.2} y1={point.y + 4.2} y2={point.y - 4.2} />
-            </g>
-          ))}
-          {model.fitLines
-            .filter((line) => line.kind !== "tangent")
-            .map((line) => (
-              <g className={`analysisAfasFitLineGroup analysisAfasFitLineGroup--${line.kind}`} key={`fit-${line.kind}`}>
-                <line className={`analysisAfasFitLine analysisAfasFitLine--${line.kind}`} x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
-                <text className="analysisAfasInlineLabel" x={line.labelX} y={line.labelY - 8} textAnchor="middle">
-                  {t(line.label)}
-                </text>
-              </g>
-            ))}
-          {model.fitLines
-            .filter((line) => line.kind === "tangent")
-            .map((line) => (
-              <g className="analysisAfasFitLineGroup analysisAfasFitLineGroup--tangent" key="fit-tangent">
-                {editable ? (
-                  <line
-                    aria-label={t("Drag tangent position")}
-                    className="analysisAfasTangentMoveTarget"
-                    onPointerDown={(event) => beginTangentEdit(event, line, "move")}
-                    x1={line.x1}
-                    x2={line.x2}
-                    y1={line.y1}
-                    y2={line.y2}
+                <g className={`analysisAfasRangeEditor analysisAfasRangeEditor--${kind}`} key={`range-editor-${rangeKey}`}>
+                  <rect
+                    aria-label={t(kind === "low_baseline" ? "Drag low-temperature range" : "Drag high-temperature range")}
+                    className="analysisAfasRangeMoveTarget"
+                    height={model.plot.bottom - model.plot.top}
+                    onPointerDown={(event) => beginRangeEdit(event, rangeKey, "move")}
+                    width={Math.max(8, width)}
+                    x={x}
+                    y={model.plot.top}
                   />
-                ) : null}
-                <line className="analysisAfasFitLine analysisAfasFitLine--tangent" x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
-                {editable ? (
-                  <>
-                    <circle
-                      aria-label={t("Drag tangent slope")}
-                      className="analysisAfasTangentSlopeHandle"
-                      cx={line.x1}
-                      cy={line.y1}
-                      onPointerDown={(event) => beginTangentEdit(event, line, "slope_start")}
-                      r={7}
-                    />
-                    <circle
-                      aria-label={t("Drag tangent slope")}
-                      className="analysisAfasTangentSlopeHandle"
-                      cx={line.x2}
-                      cy={line.y2}
-                      onPointerDown={(event) => beginTangentEdit(event, line, "slope_end")}
-                      r={7}
-                    />
-                  </>
-                ) : null}
-                <text className="analysisAfasInlineLabel analysisAfasInlineLabel--tangent" x={line.labelX} y={line.labelY - 10} textAnchor="middle">
-                  {t(line.label)}
-                </text>
+                </g>
+              );
+            }) : null}
+            {model.rawPoints.map((point, index) => (
+              <circle
+                className="analysisAfasRawPoint"
+                cx={point.x}
+                cy={point.y}
+                key={`raw-${point.frameIndex ?? index}-${point.temperature}`}
+                r={2.6}
+              />
+            ))}
+            {model.outlierPoints.map((point, index) => (
+              <g className="analysisAfasOutlierPoint" key={`outlier-${point.frameIndex ?? index}-${point.temperature}`}>
+                <circle cx={point.x} cy={point.y} r={6} />
+                <line x1={point.x - 4.2} x2={point.x + 4.2} y1={point.y - 4.2} y2={point.y + 4.2} />
+                <line x1={point.x - 4.2} x2={point.x + 4.2} y1={point.y + 4.2} y2={point.y - 4.2} />
               </g>
             ))}
-          {model.constructionGuides.map((guide) => (
-            <line
-              aria-label={`${t(guide.label)}; ${t(guide.role)}`}
-              className={`analysisAfasConstructionGuide analysisAfasConstructionGuide--${guide.kind}`}
-              key={`guide-${guide.kind}`}
-              x1={guide.x1}
-              x2={guide.x2}
-              y1={guide.y1}
-              y2={guide.y2}
-            />
-          ))}
-          {model.smoothedPath ? (
-            <polyline className="analysisAfasSmoothedLine" points={model.smoothedPath} />
-          ) : null}
-          {model.smoothedPoints.length ? (
-            <text className="analysisAfasSmoothedLabel" x={smoothedLabelX(model)} y={smoothedLabelY(model)}>
-              {t("Smoothed curve")}
-            </text>
-          ) : null}
-          {model.markers.map((marker) => (
-            marker.kind === "max_slope" ? (
-              <MaxSlopeMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
-            ) : (
-              <AfasReferenceMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
-            )
-          ))}
-          {editable ? rangeBands.map(({ rangeKey, kind, range }) => {
-            const handleXs = range.map((temperature) => analysisAfasChartX(temperature, model)) as AfasRange;
-            return (
-              <g className={`analysisAfasRangeEditor analysisAfasRangeEditor--${kind}`} key={`range-handles-${rangeKey}`}>
-                {handleXs.map((handleX, index) => (
-                  <g
-                    aria-label={t(
-                      kind === "low_baseline"
-                        ? index === 0
-                          ? "Drag low-temperature start boundary"
-                          : "Drag low-temperature end boundary"
-                        : index === 0
-                          ? "Drag high-temperature start boundary"
-                          : "Drag high-temperature end boundary"
-                    )}
-                    className="analysisAfasRangeHandle"
-                    key={`${rangeKey}-${index}`}
-                    onPointerDown={(event) => beginRangeEdit(event, rangeKey, index === 0 ? "start" : "end")}
-                  >
-                    <rect
-                      className="analysisAfasRangeHandleHitTarget"
-                      height={model.plot.bottom - model.plot.top}
-                      width={14}
-                      x={handleX - 7}
-                      y={model.plot.top}
+            {model.fitLines
+              .filter((line) => line.kind !== "tangent")
+              .map((line) => (
+                <g className={`analysisAfasFitLineGroup analysisAfasFitLineGroup--${line.kind}`} key={`fit-${line.kind}`}>
+                  <line className={`analysisAfasFitLine analysisAfasFitLine--${line.kind}`} x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
+                </g>
+              ))}
+            {model.fitLines
+              .filter((line) => line.kind === "tangent")
+              .map((line) => (
+                <g className="analysisAfasFitLineGroup analysisAfasFitLineGroup--tangent" key="fit-tangent">
+                  {editable ? (
+                    <line
+                      aria-label={t("Drag tangent position")}
+                      className="analysisAfasTangentMoveTarget"
+                      onPointerDown={(event) => beginTangentEdit(event, line, "move")}
+                      x1={line.x1}
+                      x2={line.x2}
+                      y1={line.y1}
+                      y2={line.y2}
                     />
-                    <line x1={handleX} x2={handleX} y1={model.plot.top} y2={model.plot.bottom} />
-                    <rect x={handleX - 7} y={model.plot.top + 8} width={14} height={34} rx={6} />
-                    <line x1={handleX - 2} x2={handleX - 2} y1={model.plot.top + 18} y2={model.plot.top + 32} />
-                    <line x1={handleX + 2} x2={handleX + 2} y1={model.plot.top + 18} y2={model.plot.top + 32} />
-                  </g>
-                ))}
-              </g>
-            );
-          }) : null}
-          {brushRect ? (
-            <rect
-              className="analysisAfasBrush"
-              height={model.plot.bottom - model.plot.top}
-              width={brushRect.width}
-              x={brushRect.x}
-              y={model.plot.top}
-            />
-          ) : null}
+                  ) : null}
+                  <line className="analysisAfasFitLine analysisAfasFitLine--tangent" x1={line.x1} x2={line.x2} y1={line.y1} y2={line.y2} />
+                  {editable ? (
+                    <>
+                      <circle
+                        aria-label={t("Drag tangent slope")}
+                        className="analysisAfasTangentSlopeHandle"
+                        cx={line.x1}
+                        cy={line.y1}
+                        onPointerDown={(event) => beginTangentEdit(event, line, "slope_start")}
+                        r={7}
+                      />
+                      <circle
+                        aria-label={t("Drag tangent slope")}
+                        className="analysisAfasTangentSlopeHandle"
+                        cx={line.x2}
+                        cy={line.y2}
+                        onPointerDown={(event) => beginTangentEdit(event, line, "slope_end")}
+                        r={7}
+                      />
+                    </>
+                  ) : null}
+                </g>
+              ))}
+            {model.constructionGuides.map((guide) => (
+              <line
+                aria-label={`${t(guide.label)}; ${t(guide.role)}`}
+                className={`analysisAfasConstructionGuide analysisAfasConstructionGuide--${guide.kind}`}
+                key={`guide-${guide.kind}`}
+                x1={guide.x1}
+                x2={guide.x2}
+                y1={guide.y1}
+                y2={guide.y2}
+              />
+            ))}
+            {model.smoothedPath ? (
+              <polyline className="analysisAfasSmoothedLine" points={model.smoothedPath} />
+            ) : null}
+            {editable ? rangeBands.map(({ rangeKey, kind, range }) => {
+              const handleXs = range.map((temperature) => analysisAfasChartX(temperature, model)) as AfasRange;
+              return (
+                <g className={`analysisAfasRangeEditor analysisAfasRangeEditor--${kind}`} key={`range-handles-${rangeKey}`}>
+                  {handleXs.map((handleX, index) => (
+                    <g
+                      aria-label={t(
+                        kind === "low_baseline"
+                          ? index === 0
+                            ? "Drag low-temperature start boundary"
+                            : "Drag low-temperature end boundary"
+                          : index === 0
+                            ? "Drag high-temperature start boundary"
+                            : "Drag high-temperature end boundary"
+                      )}
+                      className="analysisAfasRangeHandle"
+                      key={`${rangeKey}-${index}`}
+                      onPointerDown={(event) => beginRangeEdit(event, rangeKey, index === 0 ? "start" : "end")}
+                    >
+                      <rect
+                        className="analysisAfasRangeHandleHitTarget"
+                        height={model.plot.bottom - model.plot.top}
+                        width={14}
+                        x={handleX - 7}
+                        y={model.plot.top}
+                      />
+                      <line x1={handleX} x2={handleX} y1={model.plot.top} y2={model.plot.bottom} />
+                      <rect x={handleX - 7} y={model.plot.top + 8} width={14} height={34} rx={6} />
+                      <line x1={handleX - 2} x2={handleX - 2} y1={model.plot.top + 18} y2={model.plot.top + 32} />
+                      <line x1={handleX + 2} x2={handleX + 2} y1={model.plot.top + 18} y2={model.plot.top + 32} />
+                    </g>
+                  ))}
+                </g>
+              );
+            }) : null}
+            {brushRect ? (
+              <rect
+                className="analysisAfasBrush"
+                height={model.plot.bottom - model.plot.top}
+                width={brushRect.width}
+                x={brushRect.x}
+                y={model.plot.top}
+              />
+            ) : null}
+          </g>
+          <g data-layer="afas-unclipped-labels">
+            {model.fitLines.map((line) => (
+              <text
+                className={`analysisAfasInlineLabel${line.kind === "tangent" ? " analysisAfasInlineLabel--tangent" : ""}`}
+                key={`fit-label-${line.kind}`}
+                x={clamp(line.labelX, model.plot.left, model.plot.right)}
+                y={clamp(line.labelY - (line.kind === "tangent" ? 10 : 8), model.plot.top, model.plot.bottom)}
+                textAnchor="middle"
+              >
+                {t(line.label)}
+              </text>
+            ))}
+            {model.smoothedPoints.length ? (
+              <text
+                className="analysisAfasSmoothedLabel"
+                x={clamp(smoothedLabelX(model), model.plot.left, model.plot.right)}
+                y={clamp(smoothedLabelY(model), model.plot.top, model.plot.bottom)}
+              >
+                {t("Smoothed curve")}
+              </text>
+            ) : null}
+            {model.markers.map((marker) => (
+              marker.kind === "max_slope" ? (
+                <MaxSlopeMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
+              ) : (
+                <AfasReferenceMarker key={`marker-${marker.kind}`} marker={marker} plot={model.plot} />
+              )
+            ))}
+          </g>
           {hoverTarget ? <AnalysisAfasTooltip target={hoverTarget} plot={model.plot} /> : null}
           {!model.hasPoints ? (
             <CurveEmptyText

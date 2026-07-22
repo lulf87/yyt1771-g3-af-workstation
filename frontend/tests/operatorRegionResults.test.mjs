@@ -164,6 +164,24 @@ test("AFAS chart clamps edits and saves only backend-accepted parameters", () =>
   assert.doesNotMatch(chart, /persistInteractiveAdjustment\(candidateParameters/);
 });
 
+test("AFAS plot visuals and hit targets share a unique SVG clip", () => {
+  const chart = sourceSlice(
+    "function AnalysisAfasChart({",
+    "function AnalysisAfasSummaryStrip("
+  );
+
+  assert.match(chart, /useId\(\)/);
+  assert.match(chart, /<clipPath id=\{plotClipId\}>/);
+  assert.match(
+    chart,
+    /<rect[\s\S]*x=\{model\.plot\.left\}[\s\S]*height=\{model\.plot\.bottom - model\.plot\.top\}/
+  );
+  assert.ok((chart.match(/clipPath=\{plotClipUrl\}/g) ?? []).length >= 2);
+  assert.match(chart, /data-layer="afas-clipped-plot"/);
+  assert.match(chart, /data-layer="afas-unclipped-labels"/);
+  assert.match(chart, /<AnalysisAfasTooltip/);
+});
+
 test("AFAS automatic restore detects every persisted manual override without treating resolved ranges as manual", () => {
   const helper = sourceSlice(
     "function hasManualAfasOverrides(",
