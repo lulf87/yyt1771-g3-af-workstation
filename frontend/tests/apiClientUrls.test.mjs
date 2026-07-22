@@ -133,6 +133,62 @@ test("run analysis recompute serializes an optional position scope", async () =>
   }
 });
 
+test("AFAS adjustment APIs surface structured validation details without raw FastAPI envelopes", async () => {
+  const { previewRunAfasAdjustment, recomputeRunAnalysis } = await loadApiClientModule();
+  const originalFetch = globalThis.fetch;
+  const response = () => new Response(
+    JSON.stringify({ detail: "Manual AFAS adjustment must satisfy AS < AF." }),
+    {
+      status: 422,
+      statusText: "Unprocessable Entity",
+      headers: { "Content-Type": "application/json" }
+    }
+  );
+
+  try {
+    globalThis.fetch = async () => response();
+    await assert.rejects(
+      () => previewRunAfasAdjustment("run-1", {
+        region_id: "region_1",
+        afas_analysis_parameters: {
+          low_range_celsius: [1, 2],
+          high_range_celsius: [3, 4],
+          tangent_offset: 0,
+          tangent_slope_override: 1,
+          tangent_intercept_override: 2
+        }
+      }),
+      (error) => {
+        assert.equal(error.message, "Manual AFAS adjustment must satisfy AS < AF.");
+        assert.doesNotMatch(error.message, /422|Unprocessable|\\{\"detail\"/);
+        return true;
+      }
+    );
+    await assert.rejects(
+      () => recomputeRunAnalysis("run-1", {
+        afas_preprocessing_parameters: {
+          group_by_temperature: true,
+          outlier_window: 5,
+          outlier_threshold: 3,
+          outlier_max_iterations: 2,
+          savgol_window_length: 9,
+          savgol_polyorder: 2
+        },
+        afas_analysis_parameters: {
+          low_range_celsius: [1, 2],
+          high_range_celsius: [3, 4],
+          tangent_offset: 0,
+          tangent_slope_override: 1,
+          tangent_intercept_override: 2
+        }
+      }),
+      /Manual AFAS adjustment must satisfy AS < AF\./
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("diagnostic image metadata exposes mask and contour display sources", async () => {
   const { readDiagnosticImages } = await loadApiClientModule();
 

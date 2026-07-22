@@ -125,6 +125,8 @@
 | P-0111 | RESOLVED_BROWSER_VERIFIED | P1 | results/export / AFAS automatic restore | 人工调整温区和最大斜率切线后缺少一键恢复自动计算 | 2026-07-14 | 2026-07-14 | Codex | 清除全部人工覆盖、后端正式重算、刷新持久化及 Golden C Chrome 复测已通过 |
 | P-0113 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows / packaged launcher / production policy | 打包启动器参数可能被遗留环境变量覆盖，且无控制台 EXE 仍创建 stderr 日志处理器 | 2026-07-15 | 2026-07-15 | Codex | CLI 运行来源、产品模式和配置路径改为权威覆盖；windowed EXE 无 stderr 时仅写 UTF-8 文件日志，待 Windows 新包复测 |
 | P-0114 | FIXED_PENDING_BROWSER_RETEST | P0 | Windows CI / frontend tests | 前端测试直接执行 Unix `node_modules/.bin/tsc`，Windows Runner 全部模块编译辅助流程报 ENOENT | 2026-07-15 | 2026-07-15 | Codex | 改为用当前 Node 执行 TypeScript JS 入口；dev.8 Windows CI 的 157 项前端测试与生产构建通过，目标机浏览器复测待补 |
+| P-0118 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart | 温区边界和切线端点拖拽起步会突变，不按鼠标按住位置连续移动 | 2026-07-22 | 2026-07-22 | Codex | 已记录用户视频；grab offset 修复通过真实 Chrome 鼠标复测 |
+| P-0119 | RESOLVED_BROWSER_VERIFIED | P0 | frontend / Analysis AFAS chart / API errors | AFAS 手动调整 AS/AF 反序时直接显示原始 422 JSON 错误 | 2026-07-22 | 2026-07-22 | Codex | 已改为中文无效调整提示；真实 Chrome 拦截 422 复测通过 |
 
 ---
 
@@ -11127,6 +11129,140 @@ PYTHONPATH=backend/src pytest -q backend/tests/unit/test_afas_adjustment_validat
 #### Final status
 
 FIXED_PENDING_BROWSER_RETEST
+
+---
+
+### P-0118 — 温区边界和切线端点拖拽起步会突变
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/main.tsx`, `frontend/tests/operatorRegionResults.test.mjs`
+- Found date: 2026-07-22
+- Last update: 2026-07-22
+- Owner/tool: Codex
+
+#### Problem
+
+用户录屏显示，在结果页 AFAS 复核图中拖动低温/高温拟合区间边界和最大斜率切线端点时，每次开始拖动都会先发生一次明显突变，随后才继续跟随鼠标。表现为图中手柄或切线不能从鼠标按住的位置连续移动，精细调整手感差。
+
+#### Expected
+
+拖动开始时应保留鼠标按下点与被拖对象之间的相对偏移：即使操作者按在手柄命中区域边缘或切线端点圆点边缘，第一次 pointer move 也不应把边界/端点吸到鼠标中心数据坐标。温区和切线仍必须限制在有效数据/plot 范围内。
+
+#### Actual
+
+`range_edge` 直接使用当前 pointer temperature 调整边界；`tangent_slope` 直接使用当前 pointer data point 计算端点斜率。由于命中区域比可视边界/端点更宽，只要鼠标没有正好按在中心线上，第一次移动就会把对象吸附到鼠标数据坐标，形成可见跳变。
+
+#### Suspected cause
+
+AFAS 图表拖拽状态没有保存 pointer down 时的 grab offset。range body 和 tangent body 平移已有 start point/delta 语义，边界 resize 和切线 endpoint rotate 缺少同等处理。
+
+#### Fix summary
+
+- `range_edge` 交互新增 `grabOffsetTemperature`，移动时使用 `dataPoint.temperature - grabOffsetTemperature` 作为边界目标温度。
+- `tangent_slope` 交互新增端点 `grabOffset`，移动时先扣除初始温度/距离偏移，再计算切线斜率。
+- 保留现有 `resizeAfasRange()`、`rotateAfasTangent()` 的数据域 clamp 和有效点约束。
+- 新增前端源码回归测试，要求 AFAS 温区边界与切线端点拖拽都保存并应用初始 grab offset。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorRegionResults.test.mjs tests/afasInteraction.test.mjs
+# 27/27 passed
+
+npm run build
+# PASS
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-22
+- Browser: Google Chrome via Playwright
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab` via restored run `run-golden_c_20260529_dev_lab-20260714T130611753254Z-afas-ui-v2-20260714T141010012287Z`
+- Page: Operator `结果与导出` / AFAS detailed review
+- Steps: 重启主目录 `sim-sim` 服务；用 localStorage 恢复完整 Golden C run；打开 Results / Export；滚动到 AFAS 图；在低温区起始边界手柄命中区域右边缘执行真实鼠标 down，向右移动 1 px 后观察 SVG 边界；随后对切线端点手柄边缘执行真实鼠标 down，向右下移动 1 px 后观察端点。
+- Expected: 手柄保留鼠标按下时的 grab offset；第一次微小移动不会把边界或端点吸到鼠标数据坐标；console 无错误。
+- Actual: AFAS 图存在 4 个温区边界手柄和 2 个切线端点手柄。低温区起始边界从 `x=132.8966` 到 `x=133.8557`，约随 1 px 鼠标微动变化 `0.9591 px`，未出现吸附跳变；切线端点 1 px 微动后保持在有效端点，无突变；console 无错误。
+- Result: PASS
+- Evidence: `output/playwright/p0118-drag-offset-20260722/06-restored-results.png`, `08-real-mouse-after-offset-drags.png`, `real-mouse-drag-result.json`, `real-mouse-console.txt`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
+
+---
+
+### P-0119 — AFAS 手动调整 AS/AF 反序时直接显示原始 422 JSON 错误
+
+- Status: RESOLVED_BROWSER_VERIFIED
+- Priority: P0
+- Module: `frontend/src/api/client.ts`, `frontend/src/main.tsx`, `frontend/src/i18n.ts`, frontend tests
+- Found date: 2026-07-22
+- Last update: 2026-07-22
+- Owner/tool: Codex
+
+#### Problem
+
+用户在结果页 AFAS 复核图中拖动切线/温区后，页面顶部显示“调整失败”，下方直接暴露后端原始错误：
+
+```text
+422 Unprocessable Entity: {"detail":"Manual AFAS adjustment must satisfy AS < AF."}
+```
+
+截图中 AS 为 `5.25°C`、AF 为 `4.83°C`，即手动调整使 AS/AF 顺序反转，后端正确拒绝，但前端提示不适合操作者阅读。
+
+#### Expected
+
+当手动调整导致 AS >= AF 时，页面应显示明确中文说明：当前调整无效，AS 必须小于 AF，提示继续拖动切线或拟合温区让蓝色 AS 点保持在红色 AF 点左侧。不得把 HTTP 状态码、FastAPI JSON envelope 或英文内部校验文本直接暴露给操作者。
+
+#### Actual
+
+`previewRunAfasAdjustment()` 和 `recomputeRunAnalysis()` 直接拼接 `response.status/statusText/body` 抛错，`AnalysisAfasChart` 将该错误原样显示在 `.inlineError` 中。
+
+#### Suspected cause
+
+导出相关 API 已使用 `readApiErrorMessage()` 解包结构化后端错误，但 AFAS preview/recompute API 仍沿用早期的原始 HTTP body 拼接方式；图表交互层也没有把已知的 AS/AF 顺序校验错误映射为“无效调整”状态。
+
+#### Fix summary
+
+- AFAS preview/recompute API 改用 `readApiErrorMessage()`，不再拼接原始 `422 Unprocessable Entity: {"detail":...}`。
+- AFAS 图表新增 `invalid` 编辑状态，识别 `Manual AFAS adjustment must satisfy AS < AF.` 并显示中文可操作提示。
+- 新增 i18n 文案：`当前调整无效` 与 AS/AF 顺序修正说明。
+- 新增前端测试覆盖 API 错误解包和 UI 层 AS/AF 反序错误映射。
+
+#### Tests run
+
+```bash
+cd frontend
+node --test tests/operatorRegionResults.test.mjs tests/apiClientUrls.test.mjs tests/afasInteraction.test.mjs
+# 55/55 passed
+
+npm run build
+# PASS
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-22
+- Browser: Google Chrome via Playwright
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab` via restored run `run-golden_c_20260529_dev_lab-20260714T130611753254Z-afas-ui-v2-20260714T141010012287Z`
+- Page: Operator `结果与导出` / AFAS detailed review
+- Steps: 用 localStorage 恢复完整 Golden C run；打开 Results / Export；滚动到 AFAS 图；Playwright route 拦截 `/api/runs/*/analysis/preview` 并返回 422 `{"detail":"Manual AFAS adjustment must satisfy AS < AF."}`；拖动低温区边界触发预览。
+- Expected: 页面显示中文无效调整提示，不包含 `422`、`Unprocessable` 或 `{"detail"}`。
+- Actual: 页面显示 `当前调整无效` 和 `AS 必须小于 AF。请继续拖动切线或拟合温区，让蓝色 AS 点保持在红色 AF 点左侧。`；未显示原始 HTTP/JSON 错误。Console 中仅有预期的 422 network resource 记录，无页面异常。
+- Result: PASS
+- Evidence: `output/playwright/p0119-afas-invalid-error-20260722/invalid-adjustment-message.png`, `visible-error-text.txt`, `console.txt`
+
+#### Final status
+
+RESOLVED_BROWSER_VERIFIED
 
 ---
 

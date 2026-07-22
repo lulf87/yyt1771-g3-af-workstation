@@ -6518,6 +6518,7 @@ type AnalysisAfasEditInteraction =
       rangeKey: AfasEditableRangeKey;
       edge: "start" | "end";
       baseRange: AfasRange;
+      grabOffsetTemperature: number;
       temperatures: number[];
       baseParameters: AfasAnalysisFormState;
     }
@@ -6540,6 +6541,7 @@ type AnalysisAfasEditInteraction =
   | {
       kind: "tangent_slope";
       anchor: AfasDataPoint;
+      grabOffset: AfasDataPoint;
       slope: number;
       domain: AfasDataDomain;
       minimumTemperatureDelta: number;
@@ -6722,7 +6724,7 @@ function AnalysisAfasChart({
   const [hoverTarget, setHoverTarget] = useState<AnalysisAfasHoverTarget | null>(null);
   const [brush, setBrush] = useState<{ start: number; current: number } | null>(null);
   const [editStatus, setEditStatus] = useState<
-    "idle" | "previewing" | "saving" | "saved" | "restoring" | "restored" | "error"
+    "idle" | "previewing" | "saving" | "saved" | "restoring" | "restored" | "invalid" | "error"
   >("idle");
   const [editError, setEditError] = useState("");
   const brushRef = useRef<{ start: number; current: number } | null>(null);
@@ -6815,8 +6817,9 @@ function AnalysisAfasChart({
     }).catch((error: unknown) => {
       if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
       if (requestId !== previewRequestIdRef.current) return;
-      setEditStatus("error");
-      setEditError(error instanceof Error ? error.message : String(error));
+      const adjustmentError = userFacingAfasAdjustmentError(error, t);
+      setEditStatus(adjustmentError.kind);
+      setEditError(adjustmentError.message);
     });
   }
 
@@ -6838,8 +6841,9 @@ function AnalysisAfasChart({
       onAnalysisUpdated(nextAnalysis);
       setEditStatus(mode === "automatic" ? "restored" : "saved");
     } catch (error) {
-      setEditStatus("error");
-      setEditError(error instanceof Error ? error.message : String(error));
+      const adjustmentError = userFacingAfasAdjustmentError(error, t);
+      setEditStatus(adjustmentError.kind);
+      setEditError(adjustmentError.message);
     }
   }
 
@@ -6858,6 +6862,7 @@ function AnalysisAfasChart({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+    const edgeTemperature = mode === "start" ? range[0] : range[1];
     editRef.current = mode === "move"
       ? {
           kind: "range_move",
@@ -6872,6 +6877,7 @@ function AnalysisAfasChart({
           rangeKey,
           edge: mode,
           baseRange: range,
+          grabOffsetTemperature: dataPoint.temperature - edgeTemperature,
           temperatures,
           baseParameters: parameters
         };
@@ -6901,6 +6907,7 @@ function AnalysisAfasChart({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+    const draggedEndpoint = mode === "slope_start" ? tangentControlPoints[0] : tangentControlPoints[1];
     editRef.current = mode === "move"
       ? {
           kind: "tangent_move",
@@ -6913,6 +6920,10 @@ function AnalysisAfasChart({
       : {
           kind: "tangent_slope",
           anchor: mode === "slope_start" ? tangentControlPoints[1] : tangentControlPoints[0],
+          grabOffset: {
+            temperature: dataPoint.temperature - draggedEndpoint.temperature,
+            distance: dataPoint.distance - draggedEndpoint.distance
+          },
           slope: line.slope,
           domain: model.interactionDomain,
           minimumTemperatureDelta,
@@ -6946,7 +6957,7 @@ function AnalysisAfasChart({
         const nextRange = resizeAfasRange(
           activeEdit.baseRange,
           activeEdit.edge,
-          dataPoint.temperature,
+          dataPoint.temperature - activeEdit.grabOffsetTemperature,
           activeEdit.temperatures
         );
         nextParameters = { ...activeEdit.baseParameters, [activeEdit.rangeKey]: nextRange };
@@ -6968,7 +6979,10 @@ function AnalysisAfasChart({
             )
           : rotateAfasTangent(
               activeEdit.anchor,
-              dataPoint,
+              {
+                temperature: dataPoint.temperature - activeEdit.grabOffset.temperature,
+                distance: dataPoint.distance - activeEdit.grabOffset.distance
+              },
               activeEdit.slope,
               activeEdit.domain,
               activeEdit.minimumTemperatureDelta
@@ -7053,6 +7067,7 @@ function AnalysisAfasChart({
                   editStatus === "restoring" ? "Restoring automatic calculation" :
                     editStatus === "restored" ? "Automatic calculation restored" :
                       editStatus === "saved" ? "Adjustment saved" :
+                        editStatus === "invalid" ? "Adjustment invalid" :
                         editStatus === "error" ? "Adjustment failed" :
                           "Drag ranges or tangent to adjust"
             )}
@@ -7322,6 +7337,20 @@ function AnalysisAfasChart({
       </figure>
     </div>
   );
+}
+
+function userFacingAfasAdjustmentError(
+  error: unknown,
+  t: (text: string) => string
+): { kind: "invalid" | "error"; message: string } {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/Manual AFAS adjustment must satisfy AS < AF|AS\\s*<\\s*AF/i.test(message)) {
+    return {
+      kind: "invalid",
+      message: t("AS must remain lower than AF. Move the tangent or fitting ranges so the blue AS point stays left of the red AF point.")
+    };
+  }
+  return { kind: "error", message };
 }
 
 function AnalysisAfasSummaryStrip({ model }: { model: AnalysisAfasModel }) {

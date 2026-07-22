@@ -1834,8 +1834,7 @@ export async function recomputeRunAnalysis(
     body: JSON.stringify(parameters)
   });
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    throw new Error(await readApiErrorMessage(response, `分析失败：后端返回 ${response.status}`));
   }
   const payload = await response.json() as { analysis_result: AnalysisResult };
   return normalizeAnalysisRegions(payload.analysis_result);
@@ -1856,8 +1855,7 @@ export async function previewRunAfasAdjustment(
     signal
   });
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    throw new Error(await readApiErrorMessage(response, `调整预览失败：后端返回 ${response.status}`));
   }
   const payload = await response.json() as { analysis_preview: AfasAnalysisPreview };
   return payload.analysis_preview;

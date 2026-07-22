@@ -253,6 +253,8 @@ const ZH_TEXT: Record<string, string> = {
   "Saving adjustment": "正在保存调整",
   "Adjustment saved": "调整已保存",
   "Adjustment failed": "调整失败",
+  "Adjustment invalid": "当前调整无效",
+  "AS must remain lower than AF. Move the tangent or fitting ranges so the blue AS point stays left of the red AF point.": "AS 必须小于 AF。请继续拖动切线或拟合温区，让蓝色 AS 点保持在红色 AF 点左侧。",
   "Drag low-temperature range": "拖动低温拟合区间",
   "Drag high-temperature range": "拖动高温拟合区间",
   "Drag low-temperature start boundary": "拖动低温区起始边界",

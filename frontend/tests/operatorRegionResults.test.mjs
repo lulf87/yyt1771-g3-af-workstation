@@ -143,6 +143,45 @@ test("AFAS chart exposes range, tangent-position, and tangent-slope drag handles
   );
 });
 
+test("AFAS chart shows AS/AF order violations as an invalid adjustment instead of raw backend JSON", () => {
+  const chart = sourceSlice(
+    "function AnalysisAfasChart({",
+    "function AnalysisAfasSummaryStrip("
+  );
+  const helper = sourceSlice(
+    "function userFacingAfasAdjustmentError(",
+    "function AnalysisAfasSummaryStrip("
+  );
+
+  assert.match(chart, /\"invalid\" \| \"error\"/);
+  assert.match(chart, /const adjustmentError = userFacingAfasAdjustmentError\(error, t\)/);
+  assert.match(chart, /setEditStatus\(adjustmentError\.kind\)/);
+  assert.match(chart, /editStatus === \"invalid\" \? \"Adjustment invalid\"/);
+  assert.match(helper, /Manual AFAS adjustment must satisfy AS < AF\|AS\\\\s\*<\\\\s\*AF/);
+  assert.match(helper, /AS must remain lower than AF/);
+  assert.doesNotMatch(chart, /422 Unprocessable Entity/);
+});
+
+test("AFAS range and tangent endpoint drags preserve the initial pointer grab offset", () => {
+  const chart = sourceSlice(
+    "function AnalysisAfasChart({",
+    "function AnalysisAfasSummaryStrip("
+  );
+
+  assert.match(chart, /grabOffsetTemperature:\s*dataPoint\.temperature - edgeTemperature/);
+  assert.match(
+    chart,
+    /resizeAfasRange\([\s\S]*?dataPoint\.temperature - activeEdit\.grabOffsetTemperature/
+  );
+  assert.match(chart, /const draggedEndpoint = mode === "slope_start" \? tangentControlPoints\[0\] : tangentControlPoints\[1\]/);
+  assert.match(chart, /grabOffset:\s*\{[\s\S]*?temperature:\s*dataPoint\.temperature - draggedEndpoint\.temperature/);
+  assert.match(chart, /distance:\s*dataPoint\.distance - draggedEndpoint\.distance/);
+  assert.match(
+    chart,
+    /rotateAfasTangent\([\s\S]*?temperature:\s*dataPoint\.temperature - activeEdit\.grabOffset\.temperature[\s\S]*?distance:\s*dataPoint\.distance - activeEdit\.grabOffset\.distance/
+  );
+});
+
 test("AFAS chart clamps edits and saves only backend-accepted parameters", () => {
   const chart = sourceSlice(
     "function AnalysisAfasChart({",
