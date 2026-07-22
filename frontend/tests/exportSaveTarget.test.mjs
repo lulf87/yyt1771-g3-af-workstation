@@ -102,7 +102,7 @@ test("operator export result button opens the guided export dialog before saving
   assert.doesNotMatch(block, /downloadRunExportBundle\(currentRunId\)/);
 });
 
-test("export dialog source contains unsupported-browser fallback copy", () => {
+test("export dialog source uses backend-managed native export destination", () => {
   const source = readFileSync(resolve(rootDir, "src/main.tsx"), "utf8");
   const start = source.indexOf("function ExportSaveDialog(");
   const end = source.indexOf("function ImportedRunSummary(", start);
@@ -110,9 +110,12 @@ test("export dialog source contains unsupported-browser fallback copy", () => {
   assert.notEqual(end, -1, "ImportedRunSummary should follow ExportSaveDialog");
   const block = source.slice(start, end);
 
-  assert.match(block, /isExportDirectoryPickerSupported/);
-  assert.match(block, /chooseExportDirectory/);
-  assert.match(block, /This browser does not support choosing a save folder/);
-  assert.match(block, /downloadRunExportBundle/);
-  assert.match(block, /fetchRunExportBundle/);
+  assert.match(block, /getExportDestination/);
+  assert.match(block, /chooseExportDestination/);
+  assert.match(block, /openExportDestination/);
+  assert.match(block, /resetExportDestination/);
+  assert.match(block, /saveRunExportBundle/);
+  assert.doesNotMatch(block, /showDirectoryPicker/);
+  assert.doesNotMatch(block, /FileSystemDirectoryHandle/);
+  assert.doesNotMatch(block, /indexedDB/);
 });

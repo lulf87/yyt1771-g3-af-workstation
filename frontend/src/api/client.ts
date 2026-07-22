@@ -817,6 +817,19 @@ export type ExportDownloadResult = {
   size: number;
 };
 
+export type ExportDestinationStatus = {
+  directory: string;
+  is_custom: boolean;
+  exists: boolean;
+  writable: boolean;
+  error: string;
+};
+
+export type SavedExportBundle = ExportDownloadResult & {
+  path: string;
+  directory: string;
+};
+
 export type ImportedFrameSummary = {
   total_frames: number;
   valid_frames: number;
@@ -1884,6 +1897,46 @@ export async function fetchRunExportBundle(runId: string): Promise<ExportBundleB
   const filename = parseContentDispositionFilename(response.headers.get("Content-Disposition")) ??
     `yyt1771-g3-export-${runId}.zip`;
   return { blob, filename, size: blob.size };
+}
+
+export async function getExportDestination(): Promise<ExportDestinationStatus> {
+  const response = await fetch(`${API_BASE}/api/export-destination`);
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `读取导出目录失败：后端返回 ${response.status}`));
+  }
+  return (await response.json()) as ExportDestinationStatus;
+}
+
+export async function chooseExportDestination(): Promise<ExportDestinationStatus> {
+  const response = await fetch(`${API_BASE}/api/export-destination/choose`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `选择导出目录失败：后端返回 ${response.status}`));
+  }
+  return (await response.json()) as ExportDestinationStatus;
+}
+
+export async function resetExportDestination(): Promise<ExportDestinationStatus> {
+  const response = await fetch(`${API_BASE}/api/export-destination/reset`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `恢复默认导出目录失败：后端返回 ${response.status}`));
+  }
+  return (await response.json()) as ExportDestinationStatus;
+}
+
+export async function openExportDestination(): Promise<ExportDestinationStatus> {
+  const response = await fetch(`${API_BASE}/api/export-destination/open`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `打开导出目录失败：后端返回 ${response.status}`));
+  }
+  return (await response.json()) as ExportDestinationStatus;
+}
+
+export async function saveRunExportBundle(runId: string): Promise<SavedExportBundle> {
+  const response = await fetch(`${API_BASE}/api/runs/${runId}/exports/save`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, `保存导出文件失败：后端返回 ${response.status}`));
+  }
+  return (await response.json()) as SavedExportBundle;
 }
 
 export async function importRunExportFile(file: File): Promise<ImportedRunView> {

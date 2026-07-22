@@ -24,10 +24,11 @@ import {
   apiUrlFromPath,
   artifactDownloadUrl,
   createRunExports,
+  chooseExportDestination,
   downloadRunExportBundle,
-  fetchRunExportBundle,
   frameIndexImageUrl,
   frameImageUrl,
+  getExportDestination,
   getHardwareSetupEnvironment,
   getHardwareProfile,
   hardwareProfileCameraIdentity,
@@ -48,9 +49,12 @@ import {
   readDiagnosticImages,
   realCameraPreviewImageUrl,
   releaseRealCameraPreview,
+  openExportDestination,
   previewRunAfasAdjustment,
   recomputeRunAnalysis,
+  resetExportDestination,
   runFrameImageUrl,
+  saveRunExportBundle,
   saveHardwareBinding,
   saveHardwareSdkPaths,
   runResponseFromSummary,
@@ -75,6 +79,7 @@ import {
   type MeasurementRegion,
   type RegionResult,
   type ExportArtifact,
+  type ExportDestinationStatus,
   type HardwareBinding,
   type HardwareBindingSaveResponse,
   type HardwareCameraTestResponse,
@@ -255,13 +260,6 @@ import {
   validateOperatorStart,
   type OperatorConfirmedSettings
 } from "./operatorSettings";
-import {
-  chooseExportDirectory,
-  createIndexedDbExportDirectoryStore,
-  isExportDirectoryPickerSupported,
-  queryExportDirectoryPermission,
-  writeBlobToDirectory
-} from "./exportSaveTarget";
 import {
   OPERATOR_TEMPERATURE_IDLE_POLL_MS,
   shouldAutoPollOperatorTemperature
@@ -4255,13 +4253,12 @@ function ExportSaveDialog({
   onComplete: (filename: string) => void;
 }) {
   const t = useUiText();
-  const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [destination, setDestination] = useState<ExportDestinationStatus | null>(null);
   const [directoryMessage, setDirectoryMessage] = useState("");
   const [filename, setFilename] = useState(defaultFilename);
   const [exporting, setExporting] = useState(false);
+  const [busyAction, setBusyAction] = useState<"choose" | "open" | "reset" | "status" | "export" | "">("");
   const [error, setError] = useState("");
-  const store = useMemo(() => createIndexedDbExportDirectoryStore(), []);
-  const browserHasShowDirectoryPicker = isExportDirectoryPickerSupported(globalThis);
 
   useEffect(() => {
     if (!open) return;
@@ -4269,70 +4266,92 @@ function ExportSaveDialog({
     setFilename(defaultFilename);
     setError("");
     setDirectoryMessage("");
-    if (!browserHasShowDirectoryPicker) return;
-    store.load()
-      .then(async (handle) => {
-        if (cancelled || !handle) return;
-        const permission = await queryExportDirectoryPermission(handle);
+    setBusyAction("status");
+    getExportDestination()
+      .then((status) => {
         if (cancelled) return;
-        setDirectoryHandle(handle);
-        if (permission !== "granted" && permission !== "unsupported") {
-          setDirectoryMessage(t("Saved export folder permission expired"));
-        }
+        setDestination(status);
+        if (!status.writable && status.error) setDirectoryMessage(status.error);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setDirectoryMessage(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setBusyAction("");
       });
     return () => {
       cancelled = true;
     };
-  }, [browserHasShowDirectoryPicker, defaultFilename, open, store]);
+  }, [defaultFilename, open]);
 
   if (!open) return null;
 
   async function chooseDirectory() {
     setError("");
     setDirectoryMessage("");
+    setBusyAction("choose");
     try {
-      const handle = await chooseExportDirectory(globalThis);
-      setDirectoryHandle(handle);
-      await store.save(handle);
-      setDirectoryMessage(`${t("Selected export folder")}: ${handle.name}`);
+      const status = await chooseExportDestination();
+      setDestination(status);
+      setDirectoryMessage(`${t("Selected export folder")}: ${status.directory}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function openDirectory() {
+    setError("");
+    setDirectoryMessage("");
+    setBusyAction("open");
+    try {
+      const status = await openExportDestination();
+      setDestination(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function restoreDefaultDirectory() {
+    setError("");
+    setDirectoryMessage("");
+    setBusyAction("reset");
+    try {
+      const status = await resetExportDestination();
+      setDestination(status);
+      setDirectoryMessage(t("Default export folder restored"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction("");
     }
   }
 
   async function exportRun() {
     if (!runId) return;
     setExporting(true);
+    setBusyAction("export");
     setError("");
     try {
-      if (browserHasShowDirectoryPicker) {
-        if (!directoryHandle) {
-          setError(t("Choose a save folder before exporting"));
-          return;
-        }
-        const bundle = await fetchRunExportBundle(runId);
-        setFilename(bundle.filename);
-        await writeBlobToDirectory(directoryHandle, bundle.filename, bundle.blob);
-        onComplete(bundle.filename);
-      } else {
-        const download = await downloadRunExportBundle(runId);
-        setFilename(download.filename);
-        onComplete(download.filename);
-      }
+      const saved = await saveRunExportBundle(runId);
+      setFilename(saved.filename);
+      setDestination((current) => current ? { ...current, directory: saved.directory, writable: true, error: "" } : current);
+      onComplete(saved.filename);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setExporting(false);
+      setBusyAction("");
     }
   }
 
-  const saveLocation = browserHasShowDirectoryPicker
-    ? directoryHandle?.name ?? t("No export folder selected")
-    : t("Browser default downloads");
+  const saveLocation = destination?.directory ?? t("Loading export folder");
+  const destinationWritable = destination?.writable ?? false;
+  const anyBusy = exporting || busyAction !== "";
 
   return (
     <div className="modalBackdrop" role="presentation">
@@ -4349,28 +4368,31 @@ function ExportSaveDialog({
         </label>
         <dl className="metricGrid compact">
           <Metric label="Current default save location" value={saveLocation} />
+          <Metric label="Export folder type" value={destination?.is_custom ? t("Custom export folder") : t("Default export folder")} />
         </dl>
-        {!browserHasShowDirectoryPicker ? (
-          <div className="inlineWarning">
-            {t("This browser does not support choosing a save folder. The default browser download will be used.")}
-          </div>
-        ) : null}
+        {destination && !destinationWritable ? <div className="inlineWarning">{destination.error || t("Export folder is not writable")}</div> : null}
         {directoryMessage ? <div className="inlineSuccess">{directoryMessage}</div> : null}
         {error ? <div className="inlineError">{error}</div> : null}
         <div className="buttonPair">
           <button
             className="secondaryButton"
-            disabled={!browserHasShowDirectoryPicker || exporting}
+            disabled={anyBusy}
             onClick={chooseDirectory}
             type="button"
           >
             {t("Choose save folder")}
           </button>
-          <button className="primaryButton" disabled={!runId || exporting} onClick={exportRun} type="button">
+          <button className="secondaryButton" disabled={anyBusy || !destinationWritable} onClick={openDirectory} type="button">
+            {t("Open export folder")}
+          </button>
+          <button className="secondaryButton" disabled={anyBusy || !destination?.is_custom} onClick={restoreDefaultDirectory} type="button">
+            {t("Restore default folder")}
+          </button>
+          <button className="primaryButton" disabled={!runId || anyBusy || !destinationWritable} onClick={exportRun} type="button">
             <Download size={16} aria-hidden="true" />
             {exporting ? t("Exporting") : t("Export")}
           </button>
-          <button className="secondaryButton" disabled={exporting} onClick={onClose} type="button">
+          <button className="secondaryButton" disabled={anyBusy} onClick={onClose} type="button">
             {t("Cancel")}
           </button>
         </div>

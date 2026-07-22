@@ -62,6 +62,14 @@ from yyt1771_g3.services.analysis_service import (
 )
 from yyt1771_g3.services.real_camera_run_service import iter_real_camera_run_events, run_real_camera
 from yyt1771_g3.services.camera_control_service import CameraControlError, apply_camera_exposure
+from yyt1771_g3.services.export_destination_service import (
+    ExportDestinationError,
+    choose_export_destination,
+    export_destination_status,
+    open_export_destination,
+    reset_export_destination,
+    save_run_export_bundle_to_destination,
+)
 from yyt1771_g3.services.export_service import export_run, export_run_bundle, load_v2_export_models
 from yyt1771_g3.services.hardware_setup_service import (
     HardwareSetupError,
@@ -1802,6 +1810,85 @@ def download_run_export_bundle(run_id: str) -> FileResponse:
     return FileResponse(bundle_path, media_type="application/zip", filename=bundle_path.name)
 
 
+@app.get("/api/export-destination")
+def get_export_destination() -> dict[str, Any]:
+    return _export_destination_payload(export_destination_status())
+
+
+@app.post("/api/export-destination/choose")
+def choose_export_destination_endpoint() -> dict[str, Any]:
+    try:
+        return _export_destination_payload(choose_export_destination())
+    except ExportDestinationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "stage": "choose_export_destination"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("choose export destination failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": str(exc), "stage": "choose_export_destination"},
+        ) from exc
+
+
+@app.post("/api/export-destination/reset")
+def reset_export_destination_endpoint() -> dict[str, Any]:
+    try:
+        return _export_destination_payload(reset_export_destination())
+    except ExportDestinationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "stage": "reset_export_destination"},
+        ) from exc
+
+
+@app.post("/api/export-destination/open")
+def open_export_destination_endpoint() -> dict[str, Any]:
+    try:
+        return _export_destination_payload(open_export_destination())
+    except ExportDestinationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "stage": "open_export_destination"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("open export destination failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"message": str(exc), "stage": "open_export_destination"},
+        ) from exc
+
+
+@app.post("/api/runs/{run_id}/exports/save")
+def save_run_export_bundle(run_id: str) -> dict[str, Any]:
+    logger.info("saving export bundle for run_id=%s to destination", run_id)
+    try:
+        saved = save_run_export_bundle_to_destination(_run_store(), run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"message": f"Run not found: {run_id}", "stage": "read_run"},
+        ) from exc
+    except ExportDestinationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "stage": "save_export_destination"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("save export bundle failed for run_id=%s", run_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"message": str(exc), "stage": "save_export_destination"},
+        ) from exc
+    return {
+        "filename": saved.filename,
+        "path": str(saved.path),
+        "directory": str(saved.directory),
+        "size": saved.size,
+    }
+
+
 @app.post("/api/imports/run-export")
 async def import_run_export(file: UploadFile = File(...)) -> dict[str, Any]:
     filename = file.filename or "upload"
@@ -1841,6 +1928,16 @@ def _artifact_payload(run_id: str, artifact) -> dict[str, Any]:  # noqa: ANN001
     payload = artifact.model_dump(mode="json")
     payload["download_url"] = f"/api/exports/{run_id}/{Path(artifact.path).name}"
     return payload
+
+
+def _export_destination_payload(status) -> dict[str, Any]:  # noqa: ANN001
+    return {
+        "directory": str(status.directory),
+        "is_custom": status.is_custom,
+        "exists": status.exists,
+        "writable": status.writable,
+        "error": status.error,
+    }
 
 
 def _media_type_for(path: Path) -> str:

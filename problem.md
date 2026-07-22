@@ -9256,7 +9256,7 @@ RESOLVED_BROWSER_VERIFIED
 
 ### P-0083 — 实时趋势图正式点追加仍被前端批处理和缺少诊断掩盖
 
-- Status: IN_PROGRESS
+- Status: FIXED_PENDING_BROWSER_RETEST
 - Priority: P0
 - Module: `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/liveRunAnalysis.ts`, `backend/src/yyt1771_g3/services/real_camera_run_service.py`, `backend/src/yyt1771_g3/services/live_offline_run_service.py`
 - Found date: 2026-07-08
@@ -11064,7 +11064,7 @@ FIXED_PENDING_BROWSER_RETEST
 - Priority: P0
 - Module: `frontend/src/afasInteraction.ts`, `frontend/src/main.tsx`, `frontend/src/curves.ts`, `frontend/src/styles.css`
 - Found date: 2026-07-21
-- Last update: 2026-07-21
+- Last update: 2026-07-22
 - Owner/tool: Codex
 
 #### Problem
@@ -11085,25 +11085,58 @@ FIXED_PENDING_BROWSER_RETEST
 
 #### Fix summary
 
-待设计确认和真实浏览器复现后实施。
+已实施四层边界：
+
+- 前端 pointer 坐标先 clamp 到 SVG plot，再映射到 AFAS 数据温度/距离域。
+- 温区整体平移和边界调整使用 backend 提供的有效温度域，至少保留两个有效温度点。
+- 最大斜率切线平移/端点拖动限制在平滑数据域；松手失败时保留最近 backend accepted 状态，不把任意 draft 当作正式参数。
+- AFAS 图的温区、拟合线、切线和交互命中层放入 plot clipPath，标签/图例保留在未裁剪层。
 
 #### Tests run
 
-尚未执行修复验证。
+```bash
+cd frontend
+node --test tests/afasInteraction.test.mjs tests/curveSpecs.test.mjs tests/operatorRegionResults.test.mjs
+# 70/70 passed
+
+npm run build
+# PASS
+
+PYTHONPATH=backend/src pytest -q backend/tests
+# 433 passed, 12 skipped
+
+PYTHONPATH=backend/src pytest -q backend/tests/unit/test_afas_adjustment_validation.py backend/tests/integration/test_analysis_api.py backend/tests/unit/test_analysis_service.py
+# 110 passed
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-22
+- Browser: Playwright Chromium / gstack browse Chromium
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_a_20260522_dev_lab`, `golden_c_20260529_dev_lab`
+- Page: Operator `结果与导出` / AFAS detailed review
+- Steps: 将已有 Golden A/C v2 run 写入 localStorage 并进入 Results；检查 AFAS SVG 结构；对低温区、高温区和切线执行向 plot 外方向的鼠标拖拽；截图记录。
+- Expected: AFAS 图存在 plot clipPath；温区、切线和命中层被裁剪在 plot 内；拖动目标中心不离开有效 plot/数据域；不合法交互由后端拒绝，不作为正式结果。
+- Actual: Golden A/C 均存在 `clipPath[id^="analysis-afas-plot-"]`、`data-layer="afas-clipped-plot"`、未裁剪标签层、4 个温区边界手柄和切线拖拽目标。Golden A Playwright 越界拖动后各交互目标中心仍在 plot 横向范围内；故意连续制造低/高温区交叉时后端返回 422 并显示“调整失败”，未观察到 SVG 图层飞出坐标轴。该激进复测污染了临时派生 A run 的 analysis summary，原始 Golden 素材未改动。
+- Result: PARTIAL PASS — Mac 浏览器结构和越界裁剪预检通过；仍需在 Windows packaged app 上用未污染的新 run 补完整 Golden A/C 保存/刷新/重新打开复测。
+- Evidence: `output/playwright/p0116-afas-bounds-20260721/golden-a-afas-ready.png`, `golden-c-afas-ready.png`, `golden-a-playwright-after-all-outside-drags.png`
 
 #### Final status
 
-IN_PROGRESS
+FIXED_PENDING_BROWSER_RETEST
 
 ---
 
 ### P-0117 — Chromium 导出目录选择器拒绝系统/敏感目录且缺少稳定自定义保存位置
 
-- Status: IN_PROGRESS
+- Status: FIXED_PENDING_BROWSER_RETEST
 - Priority: P0
 - Module: `frontend/src/exportSaveTarget.ts`, `frontend/src/main.tsx`, export API, cross-platform application paths
 - Found date: 2026-07-21
-- Last update: 2026-07-21
+- Last update: 2026-07-22
 - Owner/tool: Codex
 
 #### Problem
@@ -11124,15 +11157,46 @@ Windows dev.8 在“结果与导出”页面强制调用浏览器 `showDirectory
 
 #### Fix summary
 
-待设计确认后实施。
+已把导出目标从浏览器 File System Access API 迁移到本机后端管理：
+
+- 新增 per-user preferences 目录和 `export.json`，长期记住自定义导出目录，升级不覆盖。
+- 默认导出目录为当前用户 Documents 下的 `YYT1771-G3 Exports`；Windows 使用 Known Folder `Documents`，兼容 OneDrive/重定向文档。
+- 后端提供查询、选择、打开、恢复默认和保存导出包 API；Windows 选择目录使用 PowerShell STA `FolderBrowserDialog`，macOS 使用 AppleScript。
+- 保存 ZIP 前验证目录可写，自动避让重名文件，通过同目录 `.part` 临时文件原子落盘。
+- 前端导出弹窗显示完整本地路径、目录类型、更改位置、打开文件夹、恢复默认和导出按钮；不再要求 `showDirectoryPicker()` 或 IndexedDB directory handle。
 
 #### Tests run
 
-尚未执行修复验证；Windows 原生目录选择与权限验证必需。
+```bash
+PYTHONPATH=backend/src pytest -q backend/tests/unit/test_app_paths.py backend/tests/unit/test_user_preferences.py backend/tests/unit/test_native_directory.py backend/tests/unit/test_export_destination_service.py backend/tests/integration/test_export_api.py
+# 26 passed
+
+cd frontend
+node --test tests/exportSaveTarget.test.mjs
+# 5 passed
+
+npm run build
+# PASS
+```
+
+#### Browser retest log
+
+- Retest date: 2026-07-22
+- Browser: Playwright Chromium
+- OS: macOS 26.1
+- Frontend URL: `http://127.0.0.1:5176/`
+- Backend URL: `http://127.0.0.1:8022`
+- Dataset: `golden_c_20260529_dev_lab`
+- Page: Operator `结果与导出` export dialog
+- Steps: 使用 `YYT1771_G3_DOCUMENTS_DIR=output/test-documents` 和 `YYT1771_G3_USER_PREFERENCES_DIR=output/test-user-prefs` 重启本地服务；打开 Golden C run 的 Results；点击“导出结果”；核对弹窗显示完整默认保存路径；点击“导出”；检查页面成功消息、console 和目标目录 ZIP。
+- Expected: 弹窗不出现浏览器默认下载/目录权限提示；导出写入后端管理目录；console 无错误。
+- Actual: 弹窗显示 `output/test-documents/YYT1771-G3 Exports` 完整路径，类型为默认导出文件夹；导出成功并关闭弹窗；console 0 errors；目标目录生成 `yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260722T065941009555Z.zip`，大小 541860 bytes。
+- Result: PASS on macOS Chromium default-destination flow；Windows packaged app 原生选择、打开目录和真实用户 Documents 仍待复测。
+- Evidence: `output/playwright/p0117-export-destination-20260722/dialog-default-destination.png`, `output/playwright/p0117-export-destination-20260722/export-complete.png`, `output/test-documents/YYT1771-G3 Exports/yyt1771-g3-export-run-golden_c_20260529_dev_lab-20260722T065941009555Z.zip`
 
 #### Final status
 
-IN_PROGRESS
+FIXED_PENDING_BROWSER_RETEST
 
 ---
 

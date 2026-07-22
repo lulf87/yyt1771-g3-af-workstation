@@ -59,6 +59,19 @@ def cache_dir() -> Path:
     return _environment_path("YYT1771_G3_CACHE_DIR") or data_dir() / "cache"
 
 
+def preferences_dir() -> Path:
+    configured = _environment_path("YYT1771_G3_USER_PREFERENCES_DIR")
+    if configured is not None:
+        return configured
+    if sys.platform == "win32":
+        local_app_data = _environment_path("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+        return local_app_data / APP_DIR_NAME / "preferences"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME / "preferences"
+    root = _environment_path("XDG_CONFIG_HOME") or (Path.home() / ".config")
+    return root / APP_DIR_NAME / "preferences"
+
+
 def hardware_config_path() -> Path:
     configured = _environment_path("YYT1771_G3_HARDWARE_CONFIG")
     if configured is not None:
@@ -69,7 +82,7 @@ def hardware_config_path() -> Path:
 
 
 def ensure_runtime_directories() -> tuple[Path, ...]:
-    paths = (data_dir(), config_dir(), run_store_dir(), log_dir(), cache_dir())
+    paths = (data_dir(), config_dir(), run_store_dir(), log_dir(), cache_dir(), preferences_dir())
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)
     return paths
