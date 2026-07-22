@@ -164,11 +164,15 @@ import {
   type RoiResizeHandle
 } from "./geometry/roiInteraction";
 import {
+  clampAfasDataPoint,
+  clampAfasPlotPoint,
+  clampTangentControlPoints,
   moveAfasRange,
   resizeAfasRange,
   rotateAfasTangent,
   translateAfasTangent,
   type AfasDataPoint,
+  type AfasDataDomain,
   type AfasRange
 } from "./afasInteraction";
 import {
@@ -6508,12 +6512,15 @@ type AnalysisAfasEditInteraction =
       startPoint: AfasDataPoint;
       slope: number;
       intercept: number;
+      domain: AfasDataDomain;
       baseParameters: AfasAnalysisFormState;
     }
   | {
       kind: "tangent_slope";
       anchor: AfasDataPoint;
       slope: number;
+      domain: AfasDataDomain;
+      minimumTemperatureDelta: number;
       baseParameters: AfasAnalysisFormState;
     };
 
@@ -6698,7 +6705,8 @@ function AnalysisAfasChart({
   const [editError, setEditError] = useState("");
   const brushRef = useRef<{ start: number; current: number } | null>(null);
   const editRef = useRef<AnalysisAfasEditInteraction | null>(null);
-  const draftParametersRef = useRef<AfasAnalysisFormState | null>(null);
+  const candidateParametersRef = useRef<AfasAnalysisFormState | null>(null);
+  const acceptedParametersRef = useRef<AfasAnalysisFormState | null>(null);
   const previewAbortRef = useRef<AbortController | null>(null);
   const previewRequestIdRef = useRef(0);
   const lastPreviewRequestAtRef = useRef(0);
@@ -6730,7 +6738,8 @@ function AnalysisAfasChart({
     setEditError("");
     brushRef.current = null;
     editRef.current = null;
-    draftParametersRef.current = null;
+    candidateParametersRef.current = null;
+    acceptedParametersRef.current = null;
     previewAbortRef.current?.abort();
   }, [analysisIdentity]);
 
@@ -6762,6 +6771,7 @@ function AnalysisAfasChart({
       controller.signal
     ).then((preview) => {
       if (requestId !== previewRequestIdRef.current) return;
+      acceptedParametersRef.current = parameters;
       onAnalysisUpdated(applyAfasPreviewToAnalysis(analysis, preview));
       setEditStatus("idle");
     }).catch((error: unknown) => {
@@ -6800,13 +6810,13 @@ function AnalysisAfasChart({
     rangeKey: AfasEditableRangeKey,
     mode: "move" | "start" | "end"
   ) {
-    if (!editable) return;
+    if (!editable || !model.interactionDomain || model.interactionDomain.availableTemperatures.length < 2) return;
     const parameters = readAfasAnalysisForm(analysis);
     const range = completeRange(parameters[rangeKey]);
-    const temperatures = model.smoothedPoints.map((point) => point.temperature);
+    const temperatures = model.interactionDomain.availableTemperatures;
     if (!range || temperatures.length < 2) return;
     const point = svgEventPoint(event, model);
-    const dataPoint = analysisAfasChartDataPoint(point, model);
+    const dataPoint = analysisAfasChartDataPoint(point, model, true);
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
@@ -6827,7 +6837,8 @@ function AnalysisAfasChart({
           temperatures,
           baseParameters: parameters
         };
-    draftParametersRef.current = null;
+    candidateParametersRef.current = null;
+    acceptedParametersRef.current = null;
     brushRef.current = null;
     setBrush(null);
     setHoverTarget(null);
@@ -6838,10 +6849,17 @@ function AnalysisAfasChart({
     line: AnalysisAfasModel["fitLines"][number],
     mode: "move" | "slope_start" | "slope_end"
   ) {
-    if (!editable || line.kind !== "tangent") return;
+    if (!editable || line.kind !== "tangent" || !model.interactionDomain) return;
+    const tangentControlPoints = clampTangentControlPoints(line.slope, line.intercept, model.interactionDomain);
+    if (tangentControlPoints.length !== 2) return;
     const parameters = readAfasAnalysisForm(analysis);
     const point = svgEventPoint(event, model);
-    const dataPoint = analysisAfasChartDataPoint(point, model);
+    const dataPoint = analysisAfasChartDataPoint(point, model, true);
+    const minimumTemperatureDelta = minimumPositiveTemperatureStep(model.interactionDomain.availableTemperatures) ??
+      Math.max(
+        1e-6,
+        (model.interactionDomain.temperatureMax - model.interactionDomain.temperatureMin) * 0.002
+      );
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
@@ -6851,18 +6869,19 @@ function AnalysisAfasChart({
           startPoint: dataPoint,
           slope: line.slope,
           intercept: line.intercept,
+          domain: model.interactionDomain,
           baseParameters: parameters
         }
       : {
           kind: "tangent_slope",
-          anchor: analysisAfasChartDataPoint(
-            mode === "slope_start" ? { x: line.x2, y: line.y2 } : { x: line.x1, y: line.y1 },
-            model
-          ),
+          anchor: mode === "slope_start" ? tangentControlPoints[1] : tangentControlPoints[0],
           slope: line.slope,
+          domain: model.interactionDomain,
+          minimumTemperatureDelta,
           baseParameters: parameters
         };
-    draftParametersRef.current = null;
+    candidateParametersRef.current = null;
+    acceptedParametersRef.current = null;
     brushRef.current = null;
     setBrush(null);
     setHoverTarget(null);
@@ -6883,7 +6902,7 @@ function AnalysisAfasChart({
     const point = svgEventPoint(event, model);
     const activeEdit = editRef.current;
     if (activeEdit) {
-      const dataPoint = analysisAfasChartDataPoint(point, model);
+      const dataPoint = analysisAfasChartDataPoint(point, model, true);
       let nextParameters: AfasAnalysisFormState;
       if (activeEdit.kind === "range_edge") {
         const nextRange = resizeAfasRange(
@@ -6902,12 +6921,19 @@ function AnalysisAfasChart({
         nextParameters = { ...activeEdit.baseParameters, [activeEdit.rangeKey]: nextRange };
       } else {
         const tangent = activeEdit.kind === "tangent_move"
-          ? translateAfasTangent(activeEdit.slope, activeEdit.intercept, activeEdit.startPoint, dataPoint)
+          ? translateAfasTangent(
+              activeEdit.slope,
+              activeEdit.intercept,
+              activeEdit.startPoint,
+              dataPoint,
+              activeEdit.domain
+            )
           : rotateAfasTangent(
               activeEdit.anchor,
               dataPoint,
               activeEdit.slope,
-              Math.max(1e-6, (model.xRange.max - model.xRange.min) * 0.002)
+              activeEdit.domain,
+              activeEdit.minimumTemperatureDelta
             );
         nextParameters = {
           ...activeEdit.baseParameters,
@@ -6915,7 +6941,7 @@ function AnalysisAfasChart({
           tangent_intercept_override: tangent.intercept
         };
       }
-      draftParametersRef.current = nextParameters;
+      candidateParametersRef.current = nextParameters;
       requestInteractivePreview(nextParameters);
       return;
     }
@@ -6933,12 +6959,15 @@ function AnalysisAfasChart({
   function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
     if (editRef.current) {
       editRef.current = null;
-      const parameters = draftParametersRef.current;
-      draftParametersRef.current = null;
+      const acceptedParameters = acceptedParametersRef.current;
+      candidateParametersRef.current = null;
+      acceptedParametersRef.current = null;
+      previewAbortRef.current?.abort();
+      previewRequestIdRef.current += 1;
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      if (parameters) void persistInteractiveAdjustment(parameters);
+      if (acceptedParameters) void persistInteractiveAdjustment(acceptedParameters);
       return;
     }
     const activeBrush = brushRef.current;
@@ -7403,24 +7432,38 @@ function analysisAfasChartX(temperature: number, model: AnalysisAfasModel): numb
 
 function analysisAfasChartDataPoint(
   point: { x: number; y: number },
-  model: AnalysisAfasModel
+  model: AnalysisAfasModel,
+  constrainForEdit = false
 ): AfasDataPoint {
-  return {
+  const boundedPlotPoint = clampAfasPlotPoint(point, model.plot);
+  const converted = {
     temperature: inverseScaleValue(
-      point.x,
+      boundedPlotPoint.x,
       model.plot.left,
       model.plot.right,
       model.xRange.min,
       model.xRange.max
     ),
     distance: inverseScaleValue(
-      point.y,
+      boundedPlotPoint.y,
       model.plot.bottom,
       model.plot.top,
       model.yRange.min,
       model.yRange.max
     )
   };
+  return constrainForEdit && model.interactionDomain
+    ? clampAfasDataPoint(converted, model.interactionDomain)
+    : converted;
+}
+
+function minimumPositiveTemperatureStep(values: number[]): number | null {
+  const sorted = [...new Set(values.filter(Number.isFinite))].sort((left, right) => left - right);
+  const positiveDeltas = sorted
+    .slice(1)
+    .map((value, index) => value - sorted[index])
+    .filter((value) => value > 0);
+  return positiveDeltas.length ? Math.min(...positiveDeltas) : null;
 }
 
 function pointInPlot(

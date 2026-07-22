@@ -127,7 +127,7 @@ test("AFAS chart exposes range, tangent-position, and tangent-slope drag handles
   assert.match(chart, /previewAbortRef\.current\?\.abort\(\)/);
   assert.match(chart, /requestId !== previewRequestIdRef\.current/);
   assert.match(chart, /setPointerCapture\(event\.pointerId\)/);
-  assert.match(chart, /if \(parameters\) void persistInteractiveAdjustment\(parameters\)/);
+  assert.match(chart, /if \(acceptedParameters\) void persistInteractiveAdjustment\(acceptedParameters\)/);
   assert.match(chart, /recomputeRunAnalysis\(runId/);
   assert.match(chart, /Restore automatic calculation/);
   assert.match(chart, /persistInteractiveAdjustment\(DEFAULT_AFAS_ANALYSIS_FORM, "automatic"\)/);
@@ -141,6 +141,27 @@ test("AFAS chart exposes range, tangent-position, and tangent-slope drag handles
     stylesSource,
     /\.analysisAfasRangeHandleHitTarget\s*\{[^}]*fill:\s*transparent[^}]*pointer-events:\s*all/
   );
+});
+
+test("AFAS chart clamps edits and saves only backend-accepted parameters", () => {
+  const chart = sourceSlice(
+    "function AnalysisAfasChart({",
+    "function AnalysisAfasSummaryStrip("
+  );
+  const dataPointHelper = sourceSlice(
+    "function analysisAfasChartDataPoint(",
+    "function pointInPlot("
+  );
+
+  assert.match(dataPointHelper, /clampAfasPlotPoint/);
+  assert.match(dataPointHelper, /clampAfasDataPoint/);
+  assert.match(chart, /model\.interactionDomain\.availableTemperatures/);
+  assert.match(chart, /candidateParametersRef/);
+  assert.match(chart, /acceptedParametersRef/);
+  assert.match(chart, /acceptedParametersRef\.current\s*=\s*parameters/);
+  assert.match(chart, /previewAbortRef\.current\?\.abort\(\)/);
+  assert.match(chart, /persistInteractiveAdjustment\(acceptedParameters/);
+  assert.doesNotMatch(chart, /persistInteractiveAdjustment\(candidateParameters/);
 });
 
 test("AFAS automatic restore detects every persisted manual override without treating resolved ranges as manual", () => {
