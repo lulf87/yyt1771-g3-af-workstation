@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import platform
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -267,7 +268,11 @@ custom:
     sdk_python_dir = tmp_path / "MvImport"
     sdk_python_dir.mkdir()
     (sdk_python_dir / "MvCameraControl_class.py").write_text("# test binding\n", encoding="utf-8")
-    sdk_library = tmp_path / "libMvCameraControl.dylib"
+    library_name = {
+        "Windows": "MvCameraControl.dll",
+        "Darwin": "libMvCameraControl.dylib",
+    }.get(platform.system(), "libMvCameraControl.so")
+    sdk_library = tmp_path / library_name
     sdk_library.write_bytes(b"test runtime")
 
     original_load = hardware_setup_service._load_save_base_mapping
