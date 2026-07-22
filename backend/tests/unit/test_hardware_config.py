@@ -273,7 +273,15 @@ custom:
         "Darwin": "libMvCameraControl.dylib",
     }.get(platform.system(), "libMvCameraControl.so")
     sdk_library = tmp_path / library_name
-    sdk_library.write_bytes(b"test runtime")
+    if platform.system() == "Windows":
+        pe_fixture = bytearray(0x90)
+        pe_fixture[0:2] = b"MZ"
+        pe_fixture[0x3C:0x40] = (0x80).to_bytes(4, "little")
+        pe_fixture[0x80:0x84] = b"PE\x00\x00"
+        pe_fixture[0x84:0x86] = (0x8664).to_bytes(2, "little")
+        sdk_library.write_bytes(pe_fixture)
+    else:
+        sdk_library.write_bytes(b"test runtime")
 
     original_load = hardware_setup_service._load_save_base_mapping
 
