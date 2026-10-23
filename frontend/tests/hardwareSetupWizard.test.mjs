@@ -331,7 +331,9 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /delayMs:\s*200/);
   assert.match(component, /type="range"/);
   assert.match(component, /min=\{capability\.minimum_us \?\? undefined\}/);
-  assert.match(component, /max=\{capability\.maximum_us \?\? undefined\}/);
+  assert.match(component, /max=\{exposureUpperBound\(capability\) \?\? undefined\}/);
+  assert.match(component, /const safe = capability\.safe_maximum_us/);
+  assert.match(component, /Safe maximum/);
   assert.match(component, /step=\{capability\.increment_us \?\? "any"\}/);
   assert.match(component, /scheduleExposureDraft\(/);
   assert.match(component, /onBlur=\{commitDraft\}/);
