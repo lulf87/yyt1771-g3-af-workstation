@@ -139,8 +139,13 @@ _camera_preview_source: CameraSource | None = None
 _camera_preview_profile_key: str | None = None
 _camera_operation_lock = threading.Lock()
 _camera_operation_owner: str | None = None
-_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS = 1.0
+# The setup preview polls back-to-back whenever one frame takes longer than the polling
+# interval (typical with long exposures), so the camera lock has almost no free gap. Probe
+# capture and exposure updates must therefore queue for at most one frame instead of
+# failing fast with a 409 that the UI can only report as "camera is busy".
+_CAMERA_EXPOSURE_OPERATION_TIMEOUT_SECONDS = 5.0
 _HARDWARE_CAMERA_OPERATION_TIMEOUT_SECONDS = 1.0
+_SETUP_PROBE_OPERATION_TIMEOUT_SECONDS = 5.0
 _real_camera_stream_stop_lock = threading.Lock()
 _real_camera_stream_stop_events: dict[str, threading.Event] = {}
 
@@ -1249,7 +1254,10 @@ def probe_real_camera_setup_frame(request: RealCameraSetupProbeRequest) -> dict[
             )
         else:
             # Omitting frame_png_data_url captures a fresh preview frame and probes that exact frame.
-            with _camera_operation("setup_probe_capture", blocking=False):
+            with _camera_operation(
+                "setup_probe_capture",
+                timeout=_SETUP_PROBE_OPERATION_TIMEOUT_SECONDS,
+            ):
                 with _camera_preview_lock:
                     source = _get_preview_camera_source(camera_profile)
                     frame = source.preview_frame()

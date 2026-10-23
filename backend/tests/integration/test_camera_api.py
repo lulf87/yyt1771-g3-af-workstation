@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -2255,3 +2256,68 @@ def test_real_camera_run_stop_endpoint_marks_active_stream() -> None:
         assert api_main._real_camera_stream_stop_requested(run_id) is True
     finally:
         api_main._clear_real_camera_stream_stop(run_id)
+
+
+def test_setup_probe_waits_for_busy_camera_instead_of_failing_fast(monkeypatch) -> None:  # noqa: ANN001
+    """The setup preview polls back-to-back, so the probe must queue for the camera lock.
+
+    Regression: the probe used ``blocking=False``, so the second "probe current frame" click
+    returned 409 "Real camera is busy with setup_preview" while a preview request was in flight.
+    """
+
+    from yyt1771_g3.api import main as api_main
+
+    api_main._reset_preview_camera_source()
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", FakeApiCameraSource)
+
+    client = TestClient(api_main.app)
+    release = threading.Event()
+
+    def hold_camera() -> None:
+        with api_main._camera_operation("setup_preview", blocking=False):
+            release.wait(timeout=10.0)
+
+    holder = threading.Thread(target=hold_camera, daemon=True)
+    holder.start()
+    deadline = time.monotonic() + 5.0
+    while api_main._camera_operation_owner != "setup_preview" and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert api_main._camera_operation_owner == "setup_preview"
+
+    def release_after_one_frame() -> None:
+        time.sleep(0.3)
+        release.set()
+
+    threading.Thread(target=release_after_one_frame, daemon=True).start()
+
+    started = time.monotonic()
+    try:
+        response = client.post(
+            "/api/camera/setup-probe",
+            json={
+                "measurement_definition": {
+                    "measurement_id": "real-probe-waits-for-lock",
+                    "source": "real_camera",
+                    "object_class": "WHOLE_ENVELOPE",
+                    "detector": "ContrastWidestSpanDetector",
+                    "width_mode": "max_width",
+                    "measurement_coordinates": "source_pixel",
+                    "roi": {
+                        "type": "rotated_rect",
+                        "center_x": 60.0,
+                        "center_y": 35.0,
+                        "width": 70.0,
+                        "height": 40.0,
+                        "angle_deg": 0.0,
+                    },
+                    "detector_config": {"min_component_area_px": 20},
+                },
+            },
+        )
+    finally:
+        elapsed = time.monotonic() - started
+        release.set()
+        holder.join(timeout=5.0)
+
+    assert response.status_code == 200, response.text
+    assert elapsed >= 0.25, f"probe returned in {elapsed:.3f}s, it did not wait for the camera lock"
