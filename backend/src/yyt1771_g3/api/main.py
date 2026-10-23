@@ -555,6 +555,7 @@ def _camera_exposure_payload(
         "supported": capability.supported,
         "minimum_us": capability.minimum_us,
         "maximum_us": capability.maximum_us,
+        "safe_maximum_us": capability.safe_maximum_us,
         "increment_us": capability.increment_us,
         "requested_us": capability.requested_us,
         "actual_us": capability.actual_us,
@@ -615,7 +616,7 @@ def _camera_control_http_exception(exc: CameraControlError) -> HTTPException:
             exc.details,
         )
     return HTTPException(
-        status_code=422 if exc.stage in {"capability", "apply"} else 500,
+        status_code=422 if exc.stage in {"capability", "apply", "range"} else 500,
         detail={
             "message": str(exc),
             "stage": exc.stage,

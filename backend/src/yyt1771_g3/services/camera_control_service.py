@@ -70,6 +70,13 @@ def apply_camera_exposure(
             "Camera does not expose manual exposure control.",
             stage="capability",
         )
+    safe_maximum = previous.safe_maximum_us
+    if safe_maximum is not None and requested_us > safe_maximum:
+        raise CameraControlError(
+            f"Exposure must stay within {safe_maximum:.0f} microseconds for the current frame timeout.",
+            stage="range",
+            details={"requested_us": requested_us, "safe_maximum_us": safe_maximum},
+        )
     try:
         actual = source.set_exposure_us(requested_us)
     except Exception as exc:

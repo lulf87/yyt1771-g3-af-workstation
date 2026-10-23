@@ -44,10 +44,17 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+function exposureUpperBound(capability: CameraExposureState): number | null {
+  const safe = capability.safe_maximum_us;
+  if (typeof safe === "number" && Number.isFinite(safe) && safe > 0) return safe;
+  return capability.maximum_us;
+}
+
 function exposureValueInRange(value: number, capability: CameraExposureState): boolean {
   if (!Number.isFinite(value)) return false;
   if (capability.minimum_us !== null && value < capability.minimum_us) return false;
-  if (capability.maximum_us !== null && value > capability.maximum_us) return false;
+  const upper = exposureUpperBound(capability);
+  if (upper !== null && value > upper) return false;
   return true;
 }
 
@@ -215,7 +222,7 @@ export function ExposureControl({
     const result = submitExposureDraft({
       draft,
       minimumUs: capability.minimum_us,
-      maximumUs: capability.maximum_us,
+      maximumUs: exposureUpperBound(capability),
       confirmedUs: confirmedRef.current,
       latestIntentUs: latestIntentRef.current,
       lastRequestedUs: lastRequestedRef.current,
@@ -239,10 +246,19 @@ export function ExposureControl({
         latestIntentRef.current = null;
         lastRequestedRef.current = null;
       }
+      const safeMaximum = capability.safe_maximum_us;
+      const draftValue = Number(draft);
+      const exceedsSafe =
+        typeof safeMaximum === "number" &&
+        Number.isFinite(safeMaximum) &&
+        Number.isFinite(draftValue) &&
+        draftValue > safeMaximum;
       rejectDraft(
         t(
           result.reason === "range"
-            ? "Exposure is outside the camera range"
+            ? exceedsSafe
+              ? "Exposure exceeds the safe maximum for the current frame timeout"
+              : "Exposure is outside the camera range"
             : "Exposure must be a finite number"
         )
       );
@@ -292,12 +308,21 @@ export function ExposureControl({
           </small>
         ) : null}
       </div>
+      {capability?.supported &&
+      typeof capability.safe_maximum_us === "number" &&
+      capability.maximum_us !== null &&
+      capability.safe_maximum_us < capability.maximum_us ? (
+        <small className="cameraExposureSafeLimit">
+          {t("Safe maximum")}: {Math.floor(capability.safe_maximum_us)} μs（
+          {t("limited by the frame timeout")}）
+        </small>
+      ) : null}
       {capability?.supported ? (
         <>
           <input
             aria-label={t("Camera exposure slider")}
             disabled={disabled || runActive || capability.editable === false}
-            max={capability.maximum_us ?? undefined}
+            max={exposureUpperBound(capability) ?? undefined}
             min={capability.minimum_us ?? undefined}
             onChange={(event) => {
               const nextDraft = event.target.value;
@@ -326,7 +351,7 @@ export function ExposureControl({
             <span>{t("Exposure (μs)")}</span>
             <input
               disabled={disabled || runActive || capability.editable === false}
-              max={capability.maximum_us ?? undefined}
+              max={exposureUpperBound(capability) ?? undefined}
               min={capability.minimum_us ?? undefined}
               onBlur={commitDraft}
               onChange={(event) => setDraft(event.target.value)}

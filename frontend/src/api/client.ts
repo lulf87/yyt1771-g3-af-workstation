@@ -274,6 +274,7 @@ export type CameraExposureState = {
   supported: boolean;
   minimum_us: number | null;
   maximum_us: number | null;
+  safe_maximum_us?: number | null;
   increment_us: number | null;
   requested_us: number | null;
   actual_us: number | null;

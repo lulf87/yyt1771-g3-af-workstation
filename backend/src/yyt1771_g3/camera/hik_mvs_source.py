@@ -11,7 +11,12 @@ from typing import Any
 
 import numpy as np
 
-from yyt1771_g3.camera.base import CameraExposureCapability, CameraFrame, CameraUnavailableError
+from yyt1771_g3.camera.base import (
+    CameraExposureCapability,
+    CameraFrame,
+    CameraUnavailableError,
+    safe_exposure_maximum_us,
+)
 from yyt1771_g3.core.timebase import now_ms
 
 
@@ -179,6 +184,10 @@ class _OfficialMvsCameraSession:
             increment_us=increment,
             requested_us=_finite_float(self.profile.get("exposure_us")),
             actual_us=actual,
+            safe_maximum_us=safe_exposure_maximum_us(
+                camera_maximum_us=maximum,
+                timeout_ms=int(self.profile.get("timeout_ms", 1000) or 1000),
+            ),
         )
 
     def set_exposure_us(self, value: float) -> float:
@@ -191,6 +200,13 @@ class _OfficialMvsCameraSession:
         if requested < capability.minimum_us or requested > capability.maximum_us:
             raise ValueError(
                 f"Exposure must be between {capability.minimum_us} and {capability.maximum_us} microseconds."
+            )
+        safe_maximum = capability.safe_maximum_us
+        if safe_maximum is not None and requested > safe_maximum:
+            raise ValueError(
+                "Exposure must stay within "
+                f"{safe_maximum:.0f} microseconds for the current {int(self.profile.get('timeout_ms', 1000) or 1000)} ms "
+                "frame timeout; lower the exposure or raise camera.timeout_ms."
             )
         if capability.increment_us is not None and capability.increment_us > 0:
             steps = (requested - capability.minimum_us) / capability.increment_us

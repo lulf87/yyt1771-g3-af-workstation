@@ -432,6 +432,7 @@ def test_camera_exposure_read_selected_camera_uses_authoritative_partial_identit
         "supported": True,
         "minimum_us": 100.0,
         "maximum_us": 100000.0,
+        "safe_maximum_us": None,
         "increment_us": 1.0,
         "requested_us": 23456.0,
         "actual_us": 23456.0,
@@ -2384,5 +2385,42 @@ def test_setup_probe_marks_frame_with_packet_loss_invalid(monkeypatch) -> None: 
             item["detection_result"]["detection_status"] == "INVALID_FRAME_DATA_LOSS"
             for item in body["region_results"]
         )
+    finally:
+        api_main._reset_preview_camera_source()
+
+
+def test_camera_exposure_update_rejects_values_above_the_safe_maximum(monkeypatch) -> None:  # noqa: ANN001
+    """A 1 s frame timeout cannot deliver a 2 s exposure; the API must refuse it up front."""
+
+    from yyt1771_g3.api import main as api_main
+
+    api_main._reset_preview_camera_source()
+
+    class CappedCameraSource(FakeApiCameraSource):
+        def read_exposure_capability(self) -> CameraExposureCapability:
+            actual = float(self.profile.get("exposure_us", 10000.0))
+            return CameraExposureCapability(
+                True,
+                100.0,
+                2499840.0,
+                1.0,
+                actual,
+                actual,
+                safe_maximum_us=500.0,
+            )
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", CappedCameraSource)
+    client = TestClient(api_main.app)
+    try:
+        rejected = client.put("/api/camera/exposure", json={"exposure_us": 691032.0})
+        assert rejected.status_code == 422, rejected.text
+        detail = rejected.json()["detail"]
+        assert detail["stage"] == "range"
+        assert detail["details"]["safe_maximum_us"] == 500.0
+        assert "500 microseconds" in detail["message"]
+
+        accepted = client.put("/api/camera/exposure", json={"exposure_us": 400.0})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["safe_maximum_us"] == 500.0
     finally:
         api_main._reset_preview_camera_source()
