@@ -30,6 +30,8 @@ from yyt1771_g3.camera.base import (
 from yyt1771_g3.camera.factory import HIK_CAMERA_BACKENDS, build_camera_source
 from yyt1771_g3.camera.hik_mvs_source import HikMvsCameraSource
 from yyt1771_g3.camera.simulated_source import SimulatedCameraSource, development_fake_hardware_requested
+from yyt1771_g3.core.build_info import UNKNOWN as BUILD_INFO_UNKNOWN
+from yyt1771_g3.core.build_info import build_info
 from yyt1771_g3.core.hardware_config import (
     HARDWARE_CONFIG_ENV,
     SETUP_PREVIEW_TARGET_FRAME_RATE_HZ,
@@ -355,7 +357,16 @@ class _CameraOperationStreamingResponse(StreamingResponse):
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    info = build_info()
+    version = info["version"]
+    if version == BUILD_INFO_UNKNOWN:
+        version = app.version
+    return {
+        "status": "ok",
+        "version": version,
+        "git_sha": info["git_sha"],
+        "build_time": info["build_time"],
+    }
 
 
 @app.get("/api/app/runtime")

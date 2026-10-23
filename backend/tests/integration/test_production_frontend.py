@@ -15,4 +15,5 @@ def test_backend_serves_built_frontend_and_spa_fallback() -> None:
     assert "text/html" in home.headers["content-type"]
     assert route.status_code == 200
     assert route.text == home.text
-    assert health.json() == {"status": "ok"}
+    assert health.json()["status"] == "ok"
+    assert {"version", "git_sha", "build_time"} <= set(health.json())
