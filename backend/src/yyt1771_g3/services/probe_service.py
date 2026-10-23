@@ -7,6 +7,7 @@ import numpy as np
 
 from yyt1771_g3.core.image_io import array_to_png_bytes
 from yyt1771_g3.core.models import CurvePoint, DetectionResult, MeasurementDefinition
+from yyt1771_g3.services.frame_quality import invalidate_on_frame_data_loss
 from yyt1771_g3.services.offline_dataset import OfflineDatasetRegistry
 from yyt1771_g3.services.region_detection_service import RegionFrameResult, detect_regions_for_frame
 from yyt1771_g3.services.source_provenance import offline_dataset_provenance
@@ -63,7 +64,10 @@ def probe_setup_frame(
         frame_array,
         measurement,
         frame_index=frame_index,
-        detection_transform=lambda detection: _attach_frame_timestamp(detection, frame_timestamp_ms),
+        detection_transform=lambda detection: _attach_frame_timestamp(
+            invalidate_on_frame_data_loss(detection, camera_meta),
+            frame_timestamp_ms,
+        ),
     )
     first = region_results[0]
     return {

@@ -4650,6 +4650,7 @@ function CameraSetupStatusPanel({
   const t = useUiText();
   const mode = previewState?.mode ?? "live";
   const isFrozen = mode === "frozen";
+  const lostPackets = previewLostPacketCount(preview);
   return (
     <div className="controlStack">
       <h3>{t("Real Camera Source")}</h3>
@@ -4671,10 +4672,16 @@ function CameraSetupStatusPanel({
         <Metric label="ip" value={previewValue(preview, "ip")} />
         <Metric label="pixel_format" value={previewValue(preview, "pixel_format")} />
         <Metric label="Frame shape" value={preview ? preview.shape.join(" × ") : "None"} />
+        <Metric label="lost_packets" value={preview ? lostPackets : "None"} />
         <Metric label="Timestamp" value={preview?.timestamp_ms ?? "None"} />
         <Metric label="Frozen timestamp" value={previewState?.frozenTimestampMs ?? "None"} />
         <Metric label="Live display rate" value={isFrozen ? "Paused" : setupPreviewFpsLabel(previewFps, language)} />
       </dl>
+      {lostPackets > 0 ? (
+        <div className="inlineWarning">
+          {t("Camera packet loss: frames are incomplete, so detections are marked INVALID.")} ({lostPackets})
+        </div>
+      ) : null}
       <NumberField
         label="setup_live_fps"
         min={0}
@@ -8557,6 +8564,12 @@ function previewValue(preview: CameraPreviewResponse | null, key: "model" | "ser
   if (topLevel) return topLevel;
   const metaValue = preview?.camera_meta[key];
   return typeof metaValue === "string" && metaValue ? metaValue : "None";
+}
+
+function previewLostPacketCount(preview: CameraPreviewResponse | null): number {
+  const raw = preview?.camera_meta?.camera_lost_packet_count;
+  const parsed = typeof raw === "number" ? raw : Number(raw ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function cameraPreviewErrorFromUnknown(err: unknown): CameraPreviewError {

@@ -57,6 +57,9 @@ const ZH_TEXT: Record<string, string> = {
   ip: "网络地址",
   pixel_format: "像素格式",
   "Frame shape": "画面尺寸",
+  lost_packets: "丢包数（每帧）",
+  "Camera packet loss: frames are incomplete, so detections are marked INVALID.":
+    "相机丢包：帧数据不完整，检测结果已判 INVALID。请检查网线、网卡巨帧与接收缓冲。",
   Timestamp: "时间戳",
   "Frozen timestamp": "冻结帧时间戳",
   "Live display rate": "实时显示帧率",

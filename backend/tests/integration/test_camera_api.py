@@ -2321,3 +2321,68 @@ def test_setup_probe_waits_for_busy_camera_instead_of_failing_fast(monkeypatch) 
 
     assert response.status_code == 200, response.text
     assert elapsed >= 0.25, f"probe returned in {elapsed:.3f}s, it did not wait for the camera lock"
+
+
+def _probe_payload(measurement_id: str) -> dict:
+    return {
+        "measurement_definition": {
+            "measurement_id": measurement_id,
+            "source": "real_camera",
+            "object_class": "WHOLE_ENVELOPE",
+            "detector": "ContrastWidestSpanDetector",
+            "width_mode": "max_width",
+            "measurement_coordinates": "source_pixel",
+            "roi": {
+                "type": "rotated_rect",
+                "center_x": 60.0,
+                "center_y": 35.0,
+                "width": 70.0,
+                "height": 40.0,
+                "angle_deg": 0.0,
+            },
+            "detector_config": {"min_component_area_px": 20},
+        },
+    }
+
+
+def test_setup_probe_marks_frame_with_packet_loss_invalid(monkeypatch) -> None:  # noqa: ANN001
+    """A truncated GigE frame must never yield a formal distance (INVALID beats wrong)."""
+
+    from yyt1771_g3.api import main as api_main
+
+    api_main._reset_preview_camera_source()
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", FakeApiCameraSource)
+
+    client = TestClient(api_main.app)
+    try:
+        clean = client.post("/api/camera/setup-probe", json=_probe_payload("real-probe-clean"))
+        assert clean.status_code == 200, clean.text
+        assert clean.json()["detection_result"]["detection_status"] == "VALID"
+        assert clean.json()["detection_result"]["distance_px"] is not None
+    finally:
+        api_main._reset_preview_camera_source()
+
+    class LossyCameraSource(FakeApiCameraSource):
+        def preview_frame(self) -> CameraFrame:
+            frame = super().preview_frame()
+            return CameraFrame(
+                array=frame.array,
+                timestamp_ms=frame.timestamp_ms,
+                camera_meta={**frame.camera_meta, "camera_lost_packet_count": 3021},
+            )
+
+    monkeypatch.setattr(api_main, "HikMvsCameraSource", LossyCameraSource)
+    try:
+        lossy = client.post("/api/camera/setup-probe", json=_probe_payload("real-probe-lossy"))
+        assert lossy.status_code == 200, lossy.text
+        body = lossy.json()
+        assert body["detection_result"]["detection_status"] == "INVALID_FRAME_DATA_LOSS"
+        assert body["detection_result"]["distance_px"] is None
+        assert body["detection_result"]["ab_points"] is None
+        assert body["camera_meta"]["camera_lost_packet_count"] == 3021
+        assert all(
+            item["detection_result"]["detection_status"] == "INVALID_FRAME_DATA_LOSS"
+            for item in body["region_results"]
+        )
+    finally:
+        api_main._reset_preview_camera_source()

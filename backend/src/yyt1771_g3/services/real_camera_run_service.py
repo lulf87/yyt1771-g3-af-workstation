@@ -33,6 +33,7 @@ from yyt1771_g3.services.analysis_service import (
     detection_results_by_region,
 )
 from yyt1771_g3.services.distance_outlier_filter import CausalDistanceOutlierFilter
+from yyt1771_g3.services.frame_quality import invalidate_on_frame_data_loss
 from yyt1771_g3.services.live_point_status import build_live_point_status
 from yyt1771_g3.services.region_detection_service import (
     RegionFrameResult,
@@ -621,6 +622,7 @@ def _iter_real_camera_run_events_multi(
                     frame.timestamp_ms,
                     temperature,
                     temp_sync_target_ms,
+                    camera_meta=frame.camera_meta,
                 ),
             )
             first = region_results[0]
@@ -1085,7 +1087,13 @@ def _process_real_camera_frame(
             analysis=suspicion.analysis,
             enhanced_rerun_used=False,
         )
-    detection = _attach_temperature(detection, frame.timestamp_ms, temperature, temp_sync_target_ms)
+    detection = _attach_temperature(
+        detection,
+        frame.timestamp_ms,
+        temperature,
+        temp_sync_target_ms,
+        camera_meta=frame.camera_meta,
+    )
     frame_record = FrameRecord(
         frame_index=frame_index,
         shape=list(frame.array.shape),
@@ -1200,6 +1208,7 @@ def _attach_temperature(
     frame_timestamp_ms: int | None,
     temperature: TemperatureReading,
     ok_delta_ms: float,
+    camera_meta: dict[str, Any] | None = None,
 ) -> DetectionResult:
     delta_ms = _temperature_delta_ms(frame_timestamp_ms, temperature.timestamp_ms)
     if temperature.celsius is None or temperature.timestamp_ms is None:
@@ -1220,7 +1229,7 @@ def _attach_temperature(
             "temperature_sync_status": status,
         }
     )
-    return DetectionResult.model_validate(payload)
+    return invalidate_on_frame_data_loss(DetectionResult.model_validate(payload), camera_meta)
 
 
 def _temperature_delta_ms(frame_timestamp_ms: int | None, temperature_timestamp_ms: int | None) -> float | None:
