@@ -314,7 +314,14 @@ export function ExposureControl({
       capability.safe_maximum_us < capability.maximum_us ? (
         <small className="cameraExposureSafeLimit">
           {t("Safe maximum")}: {Math.floor(capability.safe_maximum_us)} μs（
-          {t("limited by the frame timeout")}）
+          {t(
+            capability.safe_maximum_source === "config"
+              ? "configured cap"
+              : capability.safe_maximum_source === "camera"
+                ? "camera hardware limit"
+                : "limited by the frame timeout"
+          )}
+          ）
         </small>
       ) : null}
       {capability?.supported ? (

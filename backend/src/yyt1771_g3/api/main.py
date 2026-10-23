@@ -556,6 +556,7 @@ def _camera_exposure_payload(
         "minimum_us": capability.minimum_us,
         "maximum_us": capability.maximum_us,
         "safe_maximum_us": capability.safe_maximum_us,
+        "safe_maximum_source": capability.safe_maximum_source,
         "increment_us": capability.increment_us,
         "requested_us": capability.requested_us,
         "actual_us": capability.actual_us,

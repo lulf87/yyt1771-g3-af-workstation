@@ -53,7 +53,9 @@ const ZH_TEXT: Record<string, string> = {
   "Current exposure": "当前曝光",
   "Camera range": "相机范围",
   "Safe maximum": "安全上限",
+  "configured cap": "配置上限",
   "limited by the frame timeout": "受取帧超时限制",
+  "camera hardware limit": "相机硬件上限",
   "Exposure exceeds the safe maximum for the current frame timeout":
     "曝光超过当前取帧超时允许的安全上限，请降低曝光或提高 camera.timeout_ms",
   model: "相机型号",

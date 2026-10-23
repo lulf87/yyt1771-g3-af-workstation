@@ -15,7 +15,7 @@ from yyt1771_g3.camera.base import (
     CameraExposureCapability,
     CameraFrame,
     CameraUnavailableError,
-    safe_exposure_maximum_us,
+    exposure_limits,
 )
 from yyt1771_g3.core.timebase import now_ms
 
@@ -177,6 +177,11 @@ class _OfficialMvsCameraSession:
                 requested_us=_finite_float(self.profile.get("exposure_us")),
             )
         minimum, maximum, increment, actual = values
+        safe_maximum, safe_source = exposure_limits(
+            camera_maximum_us=maximum,
+            timeout_ms=int(self.profile.get("timeout_ms", 1000) or 1000),
+            configured_maximum_us=_finite_float(self.profile.get("exposure_max_us")),
+        )
         return CameraExposureCapability(
             supported=True,
             minimum_us=minimum,
@@ -184,10 +189,8 @@ class _OfficialMvsCameraSession:
             increment_us=increment,
             requested_us=_finite_float(self.profile.get("exposure_us")),
             actual_us=actual,
-            safe_maximum_us=safe_exposure_maximum_us(
-                camera_maximum_us=maximum,
-                timeout_ms=int(self.profile.get("timeout_ms", 1000) or 1000),
-            ),
+            safe_maximum_us=safe_maximum,
+            safe_maximum_source=safe_source,
         )
 
     def set_exposure_us(self, value: float) -> float:

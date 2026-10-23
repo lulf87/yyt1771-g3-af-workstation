@@ -275,6 +275,7 @@ export type CameraExposureState = {
   minimum_us: number | null;
   maximum_us: number | null;
   safe_maximum_us?: number | null;
+  safe_maximum_source?: "config" | "frame_timeout" | "camera" | "";
   increment_us: number | null;
   requested_us: number | null;
   actual_us: number | null;

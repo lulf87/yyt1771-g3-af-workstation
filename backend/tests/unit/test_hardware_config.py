@@ -332,3 +332,27 @@ custom:
     assert saved["camera"]["gain_db"] == 2.5
     assert saved["run"] == {"measurement_target_hz": 10}
     assert saved["custom"] == {"retained": True}
+
+
+def test_load_hardware_config_reads_operator_exposure_cap(tmp_path: Path) -> None:
+    config_path = tmp_path / "hardware.yaml"
+    config_path.write_text(
+        """
+camera:
+  exposure_us: 50000
+  exposure_max_us: 300000
+""",
+        encoding="utf-8",
+    )
+
+    config = load_hardware_config(config_path)
+
+    assert config.camera.exposure_us == 50000.0
+    assert config.camera.exposure_max_us == 300000.0
+
+
+def test_load_hardware_config_leaves_exposure_cap_unset_by_default(tmp_path: Path) -> None:
+    config_path = tmp_path / "hardware.yaml"
+    config_path.write_text("{}", encoding="utf-8")
+
+    assert load_hardware_config(config_path).camera.exposure_max_us is None

@@ -433,6 +433,7 @@ def test_camera_exposure_read_selected_camera_uses_authoritative_partial_identit
         "minimum_us": 100.0,
         "maximum_us": 100000.0,
         "safe_maximum_us": None,
+        "safe_maximum_source": "",
         "increment_us": 1.0,
         "requested_us": 23456.0,
         "actual_us": 23456.0,
