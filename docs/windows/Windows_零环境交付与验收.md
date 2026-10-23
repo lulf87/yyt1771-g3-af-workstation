@@ -89,4 +89,67 @@ C:\Program Files (x86)\Common Files\MVS\Runtime\Win64_x64\MvCameraControl.dll
 - 连接 LU92XX 后完成 COM 口枚举、温度读取、测量与异常拔出处理。
 - 使用真实硬件运行 Setup / Probe / Run / Analysis / Export 整个流程并保存证据。
 
-当前 P-0107 尚未解决：验收实时预览时只保留一个 Operator 页面，避免多个页面同时轮询相机产生间歇性 409。此限制不影响单操作员页面的正式验收，但不能据此宣称多客户端共享预览已完成。
+当前 P-0107 尚未解决：验收实时预览时只保留一个 Operator 页面，避免多个页面同时轮询相机产生间歇性 409。此限制不影响单操作员页面的正式验收，但不能据此宣称多客户端共享预览已完成。2026-10-23 起，“检测当前帧”和曝光写入已改为排队等待相机锁（最多 5 s），不再因为页面轮询在跑而立即返回 409。
+
+## GigE 网卡调优（每台新机必做）
+
+一帧 `3072 × 2048 × 1 B = 6.29 MB`，10 fps 约 500 Mbps。Windows 网卡默认配置撑不住这个流，
+典型表现是**画面全黑或残缺，但 API 仍返回 `camera_status=ok`**——2026-10-23 客户机实测每帧丢 3021 个包（约 72%），
+而检测在残缺帧上算出了 1904.00 px 的错误距离。
+
+前置条件：相机直连这张专用网卡；若必须经过交换机，交换机需支持 9K 巨帧。
+
+```powershell
+$n = "Ethernet"   # 先用 Get-NetAdapter 确认真实名称
+Get-NetAdapter -Name $n | Select-Object Name, InterfaceDescription, Status, LinkSpeed   # 必须是 1 Gbps
+
+Set-NetAdapterAdvancedProperty -Name $n -RegistryKeyword "*JumboPacket"         -RegistryValue "9014"
+Set-NetAdapterAdvancedProperty -Name $n -RegistryKeyword "*EEE"                 -RegistryValue "0"
+Set-NetAdapterAdvancedProperty -Name $n -RegistryKeyword "EnableGreenEthernet"  -RegistryValue "0"
+Set-NetAdapterAdvancedProperty -Name $n -RegistryKeyword "GigaLite"             -RegistryValue "0"
+Set-NetAdapterAdvancedProperty -Name $n -RegistryKeyword "PowerSavingMode"      -RegistryValue "0"
+Set-NetAdapterAdvancedProperty -Name $n -RegistryKeyword "*InterruptModeration" -RegistryValue "0"
+
+Get-NetAdapterAdvancedProperty -Name $n |
+  Where-Object RegistryKeyword -in "*JumboPacket", "*ReceiveBuffers", "*EEE" |
+  Select-Object DisplayName, DisplayValue
+
+Restart-NetAdapter -Name $n   # 链路会短暂断开，随后恢复
+```
+
+说明：
+
+- `*ReceiveBuffers` 在 Realtek 驱动上的合法范围只有 32–512，默认已是 512，**无法再提高**；靠巨帧把包速率从约 42k/s 降到约 7k/s 来补偿。
+- 巨帧生效后 Windows IP MTU 自动变为 9000；`netsh interface ipv4 set subinterface ... mtu=9014` 会报“参数不正确”，属正常现象。
+- 若交换机不支持巨帧，必须把 `*JumboPacket` 回退为 `1514`，并接受更高的丢包风险。
+- 多台同类机器建议直接使用 Intel I210/I350 网卡，避免在 Realtek 的 512 缓冲上反复调参。
+
+## 相机链路验收（设备级指标，不看画面亮度）
+
+现场验收相机只看连通与通讯时，用这条命令，不依赖画面亮度：
+
+```powershell
+$r = Invoke-RestMethod "http://127.0.0.1:8022/api/camera/preview" -TimeoutSec 30
+$lost = if ($null -eq $r.camera_meta.camera_lost_packet_count) { 0 } else { $r.camera_meta.camera_lost_packet_count }
+"status={0}  {1}x{2}  fps={3}  lost={4}  frame={5}" -f $r.camera_status, $r.shape[1], $r.shape[0],
+  [math]::Round($r.camera_meta.camera_resulting_fps, 1), $lost, $r.camera_meta.camera_frame_id
+```
+
+通过标准：
+
+- `status=ok`；
+- `lost=0`（`camera_lost_packet_count` 字段缺失即表示 0）；
+- `fps` 与配置一致（默认约 10）；
+- 连续两次调用，`frame` 有增长。
+
+失败对照：
+
+| 现象 | 含义 | 处理 |
+|---|---|---|
+| `lost` 每帧上千 | 网卡/链路丢包 | 执行上面的网卡调优；确认直连、1 Gbps、巨帧已开 |
+| `lost` 数百 | 有改善但未达标 | 确认是否经过交换机、是否与办公网共用同一网口 |
+| `Failed to read frame ... ret=0x80000007` | 取帧超时（MV_E_NODATA） | 曝光不能接近取帧超时；约束 `exposure_us × target_frame_rate_hz ≤ 1e6`，且主帧耗时 < `timeout_ms` |
+| `Failed to open device` | 设备被独占或 IP 冲突 | 关闭 MVS 客户端后重启 G3；用 MVS 确认相机 IP 无冲突 |
+| `camera_resulting_fps` 远低于预期 | 曝光压住了帧率 | 降低曝光或降低 `target_frame_rate_hz` |
+
+丢包帧不会进入正式结果：每帧丢包超过 8 个时，探测与实时测试都会把该帧判为 `INVALID_FRAME_DATA_LOSS`，不输出 A/B 与 `distance_px`，曲线点同步排除。
