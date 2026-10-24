@@ -44,7 +44,7 @@ function errorMessage(reason: unknown): string {
   const message = reason instanceof Error ? reason.message : String(reason);
   return message.replace(
     /(\\d+(?:\\.\\d+)?)\\s*microseconds?\\b/gi,
-    (_, value: string) => \`${formatExposureMs(Number(value))} ms\`
+    (_, value: string) => `${formatExposureMs(Number(value))} ms`
   );
 }
 
