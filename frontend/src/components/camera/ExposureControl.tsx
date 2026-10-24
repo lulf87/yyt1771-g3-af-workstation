@@ -41,7 +41,11 @@ type LoadedCapability = {
 };
 
 function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
+  const message = reason instanceof Error ? reason.message : String(reason);
+  return message.replace(
+    /(\\d+(?:\\.\\d+)?)\\s*microseconds?\\b/gi,
+    (_, value: string) => \`${formatExposureMs(Number(value))} ms\`
+  );
 }
 
 const MICROSECONDS_PER_MILLISECOND = 1000;
