@@ -11336,6 +11336,59 @@ FIXED_PENDING_BROWSER_RETEST
 
 ---
 
+### P-0120 — 曝光控件显示硬件原生上限且单位不适合操作员
+
+- Status: FIXED_PENDING_BROWSER_RETEST
+- Priority: P1
+- Module: `frontend / camera exposure`
+- Found date: 2026-10-24
+- Last update: 2026-10-24
+- Owner/tool: Codex
+- Retest requirement: 真实浏览器 Setup 页面曝光控件
+
+#### Problem
+
+配置 `camera.exposure_max_us: 300000` 后，界面顶部仍显示相机 SDK 的原生 `maximum_us`，并以微秒展示；控件内部和操作员输入也使用微秒，容易误认为配置没有生效。
+
+#### Expected
+
+界面应显示配置后的有效曝光范围，使用毫秒作为操作单位；后端 API 和相机适配器继续使用微秒字段，避免破坏设备协议。
+
+#### Actual
+
+顶部范围显示的是硬件原生上限（例如 2499840 μs），而有效上限只在下方提示中出现。模拟相机路径也未应用 `exposure_max_us`。
+
+#### Fix summary
+
+前端控件在显示、滑杆、输入、范围、状态和提示中统一换算为毫秒，提交前再换回微秒；范围使用有效上限。模拟相机复用统一曝光上限计算，并补充配置示例字段。
+
+#### Tests run
+
+```bash
+未在当前环境执行；已更新静态前端断言，待 CI 和真实浏览器复测。
+```
+
+#### Browser retest log
+
+- Retest date:
+- Browser:
+- OS:
+- Frontend URL:
+- Backend URL:
+- Dataset:
+- Page: Setup
+- Steps:
+- Expected:
+- Actual:
+- Result: PASS / FAIL
+- Evidence:
+
+#### Final status
+
+FIXED_PENDING_BROWSER_RETEST
+
+---
+
 ## 4. 新问题登记模板
 
 复制以下模板新增问题。

@@ -44,6 +44,24 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+const MICROSECONDS_PER_MILLISECOND = 1000;
+
+function exposureUsToMs(valueUs: number | null | undefined): number | null {
+  if (typeof valueUs !== "number" || !Number.isFinite(valueUs)) return null;
+  return valueUs / MICROSECONDS_PER_MILLISECOND;
+}
+
+function exposureMsToUs(valueMs: string): number {
+  if (!valueMs.trim()) return Number.NaN;
+  const parsed = Number(valueMs);
+  return Number.isFinite(parsed) ? parsed * MICROSECONDS_PER_MILLISECOND : Number.NaN;
+}
+
+function formatExposureMs(valueUs: number | null | undefined): string {
+  const valueMs = exposureUsToMs(valueUs);
+  return valueMs === null ? "" : String(Number(valueMs.toFixed(6)));
+}
+
 function exposureUpperBound(capability: CameraExposureState): number | null {
   const safe = capability.safe_maximum_us;
   if (typeof safe === "number" && Number.isFinite(safe) && safe > 0) return safe;
@@ -124,7 +142,7 @@ export function ExposureControl({
         latestIntentRef.current = null;
         lastRequestedRef.current = null;
         compensationPendingRef.current = false;
-        setDraft(String(actual));
+        setDraft(formatExposureMs(actual));
         setStatus("saved");
         setError("");
       },
@@ -132,7 +150,7 @@ export function ExposureControl({
         latestIntentRef.current = null;
         lastRequestedRef.current = null;
         compensationPendingRef.current = false;
-        setDraft(confirmedRef.current === null ? "" : String(confirmedRef.current));
+        setDraft(formatExposureMs(confirmedRef.current));
         setStatus("error");
         setError(errorMessage(reason));
       },
@@ -210,7 +228,7 @@ export function ExposureControl({
     capability.editable === false;
 
   function rejectDraft(message: string): void {
-    setDraft(confirmedRef.current === null ? "" : String(confirmedRef.current));
+    setDraft(formatExposureMs(confirmedRef.current));
     setStatus("error");
     setError(message);
   }
@@ -219,8 +237,9 @@ export function ExposureControl({
     if (locked || capability === null) return;
     const coordinator = coordinatorRef.current;
     if (coordinator === null) return;
+    const draftUs = exposureMsToUs(draft);
     const result = submitExposureDraft({
-      draft,
+      draft: Number.isFinite(draftUs) ? String(draftUs) : draft,
       minimumUs: capability.minimum_us,
       maximumUs: exposureUpperBound(capability),
       confirmedUs: confirmedRef.current,
@@ -247,7 +266,7 @@ export function ExposureControl({
         lastRequestedRef.current = null;
       }
       const safeMaximum = capability.safe_maximum_us;
-      const draftValue = Number(draft);
+      const draftValue = exposureMsToUs(draft);
       const exceedsSafe =
         typeof safeMaximum === "number" &&
         Number.isFinite(safeMaximum) &&
@@ -266,7 +285,7 @@ export function ExposureControl({
     }
     if (result.kind === "unchanged") {
       compensationPendingRef.current = false;
-      setDraft(String(result.value));
+      setDraft(formatExposureMs(result.value));
       setStatus("idle");
       setError("");
       return;
@@ -293,7 +312,14 @@ export function ExposureControl({
     }
     return capability?.actual_us === null || capability?.actual_us === undefined
       ? t("No exposure value reported")
-      : `${t("Current exposure")}: ${capability.actual_us} μs`;
+      : `${t("Current exposure")}: ${formatExposureMs(capability.actual_us)} ms${
+          exposureUpperBound(capability) !== null &&
+          capability.actual_us !== null &&
+          capability.actual_us !== undefined &&
+          capability.actual_us > exposureUpperBound(capability)!
+            ? ` (${t("exceeds configured maximum")})`
+            : ""
+        }`;
   }
 
   return (
@@ -302,9 +328,9 @@ export function ExposureControl({
         <strong>{t("Camera exposure")}</strong>
         {capability?.minimum_us !== null &&
         capability?.minimum_us !== undefined &&
-        capability.maximum_us !== null ? (
+        exposureUpperBound(capability) !== null ? (
           <small>
-            {t("Camera range")}: {capability.minimum_us}–{capability.maximum_us} μs
+            {t("Camera range")}: {exposureUsToMs(capability.minimum_us)}–{exposureUsToMs(exposureUpperBound(capability))} ms
           </small>
         ) : null}
       </div>
@@ -313,7 +339,7 @@ export function ExposureControl({
       capability.maximum_us !== null &&
       capability.safe_maximum_us < capability.maximum_us ? (
         <small className="cameraExposureSafeLimit">
-          {t("Safe maximum")}: {Math.floor(capability.safe_maximum_us)} μs（
+          {t("Safe maximum")}: {exposureUsToMs(capability.safe_maximum_us)} ms（
           {t(
             capability.safe_maximum_source === "config"
               ? "configured cap"
@@ -329,11 +355,11 @@ export function ExposureControl({
           <input
             aria-label={t("Camera exposure slider")}
             disabled={disabled || runActive || capability.editable === false}
-            max={exposureUpperBound(capability) ?? undefined}
-            min={capability.minimum_us ?? undefined}
+            max={exposureUsToMs(exposureUpperBound(capability)) ?? undefined}
+            min={exposureUsToMs(capability.minimum_us) ?? undefined}
             onChange={(event) => {
               const nextDraft = event.target.value;
-              const value = Number(nextDraft);
+              const value = exposureMsToUs(nextDraft);
               setDraft(nextDraft);
               if (exposureValueInRange(value, capability)) {
                 const coordinator = coordinatorRef.current;
@@ -350,16 +376,16 @@ export function ExposureControl({
                 }
               }
             }}
-            step={capability.increment_us ?? "any"}
+            step={exposureUsToMs(capability.increment_us) ?? "any"}
             type="range"
             value={draft}
           />
           <label className="cameraExposureNumber">
-            <span>{t("Exposure (μs)")}</span>
+            <span>{t("Exposure (ms)")}</span>
             <input
               disabled={disabled || runActive || capability.editable === false}
-              max={exposureUpperBound(capability) ?? undefined}
-              min={capability.minimum_us ?? undefined}
+              max={exposureUsToMs(exposureUpperBound(capability)) ?? undefined}
+              min={exposureUsToMs(capability.minimum_us) ?? undefined}
               onBlur={commitDraft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -368,7 +394,7 @@ export function ExposureControl({
                   commitDraft();
                 }
               }}
-              step={capability.increment_us ?? "any"}
+              step={exposureUsToMs(capability.increment_us) ?? "any"}
               type="number"
               value={draft}
             />

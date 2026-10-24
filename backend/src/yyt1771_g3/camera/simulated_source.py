@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from yyt1771_g3.camera.base import CameraExposureCapability, CameraFrame, CameraUnavailableError
+from yyt1771_g3.camera.base import CameraExposureCapability, CameraFrame, CameraUnavailableError, exposure_limits
 from yyt1771_g3.core.timebase import now_ms
 
 
@@ -118,6 +118,11 @@ class SimulatedCameraSource:
 
     def read_exposure_capability(self) -> CameraExposureCapability:
         self._wait_for_fake_exposure_latency()
+        safe_maximum, safe_source = exposure_limits(
+            camera_maximum_us=FAKE_EXPOSURE_MAXIMUM_US,
+            timeout_ms=int(self.profile.get("timeout_ms", 1000) or 1000),
+            configured_maximum_us=_finite_float(self.profile.get("exposure_max_us")),
+        )
         return CameraExposureCapability(
             supported=True,
             minimum_us=FAKE_EXPOSURE_MINIMUM_US,
@@ -125,16 +130,20 @@ class SimulatedCameraSource:
             increment_us=FAKE_EXPOSURE_INCREMENT_US,
             requested_us=self._requested_exposure_us,
             actual_us=self._actual_exposure_us,
+            safe_maximum_us=safe_maximum,
+            safe_maximum_source=safe_source,
         )
 
     def set_exposure_us(self, value: float) -> float:
         requested = _finite_float(value, default=math.nan)
         if not math.isfinite(requested):
             raise ValueError("Exposure must be finite.")
-        if requested < FAKE_EXPOSURE_MINIMUM_US or requested > FAKE_EXPOSURE_MAXIMUM_US:
+        capability = self.read_exposure_capability()
+        safe_maximum = capability.safe_maximum_us or FAKE_EXPOSURE_MAXIMUM_US
+        if requested < FAKE_EXPOSURE_MINIMUM_US or requested > safe_maximum:
             raise ValueError(
-                f"Exposure {requested} is outside "
-                f"[{FAKE_EXPOSURE_MINIMUM_US}, {FAKE_EXPOSURE_MAXIMUM_US}] us."
+                f"Exposure {requested} is outside the simulated camera range "
+                f"(maximum {safe_maximum:.0f} microseconds)."
             )
         self._wait_for_fake_exposure_latency()
         actual = _quantize_exposure_us(requested)

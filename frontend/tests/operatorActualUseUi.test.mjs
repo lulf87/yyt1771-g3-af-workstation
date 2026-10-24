@@ -380,7 +380,7 @@ test("shared exposure control presents capability, lock, apply, save, unsupporte
   for (const copy of [
     "Camera exposure",
     "Camera exposure slider",
-    "Exposure (μs)",
+    "Exposure (ms)",
     "Loading exposure",
     "Applying exposure",
     "Applied and saved",
@@ -393,7 +393,7 @@ test("shared exposure control presents capability, lock, apply, save, unsupporte
   for (const [key, translation] of [
     ["Camera exposure", "相机曝光"],
     ["Camera exposure slider", "相机曝光滑杆"],
-    ["Exposure (μs)", "曝光（μs）"],
+    ["Exposure (ms)", "曝光（毫秒）"],
     ["Loading exposure", "正在读取曝光"],
     ["Applying exposure", "正在应用曝光"],
     ["Applied and saved", "已应用并保存"],

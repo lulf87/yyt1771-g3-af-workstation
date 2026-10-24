@@ -39,7 +39,7 @@ const ZH_TEXT: Record<string, string> = {
   camera_status: "相机状态",
   "Camera exposure": "相机曝光",
   "Camera exposure slider": "相机曝光滑杆",
-  "Exposure (μs)": "曝光（μs）",
+  "Exposure (ms)": "曝光（毫秒）",
   "Loading exposure": "正在读取曝光",
   "Applying exposure": "正在应用曝光",
   "Applied and saved": "已应用并保存",
@@ -58,6 +58,7 @@ const ZH_TEXT: Record<string, string> = {
   "camera hardware limit": "相机硬件上限",
   "Exposure exceeds the safe maximum for the current frame timeout":
     "曝光超过当前取帧超时允许的安全上限，请降低曝光或提高 camera.timeout_ms",
+  "exceeds configured maximum": "超过配置上限",
   model: "相机型号",
   serial_number: "序列号",
   ip: "网络地址",

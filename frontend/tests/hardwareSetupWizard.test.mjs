@@ -330,15 +330,16 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /createExposureCommitCoordinator/);
   assert.match(component, /delayMs:\s*200/);
   assert.match(component, /type="range"/);
-  assert.match(component, /min=\{capability\.minimum_us \?\? undefined\}/);
-  assert.match(component, /max=\{exposureUpperBound\(capability\) \?\? undefined\}/);
+  assert.match(component, /exposureUsToMs\(capability\.minimum_us\)/);
+  assert.match(component, /exposureUsToMs\(exposureUpperBound\(capability\)\)/);
   assert.match(component, /const safe = capability\.safe_maximum_us/);
   assert.match(component, /Safe maximum/);
-  assert.match(component, /step=\{capability\.increment_us \?\? "any"\}/);
+  assert.match(component, /exposureUsToMs\(capability\.increment_us\)/);
   assert.match(component, /scheduleExposureDraft\(/);
   assert.match(component, /onBlur=\{commitDraft\}/);
   assert.match(component, /event\.key === "Enter"[\s\S]{0,120}commitDraft\(\)/);
   assert.match(component, /submitExposureDraft\(/);
+  assert.match(component, /exposureMsToUs\(draft\)/);
   assert.match(component, /const compensationPendingRef = useRef\(false\)/);
   assert.match(
     component,
@@ -349,10 +350,10 @@ test("shared exposure control validates camera bounds and restores the last conf
   assert.match(component, /result\.kind === "cancelled"/);
   assert.match(exposureLogicSource, /if \(!draft\.trim\(\)\)/);
   assert.match(exposureLogicSource, /Number\.isFinite\(/);
-  assert.match(component, /capability\.minimum_us/);
+  assert.match(component, /MICROSECONDS_PER_MILLISECOND = 1000/);
   assert.match(component, /capability\.maximum_us/);
   assert.match(component, /confirmedRef\.current/);
-  assert.match(component, /onSuccess:[\s\S]{0,400}setDraft\(String\(actual/);
+  assert.match(component, /onSuccess:[\s\S]{0,400}setDraft\(formatExposureMs\(actual/);
   assert.match(component, /onError:[\s\S]{0,300}confirmedRef\.current/);
   assert.match(component, /coordinator\.dispose\(\)/);
   assert.match(component, /createCameraExposureReadSession/);
