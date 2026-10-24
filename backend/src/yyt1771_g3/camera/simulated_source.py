@@ -121,7 +121,7 @@ class SimulatedCameraSource:
         safe_maximum, safe_source = exposure_limits(
             camera_maximum_us=FAKE_EXPOSURE_MAXIMUM_US,
             timeout_ms=int(self.profile.get("timeout_ms", 1000) or 1000),
-            configured_maximum_us=_finite_float(self.profile.get("exposure_max_us")),
+            configured_maximum_us=_optional_finite_float(self.profile.get("exposure_max_us")),
         )
         return CameraExposureCapability(
             supported=True,
